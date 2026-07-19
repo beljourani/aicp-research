@@ -34,7 +34,7 @@ AUTHOR_SEP = " ؛ "
 # Standard-Repository für Selbst-Updates (Cloud-Builds liegen als GitHub-
 # Release dort). Kann in der App überschrieben werden (Einstellung
 # 'update_repo' in der meta-Tabelle). Format: "benutzer/repository".
-UPDATE_REPO = "DEIN-GITHUB-BENUTZER/aicp-research"
+UPDATE_REPO = "beljourani/aicp-research"
 
 
 def split_authors(value) -> list[str]:
