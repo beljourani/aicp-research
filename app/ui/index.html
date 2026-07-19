@@ -330,6 +330,8 @@
     border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
     animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .verLabel { font-size: 11.5px; color: var(--faint); padding: 8px 11px 2px;
+    letter-spacing: .02em; }
 </style>
 </head>
 <body>
@@ -348,6 +350,7 @@
       <button class="navItem subtle" id="exportBtn"><span class="ci" data-ic="export"></span><span id="exportLabel"></span></button>
       <button class="navItem subtle" id="importBtn"><span class="ci" data-ic="import"></span><span id="importLabel"></span></button>
       <button class="navItem subtle" id="langBtn"><span class="ci" data-ic="globe"></span><span id="langLabel"></span></button>
+      <div id="versionLabel" class="verLabel"></div>
     </div>
   </nav>
 
@@ -659,6 +662,7 @@ const API = {
   update_document:(id,title,authors)=>_post("/api/update",{id,title,authors}),
   download_document:id=>_post("/api/download_document",{id}),
   clear_jobs:()=>_post("/api/clear_jobs",{}),
+  version:()=>_get("/api/version"),
   apply_update:()=>_post("/api/apply_update",{}),
   delete_document:id=>_post("/api/delete",{id}),
   delete_documents:ids=>_post("/api/delete_documents",{ids}),
@@ -1221,6 +1225,7 @@ paintIcons();
   catch(e){applyLang("de");}
   paintIcons();
   refreshStatus();refreshDocs();
+  try{const v=await api().version();if(v&&v.version)$("#versionLabel").textContent="v"+v.version;}catch(e){}
 })();
 </script>
 </body>

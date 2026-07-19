@@ -36,18 +36,30 @@ jobs:
       - name: App bauen
         run: python -m PyInstaller --noconfirm --distpath dist --workpath build/pyi build/echoarchive.spec
 
-      - name: App-ZIP (Auto-Update) und DMG (Erstinstallation) erzeugen
+      - name: App-ZIP (Auto-Update) erzeugen
         run: |
           VER="${{ steps.ver.outputs.version }}"
-          # 1) App-ZIP – wird vom Selbst-Update automatisch eingespielt
           ditto -c -k --sequesterRsrc --keepParent \
             "dist/AICP Research.app" "dist/AICP-Research-macOS-$VER.zip"
-          # 2) DMG mit "Programme"-Verknüpfung für die manuelle Erstinstallation
-          mkdir -p dmgroot
-          cp -R "dist/AICP Research.app" dmgroot/
-          ln -s /Applications dmgroot/Applications
-          hdiutil create -volname "AICP Research" -srcfolder dmgroot \
-            -ov -format UDZO "dist/AICP-Research-$VER.dmg"
+
+      - name: Schönes DMG mit Pfeil erzeugen (create-dmg)
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          npm install --global create-dmg
+          # Erzeugt automatisch ein Fenster mit App-Icon, Pfeil und
+          # Programme-Ordner. Bei Fehler: einfaches DMG als Rückfall.
+          if create-dmg --no-code-sign --dmg-title "AICP Research" \
+               "dist/AICP Research.app" dist/; then
+            SRC=$(ls dist/AICP\ Research\ *.dmg | head -1)
+            mv "$SRC" "dist/AICP-Research-$VER.dmg"
+          else
+            echo "create-dmg fehlgeschlagen – nutze einfaches DMG"
+            mkdir -p dmgroot
+            cp -R "dist/AICP Research.app" dmgroot/
+            ln -s /Applications dmgroot/Applications
+            hdiutil create -volname "AICP Research" -srcfolder dmgroot \
+              -ov -format UDZO "dist/AICP-Research-$VER.dmg"
+          fi
 
       - name: Artefakte hochladen
         uses: actions/upload-artifact@v4
