@@ -587,6 +587,20 @@ class Core:
         con.close()
         return {"ok": True}
 
+    def delete_documents(self, body):
+        """Löscht mehrere ausgewählte Dokumente auf einmal."""
+        ids = [int(i) for i in (body or {}).get("ids", []) if i is not None]
+        if not ids:
+            return {"ok": True, "deleted": 0}
+        con = self._con()
+        marks = ",".join("?" for _ in ids)
+        cur = con.execute(
+            f"DELETE FROM documents WHERE id IN ({marks})", ids)
+        con.commit()
+        deleted = cur.rowcount
+        con.close()
+        return {"ok": True, "deleted": deleted}
+
     def search(self, body):
         from dataclasses import asdict
         body = body or {}
@@ -596,6 +610,16 @@ class Core:
             author_filter = body.get("author") or None
         elif isinstance(author_filter, list):
             author_filter = [a for a in author_filter if a] or None
+        # Seitenweises Nachladen: limit + offset. Wir holen ein Ergebnis mehr
+        # als angefragt, um zu erkennen, ob es noch weitere gibt.
+        try:
+            limit = max(1, min(int(body.get("limit") or 40), 200))
+        except Exception:
+            limit = 40
+        try:
+            offset = max(0, int(body.get("offset") or 0))
+        except Exception:
+            offset = 0
         con = self._con()
         if body.get("mode") == "terms":
             # Begriffssuche aus der Oberfläche (Gruppen + Ausschluss)
@@ -603,14 +627,16 @@ class Core:
             hits = structured_search(
                 con, body.get("groups") or [],
                 exclude=body.get("exclude") or [],
-                limit=40, author=author_filter,
+                limit=limit + 1, offset=offset, author=author_filter,
                 document_id=body.get("document_id") or None)
         else:
             emb = self._embedder if body.get("semantic", True) else None
             hits = hybrid_search(
                 con, body.get("q") or "", embedder=emb,
-                limit=40, author=author_filter,
+                limit=limit + 1, offset=offset, author=author_filter,
                 document_id=body.get("document_id") or None)
+        has_more = len(hits) > limit
+        hits = hits[:limit]
         seen = {}
         for r in con.execute(
                 "SELECT DISTINCT author FROM documents "
@@ -619,7 +645,8 @@ class Core:
                 seen[name] = True
         authors = sorted(seen.keys())
         con.close()
-        return {"hits": [asdict(h) for h in hits], "authors": authors}
+        return {"hits": [asdict(h) for h in hits], "authors": authors,
+                "offset": offset, "limit": limit, "has_more": has_more}
 
 
 CORE = Core()
@@ -641,6 +668,7 @@ ROUTES = {
     ("POST", "/api/export_library"): CORE.export_library,
     ("POST", "/api/import_library"): CORE.import_library,
     ("POST", "/api/delete"): CORE.delete,
+    ("POST", "/api/delete_documents"): CORE.delete_documents,
     ("POST", "/api/search"): CORE.search,
     ("POST", "/api/passage"): CORE.passage,
     ("POST", "/api/page"): CORE.page,

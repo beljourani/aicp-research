@@ -113,7 +113,8 @@ def structured_search(con: sqlite3.Connection,
                       and_groups: list[list[str]],
                       exclude: list[str] | None = None,
                       limit: int = 20, author: str | None = None,
-                      document_id: int | None = None) -> list[SearchHit]:
+                      document_id: int | None = None,
+                      offset: int = 0) -> list[SearchHit]:
     """Begriffssuche aus der Oberfläche: Gruppen von UND-Begriffen
     (ODER-verknüpft) plus globale Ausschlussliste – ohne Syntax-Parsing."""
     groups: list[QueryGroup] = []
@@ -135,15 +136,16 @@ def structured_search(con: sqlite3.Connection,
         if g.include or g.phrases:
             groups.append(g)
     return _search_groups(con, groups, limit=limit, author=author,
-                          document_id=document_id)
+                          document_id=document_id, offset=offset)
 
 
 def search(con: sqlite3.Connection, query: str, limit: int = 20,
            author: str | None = None,
-           document_id: int | None = None) -> list[SearchHit]:
+           document_id: int | None = None,
+           offset: int = 0) -> list[SearchHit]:
     groups = parse_query(query or "")
     return _search_groups(con, groups, limit=limit, author=author,
-                          document_id=document_id)
+                          document_id=document_id, offset=offset)
 
 
 def _author_clause(author) -> tuple[str, list]:
@@ -161,11 +163,11 @@ def _author_clause(author) -> tuple[str, list]:
 
 def _search_groups(con: sqlite3.Connection, groups: list[QueryGroup],
                    limit: int, author,
-                   document_id: int | None) -> list[SearchHit]:
+                   document_id: int | None, offset: int = 0) -> list[SearchHit]:
     exprs = [e for e in (_group_expr(g) for g in groups) if e]
     if not exprs:
         return _browse(con, limit=limit, author=author,
-                       document_id=document_id)
+                       document_id=document_id, offset=offset)
     match_expr = " OR ".join(f"({e})" for e in exprs)
 
     # Für Hervorhebung/Snippets: alle positiven Begriffe aller Gruppen
@@ -188,8 +190,9 @@ def _search_groups(con: sqlite3.Connection, groups: list[QueryGroup],
     if document_id:
         sql += " AND d.id = ?"
         params.append(document_id)
-    sql += " ORDER BY score LIMIT ?"
+    sql += " ORDER BY score LIMIT ? OFFSET ?"
     params.append(limit)
+    params.append(offset)
 
     hits: list[SearchHit] = []
     for row in con.execute(sql, params):
@@ -207,25 +210,26 @@ def _search_groups(con: sqlite3.Connection, groups: list[QueryGroup],
 def hybrid_search(con: sqlite3.Connection, query: str, embedder=None,
                   limit: int = 20, author: str | None = None,
                   document_id: int | None = None,
-                  k: int = 60) -> list[SearchHit]:
+                  k: int = 60, offset: int = 0) -> list[SearchHit]:
     """Kombiniert Volltext- und semantische Suche per Reciprocal Rank Fusion.
 
     RRF ist robust gegen unterschiedliche Score-Skalen: score = Σ 1/(k+rang).
     Ohne Embedder (oder ohne Suchbegriff) fällt es auf die FTS-Suche zurück.
     """
-    fts_hits = search(con, query, limit=limit * 3, author=author,
+    span = offset + limit          # so viele Treffer werden insgesamt gebraucht
+    fts_hits = search(con, query, limit=span * 3, author=author,
                       document_id=document_id)
     # Boolesche Anfragen (ODER/Ausschluss/Phrase) laufen rein über FTS –
     # die semantische Suche kann Ausschlüsse nicht respektieren.
     if embedder is None or not query.strip() or is_boolean_query(query):
-        return fts_hits[:limit]
+        return fts_hits[offset:span]
 
     from .semantic import vector_search
     try:
         qvec = embedder.embed([query])[0]
     except Exception:
-        return fts_hits[:limit]
-    vec_hits = vector_search(con, qvec, limit=limit * 3, author=author,
+        return fts_hits[offset:span]
+    vec_hits = vector_search(con, qvec, limit=span * 3, author=author,
                              document_id=document_id)
 
     scores: dict[int, float] = {}
@@ -254,11 +258,11 @@ def hybrid_search(con: sqlite3.Connection, query: str, embedder=None,
                     key=lambda h: -scores.get(h.passage_id, 0))
     for h in ranked:
         h.score = scores.get(h.passage_id, 0)
-    return ranked[:limit]
+    return ranked[offset:span]
 
 
 def _browse(con: sqlite3.Connection, limit: int, author,
-            document_id: int | None) -> list[SearchHit]:
+            document_id: int | None, offset: int = 0) -> list[SearchHit]:
     """Ohne Suchbegriff: Passagen in Dokumentreihenfolge (Blättern)."""
     sql = ("SELECT p.id, p.document_id, p.page_from, p.page_to, p.text, "
            "d.title, d.author, d.reliability FROM passages p "
@@ -269,8 +273,9 @@ def _browse(con: sqlite3.Connection, limit: int, author,
     if document_id:
         sql += " AND d.id = ?"
         params.append(document_id)
-    sql += " ORDER BY p.document_id, p.idx LIMIT ?"
+    sql += " ORDER BY p.document_id, p.idx LIMIT ? OFFSET ?"
     params.append(limit)
+    params.append(offset)
     return [SearchHit(row["id"], row["document_id"], row["title"],
                       row["author"], row["page_from"], row["page_to"],
                       row["text"][:200], 0.0, [],

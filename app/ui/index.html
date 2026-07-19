@@ -120,6 +120,8 @@
   .btn.sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
   .btn.ghost { border-color: transparent; background: none; color: var(--muted); }
   .btn.ghost:hover { background: var(--surface); color: var(--ink); }
+  .btn.danger { border-color: #e6c3bd; color: var(--err); }
+  .btn.danger:hover { background: #fbeae7; border-color: #dcaea6; }
 
   .filters { display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
     margin-top: 12px; font-size: 13.5px; color: var(--muted); }
@@ -187,8 +189,25 @@
     font-size: 12px; letter-spacing: .04em; margin: 9px 0; text-transform: uppercase; }
   .termActions { display: flex; gap: 9px; margin-top: 13px; align-items: center;
     flex-wrap: wrap; }
-  #excludeArea { margin-top: 12px; }
-  #excludeArea .termGroup { border-color: #f0cfca; background: #fdf7f6; }
+  #mExcludeArea, #rExcludeArea { margin-top: 13px; }
+  /* Großer "Suchen"-Button als letzter Schritt, unter allen Feldern/Filtern */
+  .searchGo { width: 100%; justify-content: center; margin-top: 20px;
+    padding: 13px 24px; font-size: 15.5px; font-weight: 600; border-radius: 11px; }
+  #toTop { position: fixed; bottom: 24px; inset-inline-end: 24px; z-index: 50;
+    width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line);
+    background: var(--panel); color: var(--accent-ink); cursor: pointer;
+    box-shadow: var(--shadow); display: grid; place-items: center;
+    opacity: 0; transform: translateY(10px); pointer-events: none;
+    transition: opacity .18s, transform .18s; }
+  #toTop.show { opacity: 1; transform: none; pointer-events: auto; }
+  #toTop:hover { background: var(--accent-weak); }
+  #toTop svg { width: 20px; height: 20px; stroke: var(--accent); }
+  /* Ausschluss-Felder rot markieren – „diese Wörter werden ausgeschlossen" */
+  #mExcludeArea .termGroup, #rExcludeArea .termGroup {
+    border-color: #e7b3ab; background: #fdf3f1; }
+  #mExcludeArea .termGroup.focused, #rExcludeArea .termGroup.focused {
+    border-color: var(--err); box-shadow: 0 0 0 3px #f6dcd7; }
+  #mExcludeArea .orSep, #rExcludeArea .orSep { color: var(--err); }
 
   /* results */
   #results, #docResults { margin-top: 22px; display: flex;
@@ -337,14 +356,13 @@
     <div class="viewHead"><h1 class="title" id="titleSearch"></h1></div>
     <div class="viewInner">
       <div id="mGroups"></div>
-      <div class="termActions">
-        <button id="mSearchBtn" class="btn primary"></button>
-        <button id="mAddGroup" class="btn sm"></button>
-        <button id="mToggleExclude" class="btn sm"></button>
-      </div>
       <div id="mExcludeArea" style="display:none">
         <div class="orSep" id="mExcludeLabel"></div>
         <div class="termGroup" id="mExcludeGroup"><input id="mExcludeInput"></div>
+      </div>
+      <div class="termActions">
+        <button id="mAddGroup" class="btn sm"></button>
+        <button id="mToggleExclude" class="btn sm"></button>
       </div>
 
       <div class="filters">
@@ -355,8 +373,10 @@
           </span></label>
         <label class="switch"><input type="checkbox" id="semantic" checked>
           <span id="semanticLabel"></span></label>
-        <span id="count" class="resultCount" style="margin:0"></span>
       </div>
+
+      <button id="mSearchBtn" class="btn primary searchGo"></button>
+      <div id="count" class="resultCount"></div>
       <div id="results"></div>
     </div>
   </section>
@@ -367,8 +387,11 @@
     <div id="docsToolbar">
       <label class="switch" style="font-size:13.5px;color:var(--muted)">
         <input type="checkbox" id="selAll"> <span id="selAllLabel"></span></label>
-      <button id="exportSelBtn" class="btn sm"></button>
-      <span id="selCount" style="font-size:13px;color:var(--muted)"></span>
+      <span id="selActions" style="display:none;align-items:center;gap:8px;">
+        <span id="selCount" style="font-size:13px;color:var(--muted)"></span>
+        <button id="exportSelBtn" class="btn sm"></button>
+        <button id="delSelBtn" class="btn sm danger"></button>
+      </span>
     </div>
     <div class="docList" id="docList"></div>
     <div id="docsEmpty" class="empty" style="display:none"></div>
@@ -409,15 +432,15 @@
     <div id="rSidebar">
       <div id="rSearchBar">
         <div id="rGroups"></div>
-        <div class="termActions" style="margin-top:9px">
-          <button id="rSearchBtn" class="btn sm primary"></button>
-          <button id="rAddGroup" class="btn sm"></button>
-          <button id="rToggleExclude" class="btn sm"></button>
-        </div>
         <div id="rExcludeArea" style="display:none;margin-top:8px">
           <div class="orSep" id="rExcludeLabel"></div>
           <div class="termGroup" id="rExcludeGroup"><input id="rExcludeInput"></div>
         </div>
+        <div class="termActions" style="margin-top:9px">
+          <button id="rAddGroup" class="btn sm"></button>
+          <button id="rToggleExclude" class="btn sm"></button>
+        </div>
+        <button id="rSearchBtn" class="btn primary searchGo" style="margin-top:11px"></button>
       </div>
       <div id="rResults"></div>
     </div>
@@ -439,6 +462,8 @@
     </div>
   </div>
 </div>
+
+<button id="toTop" title="Nach oben"><svg class="ic" viewBox="0 0 24 24"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg></button>
 
 <div id="toast"></div>
 <div id="errbar"></div>
@@ -466,6 +491,7 @@ const ICONS = {
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   page: '<path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>',
   download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+  arrowUp: '<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>',
 };
 function svg(name) { return `<svg class="ic" viewBox="0 0 24 24">${ICONS[name]||""}</svg>`; }
 function paintIcons(root) {
@@ -500,7 +526,7 @@ const T = {
     termMore: "weiterer Begriff …", orSep: "oder",
     addGroup: "＋ ODER-Gruppe", toggleExclude: "Ausschluss",
     excludeLabel: "darf nicht vorkommen", excludePlaceholder: "Wort, dann Enter",
-    results: "Treffer", empty: "Keine Treffer.",
+    results: "Treffer", empty: "Keine Treffer.", loadMore: "Weitere Treffer laden", loading: "lädt …",
     start: "Gib einen Suchbegriff ein.",
     confirmDelete: "Wirklich löschen? – ",
     promptTitle: "Titel:", promptAuthor: "Autor:",
@@ -522,6 +548,9 @@ const T = {
     exportLabel: "Bibliothek exportieren", importLabel: "Bibliothek importieren",
     exportDone: "Exportiert", importDone: "Importiert",
     selAllLabel: "Alle", exportSel: "Auswahl exportieren",
+    deleteSel: "Auswahl löschen",
+    confirmDeleteN: (n)=>`${n} ausgewählte Dokument(e) wirklich löschen? Das kann nicht rückgängig gemacht werden.`,
+    deletedN: "gelöscht",
     selectedN: "ausgewählt", selectNone: "Bitte zuerst Bücher auswählen.",
     docFilter: "nur in diesem Dokument",
     readerSearch: "In diesem Dokument suchen …",
@@ -549,7 +578,7 @@ const T = {
     termMore: "مصطلح آخر …", orSep: "أو",
     addGroup: "＋ مجموعة أو", toggleExclude: "استبعاد",
     excludeLabel: "يجب ألا يرد", excludePlaceholder: "كلمة ثم Enter",
-    results: "نتيجة", empty: "لا نتائج.",
+    results: "نتيجة", empty: "لا نتائج.", loadMore: "تحميل المزيد", loading: "جارٍ التحميل …",
     start: "اكتب كلمة للبحث.",
     confirmDelete: "حذف؟ – ",
     promptTitle: "العنوان:", promptAuthor: "المؤلف:",
@@ -571,6 +600,9 @@ const T = {
     exportLabel: "تصدير المكتبة", importLabel: "استيراد مكتبة",
     exportDone: "تم التصدير", importDone: "تم الاستيراد",
     selAllLabel: "الكل", exportSel: "تصدير المحدد",
+    deleteSel: "حذف المحدد",
+    confirmDeleteN: (n)=>`حذف ${n} مستند(ات) محددة نهائياً؟ لا يمكن التراجع عن هذا.`,
+    deletedN: "تم الحذف",
     selectedN: "محدد", selectNone: "اختر كتباً أولاً.",
     docFilter: "في هذا المستند فقط",
     readerSearch: "ابحث في هذا المستند …",
@@ -629,9 +661,10 @@ const API = {
   clear_jobs:()=>_post("/api/clear_jobs",{}),
   apply_update:()=>_post("/api/apply_update",{}),
   delete_document:id=>_post("/api/delete",{id}),
+  delete_documents:ids=>_post("/api/delete_documents",{ids}),
   reindex_document:(id,ocr)=>_post("/api/reindex",{id,ocr}),
   search:(q,authors,document_id,semantic)=>_post("/api/search",{q,authors,document_id,semantic}),
-  search_terms:(groups,exclude,authors,document_id)=>_post("/api/search",{mode:"terms",groups,exclude,authors,document_id}),
+  search_terms:(groups,exclude,authors,document_id,offset,limit)=>_post("/api/search",{mode:"terms",groups,exclude,authors,document_id,offset,limit}),
   passage:id=>_post("/api/passage",{id}),
   page:(document_id,page_no)=>_post("/api/page",{document_id,page_no}),
   export_library:ids=>_post("/api/export_library",ids?{ids}:{}),
@@ -659,6 +692,7 @@ function setView(v){
   $$("section.view").forEach(s=>s.classList.toggle("active",s.id==="view-"+v));
   if(v==="docs") refreshDocs();
   if(v==="search"){const i=document.querySelector("#mGroups .termGroup input");if(i)i.focus();}
+  if(window.__checkToTop)window.__checkToTop();
 }
 $$("nav .navItem[data-view]").forEach(b=>b.onclick=()=>setView(b.dataset.view));
 
@@ -743,8 +777,10 @@ async function refreshDocs(){
 }
 function updateSelCount(){
   const n=selectedForExport.size;
+  const act=$("#selActions");if(act)act.style.display=n?"inline-flex":"none";
   const c=$("#selCount");if(c)c.textContent=n?`${n} ${t("selectedN")}`:"";
-  const b=$("#exportSelBtn");if(b)b.textContent=n?`${t("exportSel")} (${n})`:t("exportSel");
+  const b=$("#exportSelBtn");if(b)b.textContent=`${t("exportSel")} (${n})`;
+  const d=$("#delSelBtn");if(d)d.textContent=`${t("deleteSel")} (${n})`;
 }
 
 // ---- Bearbeiten-Dialog (Titel + mehrere Autoren) ----------------------
@@ -948,29 +984,47 @@ const READER = { groupsBox:"#rGroups", excludeArea:"#rExcludeArea",
   state: readerState, onSearch: runReaderSearch };
 
 /* ---------- Hauptsuche ---------- */
+const PAGE=40;
+let mainQuery=null, mainOffset=0, mainLoaded=0;
 async function runSearch(){
   const { groups, excludes } = collectPanel(MAIN);
-  if(!groups.length && !excludes.length){ $("#results").innerHTML=emptyBox(t("start")); $("#count").textContent=""; return; }
-  const res = await api().search_terms(groups, excludes, authorFilterSel, selectedDoc);
-  showResults(res);
+  if(!groups.length && !excludes.length){ $("#results").innerHTML=emptyBox(t("start")); $("#count").textContent=""; mainQuery=null; return; }
+  mainQuery={groups,excludes}; mainOffset=0; mainLoaded=0;
+  const res = await api().search_terms(groups, excludes, authorFilterSel, selectedDoc, 0, PAGE);
+  showResults(res, false);
 }
-function showResults(res){
-  fillAuthorSel(res.authors||[]);
+async function loadMoreMain(){
+  if(!mainQuery)return;
+  mainOffset+=PAGE;
+  const res = await api().search_terms(mainQuery.groups, mainQuery.excludes, authorFilterSel, selectedDoc, mainOffset, PAGE);
+  showResults(res, true);
+}
+function hitEl(h){
+  const el=document.createElement("div");el.className="hit";
+  el.innerHTML=`
+    <div class="top">
+      <span class="htitle">${esc(h.title)}</span>
+      <span class="hauthor">${esc(h.author?authorText(h.author):"")}</span>
+      <span class="meta"><span class="pageTag">${pageStr(h)}</span>${relTag(h.reliability)}</span>
+    </div>
+    <div class="text" dir="auto">${highlight(h.snippet,h.matched_words)}</div>`;
+  el.onclick=()=>openReader(h.document_id,h.passage_id,h.matched_words);
+  return el;
+}
+function showResults(res, append){
+  if(!append)fillAuthorSel(res.authors||[]);
   const box=$("#results");
-  $("#count").textContent=res.hits.length?res.hits.length+" "+t("results"):"";
-  if(!res.hits.length){box.innerHTML=emptyBox(t("empty"));return;}
-  box.innerHTML="";
-  for(const h of res.hits){
-    const el=document.createElement("div");el.className="hit";
-    el.innerHTML=`
-      <div class="top">
-        <span class="htitle">${esc(h.title)}</span>
-        <span class="hauthor">${esc(h.author?authorText(h.author):"")}</span>
-        <span class="meta"><span class="pageTag">${pageStr(h)}</span>${relTag(h.reliability)}</span>
-      </div>
-      <div class="text" dir="auto">${highlight(h.snippet,h.matched_words)}</div>`;
-    el.onclick=()=>openReader(h.document_id,h.passage_id,h.matched_words);
-    box.appendChild(el);
+  const old=$("#loadMore"); if(old)old.remove();
+  if(!append){ box.innerHTML=""; mainLoaded=0; }
+  if(!append && !res.hits.length){ box.innerHTML=emptyBox(t("empty")); $("#count").textContent=""; return; }
+  for(const h of res.hits){ box.appendChild(hitEl(h)); mainLoaded++; }
+  $("#count").textContent=mainLoaded+" "+t("results")+(res.has_more?"+":"");
+  if(res.has_more){
+    const b=document.createElement("button");b.id="loadMore";b.className="btn sm";
+    b.style.cssText="display:block;margin:16px auto 0;";
+    b.textContent=t("loadMore");
+    b.onclick=()=>{b.disabled=true;b.textContent=t("loading");loadMoreMain();};
+    box.appendChild(b);
   }
 }
 
@@ -1009,7 +1063,7 @@ function showReaderHint(){
 async function runReaderSearch(){
   const { groups, excludes } = collectPanel(READER);
   if(!groups.length && !excludes.length){ showReaderHint(); return; }
-  const res=await api().search_terms(groups, excludes, null, rDoc);
+  const res=await api().search_terms(groups, excludes, null, rDoc, 0, 200);
   renderReaderHits(res);
 }
 function renderReaderHits(res){
@@ -1070,6 +1124,17 @@ document.addEventListener("keydown",e=>{
 
 /* ---------- Bedienung (beide Panels gleich) ---------- */
 $("#mSearchBtn").onclick=runSearch;
+
+/* ---------- "Nach oben"-Button ---------- */
+(function(){
+  const toTop=$("#toTop");
+  const activeView=()=>document.querySelector("section.view.active");
+  const check=()=>{const v=activeView();
+    if(v&&v.scrollTop>400)toTop.classList.add("show");else toTop.classList.remove("show");};
+  $$("section.view").forEach(v=>v.addEventListener("scroll",check,{passive:true}));
+  toTop.onclick=()=>{const v=activeView();if(v)v.scrollTo({top:0,behavior:"smooth"});};
+  window.__checkToTop=check;
+})();
 $("#mAddGroup").onclick=()=>panelAddGroup(MAIN);
 $("#mToggleExclude").onclick=()=>panelToggleExclude(MAIN);
 // Chip NUR bei echter Auswahl aus der Vorschlagsliste oder mit Enter übernehmen –
@@ -1137,6 +1202,15 @@ async function trackJob(key,doneMsg){
 }
 $("#exportBtn").onclick=async()=>{const r=await api().export_library();if(r&&r.error)return showError(r.error);if(r&&r.cancelled)return;trackJob("Export",t("exportDone"));};
 $("#exportSelBtn").onclick=async()=>{const ids=[...selectedForExport];if(!ids.length)return showError(t("selectNone"));const r=await api().export_library(ids);if(r&&r.error)return showError(r.error);if(r&&r.cancelled)return;trackJob("Export",t("exportDone"));};
+$("#delSelBtn").onclick=async()=>{
+  const ids=[...selectedForExport];if(!ids.length)return showError(t("selectNone"));
+  if(!confirm(T[lang].confirmDeleteN(ids.length)))return;
+  const r=await api().delete_documents(ids);
+  if(r&&r.error)return showError(r.error);
+  selectedForExport=new Set();
+  showToast(`${(r&&r.deleted)||ids.length} ${t("deletedN")}`);
+  refreshDocs();
+};
 $("#importBtn").onclick=async()=>{const r=await api().import_library();if(r&&r.error)return showError(r.error);if(r&&r.cancelled)return;trackJob("Import",t("importDone"));};
 
 /* ---------- Start ---------- */
