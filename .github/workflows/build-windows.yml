@@ -1,0 +1,67 @@
+name: Windows-Installer (Release)
+
+on:
+  workflow_dispatch:      # manuell per Knopf startbar (baut Version 0.0.0)
+  push:
+    tags: ["v*"]          # bei einem Versions-Tag automatisch bauen + veröffentlichen
+
+permissions:
+  contents: write         # nötig, um ein Release zu erstellen
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Version aus Tag bestimmen
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -match '^v?\d') { $v = ($tag -replace '^v','') } else { $v = '0.0.0' }
+          Set-Content -Path VERSION -Value $v -NoNewline
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $v"
+
+      - name: Abhängigkeiten installieren
+        run: python -m pip install -r requirements.txt pyinstaller
+
+      - name: Embedding-Modell bündeln
+        run: python -c "import sys; sys.path.insert(0,'engine'); from echo_engine.semantic import MODEL_NAME; from fastembed import TextEmbedding; TextEmbedding(MODEL_NAME, cache_dir='build/models')"
+
+      - name: Tesseract-OCR bündeln (inkl. Arabisch)
+        shell: pwsh
+        run: |
+          choco install tesseract --no-progress -y
+          $src = "C:\Program Files\Tesseract-OCR"
+          New-Item -ItemType Directory -Force build\tesseract | Out-Null
+          Copy-Item "$src\*" build\tesseract -Recurse
+          Invoke-WebRequest https://github.com/tesseract-ocr/tessdata_fast/raw/main/ara.traineddata -OutFile build\tesseract\tessdata\ara.traineddata
+          Invoke-WebRequest https://github.com/tesseract-ocr/tessdata_fast/raw/main/deu.traineddata -OutFile build\tesseract\tessdata\deu.traineddata
+
+      - name: App bauen
+        run: python -m PyInstaller --noconfirm --distpath dist --workpath build/pyi build/echoarchive.spec
+
+      - name: Installer bauen (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ steps.ver.outputs.version }} build\installer.iss
+
+      - name: Installer als Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: AICP-Research-Setup
+          path: dist/AICP-Research-Setup-*.exe
+
+      - name: Release veröffentlichen (nur bei Tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/AICP-Research-Setup-*.exe
+          fail_on_unmatched_files: true

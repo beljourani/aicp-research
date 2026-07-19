@@ -1,0 +1,19 @@
+Python: 3.14.6
+certifi: /Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/site-packages/certifi/cacert.pem
+HTTPS ohne Zusatz: OK 200
+
+surya: installiert
+surya-Version: ?
+RecognitionPredictor.__call__ (self, images: 'List[Image.Image]', layout_results: 'Optional[List[LayoutResult]]' = None, *, full_page: 'Optional[bool]' = None) -> 'List[PageOCRResult]'
+DetectionPredictor.__call__ (self, images: List[PIL.Image.Image], batch_size=None, include_maps=False) -> List[surya.detection.schema.TextDetectionResult]
+
+easyocr: installiert 1.7.2
+
+rapidocr: installiert
+RapidOCR.__init__ (self, **kwargs)
+
+--- Download-Quellen testen ---
+OK   200  10.3 MB  https://paddleocr.bj.bcebos.com/PP-OCRv3/multilingual/arabic_PP-OCRv3_rec_infe
+OK   200  9.1 MB  https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/pa
+FAIL HTTPError: HTTP Error 404: Not Found  https://huggingface.co/SWHL/RapidOCR/resolve/main/onnx/PP-OCRv3/rec/arabic_PP-
+FAIL HTTPError: HTTP Error 401: Unauthorized  https://huggingface.co/OleehyO/RapidOCR-onnx/resolve/main/arabic_PP-OCRv3_rec_

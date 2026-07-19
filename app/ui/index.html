@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="de" dir="ltr">
+<head>
+<meta charset="utf-8">
+<title>AICP Research</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --surface: #f7f8f8;
+    --panel: #ffffff;
+    --ink: #17201c;
+    --muted: #737d78;
+    --faint: #9aa39e;
+    --line: #e8eae8;
+    --line-strong: #d9dcd9;
+    --accent: #12795a;
+    --accent-weak: #eef5f1;
+    --accent-ink: #0c5c44;
+    --hl: #fdeeb3;
+    --err: #b23a2e;
+    --warn: #9a6a12;
+    --radius: 10px;
+    --shadow: 0 1px 2px rgba(20,30,25,.04), 0 8px 24px rgba(20,30,25,.06);
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+            "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    --arab: "Noto Naskh Arabic", "Amiri", var(--sans);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); font-size: 15px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased; overflow: hidden;
+  }
+  :lang(ar), [dir="rtl"] { font-family: var(--arab); }
+  button { font-family: inherit; }
+  ::selection { background: var(--accent-weak); }
+
+  svg.ic { width: 18px; height: 18px; stroke: currentColor; fill: none;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+    flex: none; }
+
+  #app { display: grid; grid-template-columns: 244px 1fr; height: 100vh; }
+
+  /* ---------- Sidebar ---------- */
+  nav {
+    background: var(--surface); border-inline-end: 1px solid var(--line);
+    display: flex; flex-direction: column; padding: 16px 12px;
+    min-height: 0; overflow-y: auto;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 9px; padding: 6px 10px 18px;
+    font-weight: 650; font-size: 16px; letter-spacing: -.01em;
+    color: var(--ink);
+  }
+  .brand .dot { width: 22px; height: 22px; border-radius: 7px;
+    background: var(--accent); display: grid; place-items: center; }
+  .brand .dot svg { stroke: #fff; width: 14px; height: 14px; }
+  .navItem {
+    display: flex; align-items: center; gap: 11px; width: 100%;
+    padding: 9px 11px; border: 0; background: none; cursor: pointer;
+    color: var(--muted); border-radius: 8px; font-size: 14.5px;
+    text-align: start; margin-bottom: 2px; transition: background .12s, color .12s;
+  }
+  .navItem:hover { background: rgba(18,121,90,.06); color: var(--ink); }
+  .navItem.active { background: var(--accent-weak); color: var(--accent-ink);
+    font-weight: 600; }
+  .navItem.active svg { stroke: var(--accent); }
+  .navSpacer { flex: 1; }
+  .navSection { border-top: 1px solid var(--line); margin-top: 8px;
+    padding-top: 8px; }
+  .navItem.subtle { color: var(--faint); font-size: 13.5px; padding: 8px 11px; }
+  .navItem.updateItem { color: var(--accent-ink); background: var(--accent-weak);
+    font-weight: 600; font-size: 13.5px; }
+  .navItem.updateItem svg { stroke: var(--accent); }
+  .navItem.updateItem:hover { background: #dfeee7; }
+  #navStatus { font-size: 12px; color: var(--faint); padding: 6px 11px 2px;
+    line-height: 1.5; display: flex; align-items: center; gap: 7px; }
+  #navStatus .pulse { width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent); flex: none; }
+  #navStatus.off .pulse { background: var(--faint); }
+
+  /* ---------- Content ---------- */
+  section.view { display: none; height: 100vh; overflow-y: auto;
+    padding: 34px 40px 60px; }
+  section.view.active { display: block; }
+  .viewHead { max-width: 900px; margin: 0 auto 20px; }
+  .viewInner { max-width: 900px; margin: 0 auto; }
+  h1.title { font-size: 21px; font-weight: 650; letter-spacing: -.02em;
+    margin: 0 0 3px; }
+  .subtitle { color: var(--muted); font-size: 14px; }
+
+  /* ---------- Search ---------- */
+  .segmented { display: inline-flex; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 9px; padding: 3px;
+    gap: 2px; margin-bottom: 16px; }
+  .segmented button { border: 0; background: none; cursor: pointer;
+    padding: 6px 15px; border-radius: 7px; font-size: 13.5px;
+    color: var(--muted); font-weight: 500; }
+  .segmented button.active { background: var(--panel); color: var(--ink);
+    box-shadow: 0 1px 2px rgba(0,0,0,.06); font-weight: 600; }
+
+  .searchBar { display: flex; gap: 10px; align-items: stretch; }
+  .inputWrap { flex: 1; display: flex; align-items: center; gap: 9px;
+    background: var(--panel); border: 1px solid var(--line-strong);
+    border-radius: var(--radius); padding: 0 14px; transition: border-color .12s, box-shadow .12s; }
+  .inputWrap:focus-within { border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-weak); }
+  .inputWrap svg { stroke: var(--faint); }
+  .inputWrap input { flex: 1; border: 0; outline: none; background: none;
+    font-family: inherit; font-size: 15.5px; padding: 12px 0; color: var(--ink); }
+  .btn { border: 1px solid var(--line-strong); background: var(--panel);
+    color: var(--ink); border-radius: var(--radius); padding: 0 16px;
+    font-size: 14px; font-weight: 500; cursor: pointer; display: inline-flex;
+    align-items: center; gap: 7px; transition: background .12s, border-color .12s; }
+  .btn:hover { background: var(--surface); }
+  .btn.primary { background: var(--accent); border-color: var(--accent);
+    color: #fff; font-weight: 600; }
+  .btn.primary:hover { background: var(--accent-ink); }
+  .btn.sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
+  .btn.ghost { border-color: transparent; background: none; color: var(--muted); }
+  .btn.ghost:hover { background: var(--surface); color: var(--ink); }
+
+  .filters { display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    margin-top: 12px; font-size: 13.5px; color: var(--muted); }
+  .filters select { padding: 6px 10px; border-radius: 8px;
+    border: 1px solid var(--line-strong); font-family: inherit;
+    background: var(--panel); color: var(--ink); max-width: 220px; }
+  .authorFilter { display: inline-flex; flex-wrap: wrap; align-items: center;
+    gap: 6px; min-width: 220px; max-width: 380px; padding: 4px 6px;
+    border: 1px solid var(--line-strong); border-radius: 8px;
+    background: var(--panel); cursor: text; }
+  .authorFilter:focus-within { border-color: var(--accent); }
+  .authorFilter input { border: 0; outline: none; background: none; flex: 1;
+    min-width: 90px; font-family: inherit; font-size: 13.5px; color: var(--ink);
+    padding: 3px 2px; }
+  .authorFilter .chip { font-size: 12px; padding: 3px 5px 3px 10px; }
+  .switch { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+  .switch input { accent-color: var(--accent); }
+  .chip { display: inline-flex; align-items: center; gap: 7px;
+    background: var(--accent-weak); color: var(--accent-ink); font-weight: 600;
+    padding: 4px 6px 4px 12px; border-radius: 999px; font-size: 12.5px; }
+  .chip button { border: 0; background: none; cursor: pointer; color: inherit;
+    display: grid; place-items: center; padding: 2px; border-radius: 50%; }
+  .chip button:hover { background: rgba(12,92,68,.12); }
+  .overlay { position: fixed; inset: 0; background: rgba(20,30,25,.28);
+    display: none; align-items: center; justify-content: center; z-index: 60; }
+  .overlay.show { display: flex; }
+  .modal { width: min(460px, 92vw); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow);
+    padding: 20px; }
+  .modalHead { display: flex; align-items: center; justify-content: space-between;
+    font-size: 15px; font-weight: 650; margin-bottom: 16px; }
+  .mfLabel { display: block; font-size: 12.5px; color: var(--muted);
+    font-weight: 600; margin: 14px 0 6px; }
+  .mfInput { width: 100%; padding: 9px 12px; border: 1px solid var(--line-strong);
+    border-radius: 9px; font-size: 14px; font-family: inherit; background: var(--bg);
+    color: var(--ink); }
+  .mfInput:focus { outline: none; border-color: var(--accent); }
+  .chipField { display: flex; flex-wrap: wrap; gap: 7px; align-items: center;
+    padding: 7px; border: 1px solid var(--line-strong); border-radius: 9px;
+    min-height: 42px; background: var(--bg); cursor: text; }
+  .chipField:focus-within { border-color: var(--accent); }
+  .chipField input { border: 0; outline: none; background: none; flex: 1;
+    min-width: 120px; font-size: 14px; font-family: inherit; color: var(--ink);
+    padding: 4px 2px; }
+  .modalFoot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+  .hint { font-size: 12.5px; color: var(--faint); margin-top: 12px; }
+  .hint code { background: var(--surface); padding: 1px 6px; border-radius: 5px;
+    font-size: 12px; color: var(--muted); }
+
+  /* term groups */
+  .termGroup { background: var(--panel); border: 1px solid var(--line-strong);
+    border-radius: var(--radius); padding: 9px 11px; display: flex;
+    flex-wrap: wrap; gap: 7px; align-items: center; }
+  .termGroup.focused { border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-weak); }
+  .tchip { display: inline-flex; align-items: center; gap: 6px;
+    background: var(--accent-weak); color: var(--accent-ink); font-weight: 600;
+    font-size: 13.5px; padding: 4px 6px 4px 11px; border-radius: 8px; }
+  .tchip button { border: 0; background: none; cursor: pointer; color: inherit;
+    display: grid; place-items: center; padding: 0; }
+  .tchip.neg { background: #fbeae7; color: var(--err); }
+  .termGroup input { flex: 1; min-width: 150px; border: 0; outline: none;
+    font-family: inherit; font-size: 14.5px; background: none; padding: 5px 2px; }
+  .orSep { text-align: center; color: var(--faint); font-weight: 600;
+    font-size: 12px; letter-spacing: .04em; margin: 9px 0; text-transform: uppercase; }
+  .termActions { display: flex; gap: 9px; margin-top: 13px; align-items: center;
+    flex-wrap: wrap; }
+  #excludeArea { margin-top: 12px; }
+  #excludeArea .termGroup { border-color: #f0cfca; background: #fdf7f6; }
+
+  /* results */
+  #results, #docResults { margin-top: 22px; display: flex;
+    flex-direction: column; gap: 10px; }
+  .resultCount { font-size: 13px; color: var(--muted); margin-top: 18px; }
+  .hit { background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 15px 17px; cursor: pointer;
+    transition: border-color .12s, box-shadow .12s; }
+  .hit:hover { border-color: var(--line-strong); box-shadow: var(--shadow); }
+  .hit .top { display: flex; align-items: center; gap: 10px; margin-bottom: 7px;
+    flex-wrap: wrap; }
+  .hit .htitle { font-weight: 600; font-size: 14.5px; }
+  .hit .hauthor { color: var(--muted); font-size: 13px; }
+  .hit .meta { margin-inline-start: auto; display: flex; align-items: center;
+    gap: 8px; }
+  .pageTag { background: var(--surface); color: var(--ink); font-weight: 600;
+    font-size: 12.5px; padding: 3px 10px; border-radius: 7px; white-space: nowrap;
+    border: 1px solid var(--line); }
+  .rel { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
+    white-space: nowrap; cursor: help; }
+  .rel.exact { background: var(--accent-weak); color: var(--accent-ink); }
+  .rel.approx { background: #fbf1df; color: var(--warn); }
+  .hit .text { line-height: 1.9; font-size: 14.5px; color: #2a332e; }
+  mark { background: var(--hl); padding: 0 2px; border-radius: 3px; }
+  .empty { text-align: center; color: var(--faint); padding: 70px 20px;
+    font-size: 14px; }
+  .empty svg { stroke: var(--line-strong); width: 34px; height: 34px;
+    margin-bottom: 12px; }
+
+  /* ---------- Documents ---------- */
+  #docsToolbar { max-width: 900px; margin: 0 auto 14px; display: none;
+    align-items: center; gap: 16px; }
+  .docList { max-width: 900px; margin: 0 auto; border: 1px solid var(--line);
+    border-radius: var(--radius); overflow: hidden; background: var(--panel); }
+  .docRow { display: flex; align-items: center; gap: 14px; padding: 12px 16px;
+    border-bottom: 1px solid var(--line); }
+  .docRow:last-child { border-bottom: 0; }
+  .docRow:hover { background: var(--surface); }
+  .docRow input[type=checkbox] { accent-color: var(--accent); }
+  .docMain { flex: 1; min-width: 0; }
+  .docMain .dt { font-weight: 600; font-size: 14.5px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .docMain .dm { font-size: 12.5px; color: var(--muted); display: flex; gap: 10px;
+    margin-top: 2px; }
+  .docActions { display: flex; gap: 2px; flex: none; }
+  .iconBtn { width: 32px; height: 32px; border: 0; background: none;
+    border-radius: 8px; cursor: pointer; color: var(--muted);
+    display: grid; place-items: center; transition: background .12s, color .12s; }
+  .iconBtn:hover { background: var(--accent-weak); color: var(--accent-ink); }
+  .iconBtn.danger:hover { background: #fbeae7; color: var(--err); }
+
+  /* ---------- Upload ---------- */
+  #dropzone { max-width: 900px; margin: 0 auto; border: 1.5px dashed var(--line-strong);
+    border-radius: 14px; background: var(--surface); padding: 54px 30px;
+    text-align: center; transition: border-color .15s, background .15s; }
+  #dropzone.drag { border-color: var(--accent); background: var(--accent-weak); }
+  #dropzone .dzIcon { width: 52px; height: 52px; border-radius: 14px;
+    background: var(--panel); border: 1px solid var(--line);
+    display: inline-grid; place-items: center; margin-bottom: 16px; }
+  #dropzone .dzIcon svg { width: 24px; height: 24px; stroke: var(--accent); }
+  #dropzone h3 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+  #dropzone p { margin: 0 0 18px; color: var(--muted); font-size: 13.5px; }
+  #uploadJobs { max-width: 900px; margin: 20px auto 0; display: flex;
+    flex-direction: column; gap: 8px; }
+  .ujob { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 9px; padding: 11px 15px; display: flex; gap: 12px;
+    align-items: center; font-size: 13.5px; }
+  .ujob svg { stroke: var(--faint); }
+  .ujob .st { margin-inline-start: auto; color: var(--muted); font-size: 12.5px;
+    white-space: nowrap; }
+  .ujob.done .st { color: var(--accent-ink); font-weight: 600; }
+  .ujob.err .st { color: var(--err); font-weight: 600; }
+  .ujob.skip { opacity: .6; }
+
+  /* ---------- Reader (research view) ---------- */
+  #reader { position: fixed; inset: 0; background: var(--bg); display: none;
+    z-index: 60; flex-direction: column; }
+  #reader.open { display: flex; }
+  #reader header { display: flex; align-items: center; gap: 14px;
+    padding: 12px 18px; border-bottom: 1px solid var(--line); flex: none; }
+  #reader .rTitle { font-weight: 650; font-size: 15px; }
+  #reader .rAuthor { color: var(--muted); font-size: 13px; }
+  #reader .rNav { margin-inline-start: auto; display: flex; align-items: center;
+    gap: 6px; }
+  #rPageInd { font-size: 13px; color: var(--muted); min-width: 96px;
+    text-align: center; }
+  #reader .rBody { flex: 1; display: grid; grid-template-columns: 340px 1fr;
+    min-height: 0; }
+  #rSidebar { border-inline-end: 1px solid var(--line); display: flex;
+    flex-direction: column; min-height: 0; background: var(--surface); }
+  #rSearchBar { padding: 12px; border-bottom: 1px solid var(--line); flex: none; }
+  #rResults { overflow-y: auto; padding: 8px; display: flex;
+    flex-direction: column; gap: 6px; }
+  .rHit { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px 12px; cursor: pointer; font-size: 13px; }
+  .rHit:hover { border-color: var(--accent); }
+  .rHit.active { border-color: var(--accent); background: var(--accent-weak); }
+  .rHit .rp { font-weight: 600; color: var(--accent-ink); font-size: 12px;
+    margin-bottom: 3px; }
+  .rHit .rtext { color: #3a423d; line-height: 1.7; }
+  #rReading { overflow-y: auto; padding: 30px 40px; line-height: 2.05;
+    font-size: 16.5px; white-space: pre-wrap; word-break: break-word;
+    -webkit-user-select: text; user-select: text; cursor: text; }
+  /* Text in Treffern und Leser markierbar/kopierbar */
+  .hit .text, .rHit .rtext, #rReading, .passageBox {
+    -webkit-user-select: text; user-select: text; }
+  #rReading img { max-width: 100%; display: block; margin: 0 auto;
+    box-shadow: var(--shadow); border-radius: 6px; }
+  .passageBox { background: #fffdf3; border-inline-start: 3px solid var(--accent);
+    padding: 8px 13px; border-radius: 8px; }
+  #rReading mark { font-weight: 600; }
+
+  /* toast + error */
+  #toast, #errbar { position: fixed; bottom: 18px; left: 50%;
+    transform: translateX(-50%); padding: 11px 20px; border-radius: 10px;
+    font-size: 14px; z-index: 99; box-shadow: var(--shadow); display: none; }
+  #toast { background: var(--ink); color: #fff; }
+  #errbar { background: var(--err); color: #fff; }
+  .spin { width: 14px; height: 14px; border-radius: 50%; flex: none;
+    border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
+    animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <nav>
+    <div class="brand">
+      <span class="dot" id="brandIcon"></span> AICP Research
+    </div>
+    <button class="navItem" data-view="search"><span class="ci" data-ic="search"></span><span id="navSearch"></span></button>
+    <button class="navItem" data-view="docs"><span class="ci" data-ic="docs"></span><span id="navDocs"></span></button>
+    <button class="navItem" data-view="upload"><span class="ci" data-ic="upload"></span><span id="navUpload"></span></button>
+    <div class="navSpacer"></div>
+    <div id="navStatus"><span class="pulse"></span><span id="navStatusText"></span></div>
+    <div class="navSection">
+      <button class="navItem updateItem" id="updateBtn" style="display:none"><span class="ci" data-ic="download"></span><span id="updateLabel"></span></button>
+      <button class="navItem subtle" id="exportBtn"><span class="ci" data-ic="export"></span><span id="exportLabel"></span></button>
+      <button class="navItem subtle" id="importBtn"><span class="ci" data-ic="import"></span><span id="importLabel"></span></button>
+      <button class="navItem subtle" id="langBtn"><span class="ci" data-ic="globe"></span><span id="langLabel"></span></button>
+    </div>
+  </nav>
+
+  <!-- Suche -->
+  <section class="view active" id="view-search">
+    <div class="viewHead"><h1 class="title" id="titleSearch"></h1></div>
+    <div class="viewInner">
+      <div id="mGroups"></div>
+      <div class="termActions">
+        <button id="mSearchBtn" class="btn primary"></button>
+        <button id="mAddGroup" class="btn sm"></button>
+        <button id="mToggleExclude" class="btn sm"></button>
+      </div>
+      <div id="mExcludeArea" style="display:none">
+        <div class="orSep" id="mExcludeLabel"></div>
+        <div class="termGroup" id="mExcludeGroup"><input id="mExcludeInput"></div>
+      </div>
+
+      <div class="filters">
+        <label><span id="authorLabel"></span>
+          <span class="authorFilter" id="authorFilter">
+            <input id="authorSel" list="authorList" autocomplete="off">
+            <datalist id="authorList"></datalist>
+          </span></label>
+        <label class="switch"><input type="checkbox" id="semantic" checked>
+          <span id="semanticLabel"></span></label>
+        <span id="count" class="resultCount" style="margin:0"></span>
+      </div>
+      <div id="results"></div>
+    </div>
+  </section>
+
+  <!-- Dokumente -->
+  <section class="view" id="view-docs">
+    <div class="viewHead"><h1 class="title" id="titleDocs"></h1></div>
+    <div id="docsToolbar">
+      <label class="switch" style="font-size:13.5px;color:var(--muted)">
+        <input type="checkbox" id="selAll"> <span id="selAllLabel"></span></label>
+      <button id="exportSelBtn" class="btn sm"></button>
+      <span id="selCount" style="font-size:13px;color:var(--muted)"></span>
+    </div>
+    <div class="docList" id="docList"></div>
+    <div id="docsEmpty" class="empty" style="display:none"></div>
+  </section>
+
+  <!-- Hochladen -->
+  <section class="view" id="view-upload">
+    <div class="viewHead"><h1 class="title" id="titleUpload"></h1></div>
+    <div id="dropzone">
+      <div class="dzIcon"><span class="ci" data-ic="upload"></span></div>
+      <h3 id="dzTitle"></h3>
+      <p id="dzHint"></p>
+      <button id="pickBtn" class="btn primary"></button>
+    </div>
+    <div id="jobsBar" style="max-width:900px;margin:20px auto 0;display:none;justify-content:flex-end;">
+      <button id="clearJobsBtn" class="btn sm ghost"></button>
+    </div>
+    <div id="uploadJobs"></div>
+  </section>
+</div>
+
+<!-- Leser / Recherche-Fenster -->
+<div id="reader">
+  <header>
+    <button class="iconBtn" id="rClose"><span class="ci" data-ic="close"></span></button>
+    <div>
+      <div class="rTitle" id="rTitle"></div>
+      <div class="rAuthor" id="rAuthor"></div>
+    </div>
+    <div class="rNav">
+      <button class="btn sm" id="rImgToggle" style="display:none"></button>
+      <button class="iconBtn" id="rPrev"><span class="ci" data-ic="prev"></span></button>
+      <span id="rPageInd"></span>
+      <button class="iconBtn" id="rNext"><span class="ci" data-ic="next"></span></button>
+    </div>
+  </header>
+  <div class="rBody">
+    <div id="rSidebar">
+      <div id="rSearchBar">
+        <div id="rGroups"></div>
+        <div class="termActions" style="margin-top:9px">
+          <button id="rSearchBtn" class="btn sm primary"></button>
+          <button id="rAddGroup" class="btn sm"></button>
+          <button id="rToggleExclude" class="btn sm"></button>
+        </div>
+        <div id="rExcludeArea" style="display:none;margin-top:8px">
+          <div class="orSep" id="rExcludeLabel"></div>
+          <div class="termGroup" id="rExcludeGroup"><input id="rExcludeInput"></div>
+        </div>
+      </div>
+      <div id="rResults"></div>
+    </div>
+    <div id="rReading"></div>
+  </div>
+</div>
+
+<div id="editOverlay" class="overlay">
+  <div class="modal">
+    <div class="modalHead"><span id="editHead"></span>
+      <button class="iconBtn" id="editClose"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <label class="mfLabel" id="fldTitleLabel"></label>
+    <input id="editTitle" class="mfInput" type="text">
+    <label class="mfLabel" id="fldAuthorsLabel"></label>
+    <div id="authorChips" class="chipField"></div>
+    <div class="modalFoot">
+      <button class="btn ghost" id="editCancel"></button>
+      <button class="btn primary" id="editSave"></button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="errbar"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+
+/* ---------- Icons (feather-style) ---------- */
+const ICONS = {
+  logo: '<path d="M4 19V5a2 2 0 0 1 2-2h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M14 3v5h5"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+  docs: '<path d="M4 5a2 2 0 0 1 2-2h4l2 3h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>',
+  upload: '<path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 20h16"/>',
+  export: '<path d="M12 4v12"/><path d="m7 11 5 5 5-5"/><path d="M4 20h16"/>',
+  import: '<path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 20h16"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"/>',
+  open: '<path d="M12 7v14"/><path d="M3 6a2 2 0 0 1 2-2h4a3 3 0 0 1 3 3 3 3 0 0 1 3-3h4a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-5a2 2 0 0 0-2 2 2 2 0 0 0-2-2H5a2 2 0 0 1-2-2z"/>',
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  rescan: '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/>',
+  trash: '<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/>',
+  close: '<path d="M18 6 6 18M6 6l12 12"/>',
+  prev: '<path d="m15 18-6-6 6-6"/>',
+  next: '<path d="m9 18 6-6-6-6"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  page: '<path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>',
+  download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+};
+function svg(name) { return `<svg class="ic" viewBox="0 0 24 24">${ICONS[name]||""}</svg>`; }
+function paintIcons(root) {
+  (root||document).querySelectorAll(".ci[data-ic]").forEach(e => {
+    if (!e.dataset.done) { e.innerHTML = svg(e.dataset.ic); e.dataset.done = "1"; }
+  });
+}
+
+/* ---------- State ---------- */
+let selectedDoc = null, selectedDocTitle = "";
+let lang = "de";
+let selectedForExport = new Set();
+// Zwei Such-Panels mit gleicher Bedienung: Hauptsuche und Leser
+const mainState = { groups: [[]], excludes: [], excludeOpen: false };
+const readerState = { groups: [[]], excludes: [], excludeOpen: false };
+
+/* ---------- Übersetzungen ---------- */
+const T = {
+  de: {
+    dir: "ltr", htmlLang: "de", langLabel: "العربية",
+    navSearch: "Suche", navDocs: "Dokumente", navUpload: "Hochladen",
+    titleSearch: "Suche", titleDocs: "Dokumente", titleUpload: "Hochladen",
+    noDocs: "Noch keine Dokumente – lade welche hoch.",
+    open: "Öffnen", edit: "Bearbeiten", rescan: "Neu scannen", del: "Löschen",
+    pages: "Seiten", passages: "Abschnitte", pagePrefix: "S.",
+    tabFree: "Freitext", tabTerms: "Begriffe",
+    qPlaceholder: "In allen Büchern suchen …",
+    searchBtn: "Suchen",
+    authorLabel: "Autor", all: "alle", semanticLabel: "semantische Suche",
+    syntaxHint: 'Zwei Wörter = beide nötig · <code>|</code> = oder · <code>-wort</code> = ausschließen · <code>"…"</code> = exakte Wortgruppe',
+    termFirst: "Begriff eingeben, Enter (alle müssen vorkommen)",
+    termMore: "weiterer Begriff …", orSep: "oder",
+    addGroup: "＋ ODER-Gruppe", toggleExclude: "Ausschluss",
+    excludeLabel: "darf nicht vorkommen", excludePlaceholder: "Wort, dann Enter",
+    results: "Treffer", empty: "Keine Treffer.",
+    start: "Gib einen Suchbegriff ein.",
+    confirmDelete: "Wirklich löschen? – ",
+    promptTitle: "Titel:", promptAuthor: "Autor:",
+    editTitle: "Dokument bearbeiten", fldTitle: "Titel", fldAuthors: "Autoren",
+    authorAdd: "Autor eingeben, dann Enter", save: "Speichern", cancel: "Abbrechen",
+    download: "Herunterladen", downloadDone: "Datei gespeichert",
+    dzTitle: "Dokumente hinzufügen",
+    dzHint: "Dateien hierher ziehen (auch mehrere) oder auswählen. PDF, Word, Text.",
+    pickBtn: "Dateien auswählen",
+    clearDone: "Erledigte entfernen",
+    updateAvail: "Update verfügbar",
+    updateConfirm: (v)=>`Update auf Version ${v} verfügbar.\n\nJetzt herunterladen und installieren? Die App wird dabei kurz geschlossen und danach in der neuen Version fortgesetzt. Deine Bibliothek bleibt erhalten.`,
+    updating: "Update wird geladen …", updateStarting: "Installer wird gestartet …",
+    updateErr: "Update fehlgeschlagen",
+    uploading: "wird übertragen …",
+    relExact: "exakt", relApprox: "ungefähr",
+    relExactHint: "Seitenzahl stimmt mit dem Original überein – zitierfähig.",
+    relApproxHint: "Seitenzahl per Näherung – kann bei langen Dokumenten leicht abweichen.",
+    exportLabel: "Bibliothek exportieren", importLabel: "Bibliothek importieren",
+    exportDone: "Exportiert", importDone: "Importiert",
+    selAllLabel: "Alle", exportSel: "Auswahl exportieren",
+    selectedN: "ausgewählt", selectNone: "Bitte zuerst Bücher auswählen.",
+    docFilter: "nur in diesem Dokument",
+    readerSearch: "In diesem Dokument suchen …",
+    readerSearchPrompt: "Suche in diesem Dokument, um Treffer zu sehen.",
+    viewOriginal: "Originalseite", viewText: "Textansicht",
+    jobs: { wartet: "wartet", verarbeite: "wird verarbeitet",
+            vektorisiere: "wird vektorisiert", fertig: "fertig",
+            fehler: "Fehler", "übersprungen": "übersprungen" },
+    sem: { aus: "Semantik aus", "lädt": "Modell lädt …",
+           bereit: "Semantik bereit", fehler: "Semantik n/a" },
+  },
+  ar: {
+    dir: "rtl", htmlLang: "ar", langLabel: "Deutsch",
+    navSearch: "بحث", navDocs: "المستندات", navUpload: "رفع",
+    titleSearch: "البحث", titleDocs: "المستندات", titleUpload: "رفع الملفات",
+    noDocs: "لا توجد مستندات بعد – ارفع بعضها.",
+    open: "فتح", edit: "تعديل", rescan: "إعادة المسح", del: "حذف",
+    pages: "صفحة", passages: "مقطع", pagePrefix: "ص",
+    tabFree: "نص حر", tabTerms: "مصطلحات",
+    qPlaceholder: "ابحث في كل الكتب …",
+    searchBtn: "بحث",
+    authorLabel: "المؤلف", all: "الكل", semanticLabel: "بحث دلالي",
+    syntaxHint: 'كلمتان = كلاهما مطلوب · <code>|</code> = أو · <code>-كلمة</code> = استبعاد · <code>"…"</code> = عبارة حرفية',
+    termFirst: "اكتب مصطلحاً ثم Enter (يجب أن ترد كلها)",
+    termMore: "مصطلح آخر …", orSep: "أو",
+    addGroup: "＋ مجموعة أو", toggleExclude: "استبعاد",
+    excludeLabel: "يجب ألا يرد", excludePlaceholder: "كلمة ثم Enter",
+    results: "نتيجة", empty: "لا نتائج.",
+    start: "اكتب كلمة للبحث.",
+    confirmDelete: "حذف؟ – ",
+    promptTitle: "العنوان:", promptAuthor: "المؤلف:",
+    editTitle: "تعديل المستند", fldTitle: "العنوان", fldAuthors: "المؤلفون",
+    authorAdd: "اكتب مؤلفاً ثم Enter", save: "حفظ", cancel: "إلغاء",
+    download: "تنزيل", downloadDone: "تم حفظ الملف",
+    dzTitle: "إضافة مستندات",
+    dzHint: "اسحب الملفات إلى هنا (عدة ملفات) أو اخترها. PDF، Word، نص.",
+    pickBtn: "اختيار الملفات",
+    clearDone: "إزالة المكتملة",
+    updateAvail: "تحديث متوفر",
+    updateConfirm: (v)=>`تحديث إلى الإصدار ${v} متوفر.\n\nتنزيله وتثبيته الآن؟ سيُغلق التطبيق للحظة ثم يُستأنف بالإصدار الجديد. مكتبتك تبقى محفوظة.`,
+    updating: "جارٍ تنزيل التحديث …", updateStarting: "يبدأ المثبّت …",
+    updateErr: "فشل التحديث",
+    uploading: "جارٍ النقل …",
+    relExact: "مطابق", relApprox: "تقريبي",
+    relExactHint: "رقم الصفحة مطابق للأصل – صالح للاقتباس.",
+    relApproxHint: "رقم الصفحة تقريبي – قد يختلف قليلاً في المستندات الطويلة.",
+    exportLabel: "تصدير المكتبة", importLabel: "استيراد مكتبة",
+    exportDone: "تم التصدير", importDone: "تم الاستيراد",
+    selAllLabel: "الكل", exportSel: "تصدير المحدد",
+    selectedN: "محدد", selectNone: "اختر كتباً أولاً.",
+    docFilter: "في هذا المستند فقط",
+    readerSearch: "ابحث في هذا المستند …",
+    readerSearchPrompt: "ابحث في هذا المستند لعرض النتائج.",
+    viewOriginal: "الصفحة الأصلية", viewText: "عرض النص",
+    jobs: { wartet: "في الانتظار", verarbeite: "قيد المعالجة",
+            vektorisiere: "حساب المتجهات", fertig: "تم",
+            fehler: "خطأ", "übersprungen": "تم التخطي" },
+    sem: { aus: "الدلالي معطل", "lädt": "يُحمّل النموذج …",
+           bereit: "الدلالي جاهز", fehler: "غير متاح" },
+  },
+};
+function t(k) { return T[lang][k]; }
+
+function applyLang(l) {
+  lang = l; const d = T[l];
+  document.documentElement.lang = d.htmlLang;
+  document.documentElement.dir = d.dir;
+  const set = (id, v) => { const e = $("#"+id); if (e) e.textContent = v; };
+  set("navSearch", d.navSearch); set("navDocs", d.navDocs);
+  set("navUpload", d.navUpload); set("titleSearch", d.titleSearch);
+  set("titleDocs", d.titleDocs); set("titleUpload", d.titleUpload);
+  set("mSearchBtn", d.searchBtn); set("rSearchBtn", d.searchBtn);
+  set("mAddGroup", d.addGroup); set("rAddGroup", d.addGroup);
+  set("mToggleExclude", d.toggleExclude); set("rToggleExclude", d.toggleExclude);
+  set("mExcludeLabel", d.excludeLabel); set("rExcludeLabel", d.excludeLabel);
+  set("authorLabel", d.authorLabel); set("semanticLabel", d.semanticLabel);
+  set("dzTitle", d.dzTitle); set("dzHint", d.dzHint); set("pickBtn", d.pickBtn);
+  set("clearJobsBtn", d.clearDone); set("updateLabel", d.updateAvail);
+  set("exportLabel", d.exportLabel); set("importLabel", d.importLabel);
+  set("langLabel", d.langLabel); set("selAllLabel", d.selAllLabel);
+  $("#mExcludeInput").placeholder = d.excludePlaceholder;
+  $("#rExcludeInput").placeholder = d.excludePlaceholder;
+  $("#authorSel").placeholder = d.all;
+  if (!$("#results").querySelector(".hit"))
+    $("#results").innerHTML = emptyBox(d.start);
+  renderPanel(MAIN); renderPanel(READER);
+  updateSelCount(); refreshDocs(); refreshStatusLabel();
+}
+function emptyBox(msg) {
+  return `<div class="empty">${svg("search")}<div>${esc(msg)}</div></div>`;
+}
+
+/* ---------- API ---------- */
+async function _get(p){ return (await fetch(p)).json(); }
+async function _post(p,b){ return (await fetch(p,{method:"POST",
+  headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})})).json(); }
+const API = {
+  status:()=>_get("/api/status"), settings:()=>_get("/api/settings"),
+  set_settings:l=>_post("/api/settings",{lang:l}),
+  list_documents:()=>_get("/api/documents"),
+  document:id=>_post("/api/document",{id}),
+  pick_and_index:()=>_post("/api/pick"),
+  update_document:(id,title,authors)=>_post("/api/update",{id,title,authors}),
+  download_document:id=>_post("/api/download_document",{id}),
+  clear_jobs:()=>_post("/api/clear_jobs",{}),
+  apply_update:()=>_post("/api/apply_update",{}),
+  delete_document:id=>_post("/api/delete",{id}),
+  reindex_document:(id,ocr)=>_post("/api/reindex",{id,ocr}),
+  search:(q,authors,document_id,semantic)=>_post("/api/search",{q,authors,document_id,semantic}),
+  search_terms:(groups,exclude,authors,document_id)=>_post("/api/search",{mode:"terms",groups,exclude,authors,document_id}),
+  passage:id=>_post("/api/passage",{id}),
+  page:(document_id,page_no)=>_post("/api/page",{document_id,page_no}),
+  export_library:ids=>_post("/api/export_library",ids?{ids}:{}),
+  import_library:()=>_post("/api/import_library"),
+  upload:file=>fetch("/api/upload",{method:"POST",
+    headers:{"X-Filename":encodeURIComponent(file.name)},body:file}).then(r=>r.json()),
+};
+const api=()=>API;
+
+function esc(s){return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function splitAuthors(a){if(!a)return[];return String(a).split(/\s*[؛;]\s*/).map(s=>s.trim()).filter(Boolean);}
+function authorText(a){const p=splitAuthors(a);return p.length?p.join(" · "):"—";}
+function highlight(sn,ws){let o=esc(sn);for(const w of(ws||[])){if(!w)continue;o=o.split(esc(w)).join("<mark>"+esc(w)+"</mark>");}return o;}
+function showError(m){const e=$("#errbar");e.textContent=m;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(()=>e.style.display="none",7000);}
+function showToast(m){const e=$("#toast");e.textContent=m;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(()=>e.style.display="none",5000);}
+function relTag(rel){
+  if(rel==="ungefähr") return `<span class="rel approx" title="${esc(t('relApproxHint'))}">${esc(t('relApprox'))}</span>`;
+  return `<span class="rel exact" title="${esc(t('relExactHint'))}">${esc(t('relExact'))}</span>`;
+}
+function pageStr(h){const p=t("pagePrefix");return h.page_from===h.page_to?`${p} ${h.page_from}`:`${p} ${h.page_from}–${h.page_to}`;}
+
+/* ---------- Navigation ---------- */
+function setView(v){
+  $$("nav .navItem[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===v));
+  $$("section.view").forEach(s=>s.classList.toggle("active",s.id==="view-"+v));
+  if(v==="docs") refreshDocs();
+  if(v==="search"){const i=document.querySelector("#mGroups .termGroup input");if(i)i.focus();}
+}
+$$("nav .navItem[data-view]").forEach(b=>b.onclick=()=>setView(b.dataset.view));
+
+/* ---------- Autorenfilter (Mehrfachauswahl) ---------- */
+let authorFilterSel=[];
+function fillAuthorSel(authors){
+  const dl=$("#authorList");if(!dl)return;
+  // Bereits gewählte Autoren nicht mehr vorschlagen
+  const list=[...new Set(authors)].filter(a=>!authorFilterSel.includes(a))
+    .sort((a,b)=>a.localeCompare(b,"ar"));
+  dl.innerHTML=list.map(a=>`<option value="${esc(a)}"></option>`).join("");
+}
+function removeAuthorFilter(name){
+  authorFilterSel=authorFilterSel.filter(x=>x!==name);
+  renderAuthorFilter();runSearch();
+}
+function renderAuthorFilter(){
+  const box=$("#authorFilter"),inp=$("#authorSel");if(!box||!inp)return;
+  box.querySelectorAll(".chip").forEach(c=>c.remove());
+  authorFilterSel.forEach(a=>{
+    const c=document.createElement("span");c.className="chip";
+    c.innerHTML=`<span>${esc(a)}</span><button type="button">${svg("x")}</button>`;
+    c.querySelector("button").addEventListener("click",e=>{
+      e.stopPropagation();e.preventDefault();removeAuthorFilter(a);});
+    box.insertBefore(c,inp);
+  });
+}
+function addAuthorFilter(name){
+  name=(name||"").trim();
+  if(!name)return;
+  if(!authorFilterSel.includes(name)){authorFilterSel.push(name);}
+  $("#authorSel").value="";
+  renderAuthorFilter();runSearch();
+}
+async function refreshDocs(){
+  const docs=await api().list_documents();
+  // Autorenfilter aus allen Dokumenten füllen (auch ohne vorherige Suche)
+  const auth=[];for(const d of docs)auth.push(...splitAuthors(d.author));
+  fillAuthorSel(auth);
+  const box=$("#docList");box.innerHTML="";
+  box.style.display=docs.length?"":"none";
+  $("#docsToolbar").style.display=docs.length?"flex":"none";
+  $("#docsEmpty").style.display=docs.length?"none":"";
+  $("#docsEmpty").textContent=t("noDocs");
+  const ids=new Set(docs.map(d=>d.id));
+  selectedForExport=new Set([...selectedForExport].filter(i=>ids.has(i)));
+  for(const d of docs){
+    const row=document.createElement("div");row.className="docRow";
+    row.innerHTML=`
+      <input type="checkbox" class="selBox" data-id="${d.id}" ${selectedForExport.has(d.id)?"checked":""}>
+      <div class="docMain">
+        <div class="dt">${esc(d.title)}</div>
+        <div class="dm"><span>${esc(authorText(d.author))}</span>
+          <span>${d.page_count||"?"} ${esc(t("pages"))}</span>
+          <span>${d.passage_count} ${esc(t("passages"))}</span></div>
+      </div>
+      <div class="docActions">
+        <button class="iconBtn" data-act="open" title="${esc(t("open"))}">${svg("open")}</button>
+        <button class="iconBtn" data-act="download" title="${esc(t("download"))}">${svg("download")}</button>
+        <button class="iconBtn" data-act="edit" title="${esc(t("edit"))}">${svg("edit")}</button>
+        <button class="iconBtn" data-act="rescan" title="${esc(t("rescan"))}">${svg("rescan")}</button>
+        <button class="iconBtn danger" data-act="del" title="${esc(t("del"))}">${svg("trash")}</button>
+      </div>`;
+    row.addEventListener("click",e=>{
+      const box=e.target.closest("[data-act],.selBox");
+      if(e.target.classList.contains("selBox")){
+        const id=+e.target.dataset.id;
+        e.target.checked?selectedForExport.add(id):selectedForExport.delete(id);
+        updateSelCount();return;
+      }
+      const act=box&&box.dataset&&box.dataset.act;if(!act)return;
+      if(act==="del"){ if(confirm(t("confirmDelete")+d.title)) api().delete_document(d.id).then(refreshDocs); }
+      else if(act==="rescan"){ api().reindex_document(d.id,false).then(r=>{if(r&&r.error)showError(r.error);refreshStatus();}); }
+      else if(act==="edit"){ openEditDialog(d); }
+      else if(act==="download"){ api().download_document(d.id).then(r=>{
+        if(r&&r.error)showError(r.error); else if(r&&r.path)showToast(t("downloadDone")); }); }
+      else if(act==="open"){ openReader(d.id); }
+    });
+    box.appendChild(row);
+  }
+  updateSelCount();
+}
+function updateSelCount(){
+  const n=selectedForExport.size;
+  const c=$("#selCount");if(c)c.textContent=n?`${n} ${t("selectedN")}`:"";
+  const b=$("#exportSelBtn");if(b)b.textContent=n?`${t("exportSel")} (${n})`:t("exportSel");
+}
+
+// ---- Bearbeiten-Dialog (Titel + mehrere Autoren) ----------------------
+let editState={id:null,authors:[],origTitle:""};
+function renderAuthorChips(){
+  const box=$("#authorChips"),inp=$("#authorChipInput");
+  box.querySelectorAll(".chip").forEach(c=>c.remove());
+  editState.authors.forEach((a,i)=>{
+    const c=document.createElement("span");c.className="chip";
+    c.innerHTML=`<span>${esc(a)}</span><button type="button">${svg("x")}</button>`;
+    c.querySelector("button").onclick=()=>{editState.authors.splice(i,1);renderAuthorChips();};
+    box.insertBefore(c,inp);
+  });
+}
+function addAuthorFromInput(){
+  const inp=$("#authorChipInput");if(!inp)return;
+  const v=inp.value.trim();
+  if(v&&!editState.authors.includes(v))editState.authors.push(v);
+  inp.value="";renderAuthorChips();
+}
+function openEditDialog(d){
+  editState={id:d.id,authors:splitAuthors(d.author),origTitle:d.title||""};
+  $("#editHead").textContent=t("editTitle");
+  $("#fldTitleLabel").textContent=t("fldTitle");
+  $("#fldAuthorsLabel").textContent=t("fldAuthors");
+  $("#editCancel").textContent=t("cancel");
+  $("#editSave").textContent=t("save");
+  $("#editTitle").value=d.title||"";
+  const box=$("#authorChips");box.innerHTML="";
+  const inp=document.createElement("input");inp.id="authorChipInput";
+  inp.placeholder=t("authorAdd");inp.setAttribute("dir","auto");
+  box.appendChild(inp);
+  inp.addEventListener("keydown",e=>{
+    if(e.key==="Enter"){e.preventDefault();addAuthorFromInput();}
+    else if(e.key==="Backspace"&&!inp.value&&editState.authors.length){
+      editState.authors.pop();renderAuthorChips();}
+  });
+  box.onclick=e=>{if(e.target===box)inp.focus();};
+  renderAuthorChips();
+  $("#editOverlay").classList.add("show");
+  $("#editTitle").focus();
+}
+function closeEditDialog(){$("#editOverlay").classList.remove("show");}
+function saveEditDialog(){
+  addAuthorFromInput();
+  const title=$("#editTitle").value.trim()||editState.origTitle;
+  api().update_document(editState.id,title,editState.authors).then(r=>{
+    if(r&&r.error){showError(r.error);return;}
+    closeEditDialog();refreshDocs();
+  });
+}
+$("#editClose").onclick=closeEditDialog;
+$("#editCancel").onclick=closeEditDialog;
+$("#editSave").onclick=saveEditDialog;
+$("#editOverlay").onclick=e=>{if(e.target===$("#editOverlay"))closeEditDialog();};
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&$("#editOverlay").classList.contains("show"))closeEditDialog();});
+
+$("#selAll").onchange=e=>{
+  $$(".selBox").forEach(b=>{b.checked=e.target.checked;const id=+b.dataset.id;
+    e.target.checked?selectedForExport.add(id):selectedForExport.delete(id);});
+  updateSelCount();
+};
+
+/* ---------- Status ---------- */
+let _lastStatus=null;
+function refreshStatusLabel(){
+  if(!_lastStatus)return;
+  const el=$("#navStatus");const s=_lastStatus.semantik;
+  $("#navStatusText").textContent=T[lang].sem[s]||"";
+  el.classList.toggle("off",s!=="bereit"&&s!=="lädt");
+}
+function jobLabel(j){return j.error||T[lang].jobs[j.state]||j.state;}
+async function refreshStatus(){
+  try{
+    const st=await api().status();_lastStatus=st;refreshStatusLabel();
+    const ub=$("#updateBtn");
+    if(ub){ const up=st.update||{}; ub.style.display=up.available?"flex":"none";
+      if(up.available&&up.latest)ub.title=`${T[lang].updateAvail}: ${up.latest}`; }
+    const jb=$("#uploadJobs");jb.innerHTML="";let active=false,doneCount=0;
+    for(const j of st.jobs){
+      if(j.file==="Export"||j.file==="Import"||j.file==="Update")continue;
+      const el=document.createElement("div");
+      el.className="ujob"+(j.state==="fehler"?" err":j.state==="fertig"?" done":j.state==="übersprungen"?" skip":"");
+      const label=j.state==="übersprungen"?`${t("jobs")&&T[lang].jobs["übersprungen"]} – ${esc(j.error||"")}`:esc(jobLabel(j));
+      el.innerHTML=`${svg("page")}<span>${esc(j.file)}</span><span class="st">${label}</span>`;
+      jb.appendChild(el);
+      if(["fertig","fehler","übersprungen"].includes(j.state))doneCount++;
+      else active=true;
+    }
+    $("#jobsBar").style.display=doneCount?"flex":"none";
+    if(active||st.semantik==="lädt")setTimeout(refreshStatus,1200);
+    if(!active)refreshDocs();
+  }catch(e){setTimeout(refreshStatus,500);}
+}
+
+/* ---------- Upload ---------- */
+const dz=$("#dropzone");
+["dragenter","dragover"].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();dz.classList.add("drag");}));
+["dragleave","drop"].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();dz.classList.remove("drag");}));
+dz.addEventListener("drop",async e=>{
+  const files=[...(e.dataTransfer?e.dataTransfer.files:[])];
+  for(const f of files){
+    if(!/\.(pdf|docx|txt)$/i.test(f.name)){showError(f.name+" – ?");continue;}
+    const el=document.createElement("div");el.className="ujob";
+    el.innerHTML=`${svg("page")}<span>${esc(f.name)}</span><span class="st">${esc(t("uploading"))}</span>`;
+    $("#uploadJobs").prepend(el);
+    try{const r=await api().upload(f);if(r&&r.error)showError(r.error);}catch(err){showError(String(err));}
+  }
+  refreshStatus();
+});
+$("#pickBtn").onclick=async()=>{try{const r=await api().pick_and_index();if(r&&r.error)showError(r.error);}catch(e){showError(String(e));}refreshStatus();};
+$("#clearJobsBtn").onclick=async()=>{try{await api().clear_jobs();}catch(e){}refreshStatus();};
+
+/* ---------- Such-Panel (überall gleich: Felder statt Syntax) ---------- */
+// cfg: { groupsBox, excludeArea, excludeGroup, excludeInput, state, onSearch }
+function renderPanel(cfg){
+  const box=$(cfg.groupsBox);if(!box)return;box.innerHTML="";
+  const st=cfg.state;
+  st.groups.forEach((terms,gi)=>{
+    if(gi>0){const s=document.createElement("div");s.className="orSep";s.textContent=t("orSep");box.appendChild(s);}
+    const g=document.createElement("div");g.className="termGroup";
+    terms.forEach((term,ti)=>{
+      const chip=document.createElement("span");chip.className="tchip";
+      chip.innerHTML=`<span>${esc(term)}</span>`;
+      const del=document.createElement("button");del.innerHTML=svg("x");
+      del.onclick=(e)=>{e.stopPropagation();st.groups[gi].splice(ti,1);
+        if(!st.groups[gi].length&&st.groups.length>1)st.groups.splice(gi,1);renderPanel(cfg);};
+      chip.appendChild(del);g.appendChild(chip);
+    });
+    const inp=document.createElement("input");
+    inp.placeholder=gi===0&&!terms.length?t("termFirst"):t("termMore");
+    inp.onkeydown=e=>{
+      if(e.key==="Enter"){
+        if(inp.value.trim()){st.groups[gi].push(inp.value.trim());renderPanel(cfg);
+          $(cfg.groupsBox).querySelectorAll(".termGroup input")[gi].focus();}
+        else cfg.onSearch();
+      } else if(e.key==="Backspace"&&!inp.value&&terms.length){
+        st.groups[gi].pop();renderPanel(cfg);
+        $(cfg.groupsBox).querySelectorAll(".termGroup input")[gi].focus();
+      }
+    };
+    inp.onfocus=()=>g.classList.add("focused");inp.onblur=()=>g.classList.remove("focused");
+    g.appendChild(inp);g.onclick=()=>inp.focus();box.appendChild(g);
+  });
+  renderPanelExclude(cfg);
+}
+function renderPanelExclude(cfg){
+  const g=$(cfg.excludeGroup);if(!g)return;
+  g.querySelectorAll(".tchip").forEach(c=>c.remove());
+  const inp=$(cfg.excludeInput);
+  cfg.state.excludes.forEach((term,ti)=>{
+    const chip=document.createElement("span");chip.className="tchip neg";
+    chip.innerHTML=`<span>${esc(term)}</span>`;
+    const del=document.createElement("button");del.innerHTML=svg("x");
+    del.onclick=(e)=>{e.stopPropagation();cfg.state.excludes.splice(ti,1);renderPanelExclude(cfg);};
+    chip.appendChild(del);g.insertBefore(chip,inp);
+  });
+}
+// Offene Eingaben in den State übernehmen, dann Suchanfrage bauen
+function collectPanel(cfg){
+  const ei=$(cfg.excludeInput);
+  if(ei&&ei.value.trim()){cfg.state.excludes.push(ei.value.trim());ei.value="";}
+  $(cfg.groupsBox).querySelectorAll(".termGroup input").forEach((el,gi)=>{
+    if(el.value.trim()){cfg.state.groups[gi].push(el.value.trim());el.value="";}
+  });
+  renderPanel(cfg);
+  return { groups: cfg.state.groups.filter(g=>g.length),
+           excludes: cfg.state.excludes.slice() };
+}
+function panelAddGroup(cfg){
+  const st=cfg.state;
+  if(st.groups[st.groups.length-1].length===0)return;
+  st.groups.push([]);renderPanel(cfg);
+  const inp=$(cfg.groupsBox).querySelectorAll(".termGroup input");
+  inp[inp.length-1].focus();
+}
+function panelToggleExclude(cfg){
+  const a=$(cfg.excludeArea);
+  a.style.display=a.style.display==="none"?"":"none";
+  cfg.state.excludeOpen=a.style.display!=="none";
+  if(cfg.state.excludeOpen)$(cfg.excludeInput).focus();
+}
+function wireExcludeInput(cfg){
+  const inp=$(cfg.excludeInput);
+  inp.addEventListener("keydown",e=>{
+    if(e.key==="Enter"){
+      if(inp.value.trim()){cfg.state.excludes.push(inp.value.trim());inp.value="";renderPanelExclude(cfg);}
+      else cfg.onSearch();
+    } else if(e.key==="Backspace"&&!inp.value&&cfg.state.excludes.length){
+      cfg.state.excludes.pop();renderPanelExclude(cfg);
+    }
+  });
+}
+
+const MAIN = { groupsBox:"#mGroups", excludeArea:"#mExcludeArea",
+  excludeGroup:"#mExcludeGroup", excludeInput:"#mExcludeInput",
+  state: mainState, onSearch: runSearch };
+const READER = { groupsBox:"#rGroups", excludeArea:"#rExcludeArea",
+  excludeGroup:"#rExcludeGroup", excludeInput:"#rExcludeInput",
+  state: readerState, onSearch: runReaderSearch };
+
+/* ---------- Hauptsuche ---------- */
+async function runSearch(){
+  const { groups, excludes } = collectPanel(MAIN);
+  if(!groups.length && !excludes.length){ $("#results").innerHTML=emptyBox(t("start")); $("#count").textContent=""; return; }
+  const res = await api().search_terms(groups, excludes, authorFilterSel, selectedDoc);
+  showResults(res);
+}
+function showResults(res){
+  fillAuthorSel(res.authors||[]);
+  const box=$("#results");
+  $("#count").textContent=res.hits.length?res.hits.length+" "+t("results"):"";
+  if(!res.hits.length){box.innerHTML=emptyBox(t("empty"));return;}
+  box.innerHTML="";
+  for(const h of res.hits){
+    const el=document.createElement("div");el.className="hit";
+    el.innerHTML=`
+      <div class="top">
+        <span class="htitle">${esc(h.title)}</span>
+        <span class="hauthor">${esc(h.author?authorText(h.author):"")}</span>
+        <span class="meta"><span class="pageTag">${pageStr(h)}</span>${relTag(h.reliability)}</span>
+      </div>
+      <div class="text" dir="auto">${highlight(h.snippet,h.matched_words)}</div>`;
+    el.onclick=()=>openReader(h.document_id,h.passage_id,h.matched_words);
+    box.appendChild(el);
+  }
+}
+
+/* ---------- Reader (Recherche-Fenster) ---------- */
+let rDoc=null,rPage=1,rFirst=1,rLast=1,rWords=[],rPassageText="",rImg=false,rHasImg=false;
+function escRe(s){return s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");}
+function passageRe(p){const parts=p.trim().split(/\s+/).map(escRe);if(!parts.length)return null;try{return new RegExp(parts.join("\\s+"));}catch(e){return null;}}
+
+async function openReader(docId,passageId,words){
+  rDoc=docId;rWords=words||[];rImg=false;rPassageText="";
+  // Leser-Suchfelder zurücksetzen
+  readerState.groups=[[]];readerState.excludes=[];readerState.excludeOpen=false;
+  $("#rExcludeArea").style.display="none";
+  renderPanel(READER);
+  $("#reader").classList.add("open");
+  const meta=await api().document(docId);
+  $("#rTitle").textContent=meta.title||"";
+  $("#rAuthor").textContent=meta.author?authorText(meta.author):"";
+  // Aus einem Treffer geöffnet: dessen Seite anspringen + markieren.
+  // Aus den Dokumenten geöffnet: nur Seite 1, keine markierten Passagen.
+  let startPage=1;
+  if(passageId){
+    const p=await api().passage(passageId);
+    if(!p.error){rPassageText=p.text||"";startPage=p.page_from;}
+  }
+  showReaderHint();
+  await loadReaderPage(startPage);
+}
+function closeReader(){$("#reader").classList.remove("open");}
+
+function showReaderHint(){
+  $("#rResults").innerHTML=`<div class="empty" style="padding:40px 16px">`
+    +svg("search")+`<div>${esc(t("readerSearchPrompt"))}</div></div>`;
+}
+
+async function runReaderSearch(){
+  const { groups, excludes } = collectPanel(READER);
+  if(!groups.length && !excludes.length){ showReaderHint(); return; }
+  const res=await api().search_terms(groups, excludes, null, rDoc);
+  renderReaderHits(res);
+}
+function renderReaderHits(res){
+  const box=$("#rResults");box.innerHTML="";
+  if(!res.hits.length){box.innerHTML=`<div class="empty" style="padding:30px 12px">${esc(t("empty"))}</div>`;return;}
+  for(const h of res.hits){
+    const el=document.createElement("div");el.className="rHit";
+    const pg=h.page_from===h.page_to?`${t("pagePrefix")} ${h.page_from}`:`${t("pagePrefix")} ${h.page_from}–${h.page_to}`;
+    el.innerHTML=`<div class="rp">${pg}</div><div class="rtext" dir="auto">${highlight(h.snippet,h.matched_words)}</div>`;
+    el.onclick=async()=>{
+      $$("#rResults .rHit").forEach(x=>x.classList.remove("active"));
+      el.classList.add("active");
+      rWords=h.matched_words;rPassageText="";
+      if(h.passage_id){const p=await api().passage(h.passage_id);if(!p.error)rPassageText=p.text||"";}
+      loadReaderPage(h.page_from);
+    };
+    box.appendChild(el);
+  }
+}
+
+async function loadReaderPage(pageNo){
+  const d=await api().page(rDoc,pageNo);
+  if(d.error){showError(d.error);return;}
+  rPage=d.page_no;rFirst=d.first_page;rLast=d.last_page;rHasImg=d.has_image;
+  $("#rPageInd").textContent=`${t("pagePrefix")} ${rPage} / ${rLast}`;
+  $("#rPrev").disabled=rPage<=rFirst;$("#rNext").disabled=rPage>=rLast;
+  const tg=$("#rImgToggle");tg.style.display=rHasImg?"":"none";
+  tg.textContent=rImg?t("viewText"):t("viewOriginal");
+  const body=$("#rReading");
+  if(rImg&&rHasImg){body.innerHTML=`<img src="/api/page_image?doc=${rDoc}&page=${rPage}" alt="">`;body.scrollTop=0;return;}
+  renderReaderText(d.text||"");
+}
+function renderReaderText(text){
+  const body=$("#rReading");
+  const re=rPassageText?passageRe(rPassageText):null;
+  const m=re?re.exec(text):null;
+  let html;
+  if(m){html=esc(text.slice(0,m.index))+`<span class="passageBox" id="pAnchor">`+highlight(m[0],rWords)+`</span>`+esc(text.slice(m.index+m[0].length));}
+  else html=highlight(text,rWords);
+  body.innerHTML=html||`<div class="empty">—</div>`;
+  const a=$("#pAnchor")||body.querySelector("mark");
+  if(a)a.scrollIntoView({block:"center"});else body.scrollTop=0;
+}
+$("#rClose").onclick=closeReader;
+$("#rPrev").onclick=()=>{if(rPage>rFirst)loadReaderPage(rPage-1);};
+$("#rNext").onclick=()=>{if(rPage<rLast)loadReaderPage(rPage+1);};
+$("#rImgToggle").onclick=()=>{rImg=!rImg;loadReaderPage(rPage);};
+document.addEventListener("keydown",e=>{
+  if(!$("#reader").classList.contains("open"))return;
+  if(e.key==="Escape")closeReader();
+  else if(e.key==="ArrowLeft"||e.key==="ArrowRight"){
+    if(document.activeElement&&document.activeElement.tagName==="INPUT")return;
+    const back=(lang==="ar")?(e.key==="ArrowRight"):(e.key==="ArrowLeft");
+    if(back&&rPage>rFirst)loadReaderPage(rPage-1);
+    if(!back&&rPage<rLast)loadReaderPage(rPage+1);
+  }
+});
+
+/* ---------- Bedienung (beide Panels gleich) ---------- */
+$("#mSearchBtn").onclick=runSearch;
+$("#mAddGroup").onclick=()=>panelAddGroup(MAIN);
+$("#mToggleExclude").onclick=()=>panelToggleExclude(MAIN);
+// Chip NUR bei echter Auswahl aus der Vorschlagsliste oder mit Enter übernehmen –
+// nicht beim bloßen Rausklicken/Verlassen des Feldes.
+$("#authorSel").addEventListener("input",e=>{
+  const v=e.target.value;
+  // Klick auf einen Vorschlag ersetzt den Text komplett (kein normales Tippen).
+  const picked = e.inputType==null || e.inputType==="insertReplacementText";
+  const exact = [...$("#authorList").options].some(o=>o.value===v);
+  if(v && picked && exact) addAuthorFilter(v);
+});
+$("#authorSel").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){e.preventDefault();addAuthorFilter(e.target.value);}
+  else if(e.key==="Backspace"&&!e.target.value&&authorFilterSel.length){
+    removeAuthorFilter(authorFilterSel[authorFilterSel.length-1]);}
+});
+// Beim Verlassen des Feldes nur den unbestätigten Resttext verwerfen.
+$("#authorSel").addEventListener("blur",e=>{ e.target.value=""; });
+$("#authorFilter").onclick=e=>{ if(e.target.id==="authorFilter") $("#authorSel").focus(); };
+$("#semantic").onchange=runSearch;
+$("#rSearchBtn").onclick=runReaderSearch;
+$("#rAddGroup").onclick=()=>panelAddGroup(READER);
+$("#rToggleExclude").onclick=()=>panelToggleExclude(READER);
+wireExcludeInput(MAIN);
+wireExcludeInput(READER);
+$("#langBtn").onclick=async()=>{const n=lang==="de"?"ar":"de";applyLang(n);api().set_settings(n);};
+$("#updateBtn").onclick=async()=>{
+  const up=(_lastStatus&&_lastStatus.update)||{};
+  const v=up.latest||"";
+  if(!confirm(T[lang].updateConfirm(v)))return;
+  showProgress(T[lang].updating);
+  const r=await api().apply_update();
+  if(r&&r.error){hideProgress();return showError(r.error);}
+  // Fortschritt verfolgen; die App wird beim Installer-Start beendet.
+  const poll=async()=>{try{
+    const st=await api().status();
+    const j=(st.jobs||[]).find(x=>x.file==="Update");
+    if(j&&j.state==="fehler"){hideProgress();return showError(j.error||T[lang].updateErr);}
+    if(j)showProgress(j.state==="startet Installer …"?T[lang].updateStarting:esc(j.state));
+    setTimeout(poll,700);
+  }catch(e){ showProgress(T[lang].updateStarting); setTimeout(poll,1500); }};
+  poll();
+};
+
+/* Export / Import – mit sichtbarem, bleibendem Fortschrittsbalken */
+function showProgress(msg){
+  let el=$("#progress");
+  if(!el){el=document.createElement("div");el.id="progress";
+    el.style.cssText="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);"+
+      "background:var(--ink);color:#fff;padding:11px 20px;border-radius:10px;"+
+      "font-size:14px;z-index:100;box-shadow:var(--shadow);display:flex;gap:10px;align-items:center;";
+    document.body.appendChild(el);}
+  el.innerHTML=`<span class="spin"></span><span>${esc(msg)}</span>`;
+  el.style.display="flex";
+}
+function hideProgress(){const el=$("#progress");if(el)el.style.display="none";}
+async function trackJob(key,doneMsg){
+  showProgress(doneMsg+" …");
+  const poll=async()=>{const st=await api().status();const j=st.jobs.find(x=>x.file===key);
+    if(!j)return setTimeout(poll,600);
+    if(j.state==="fertig"){hideProgress();showToast(j.result||doneMsg);refreshDocs();}
+    else if(j.state==="fehler"){hideProgress();showError(j.error||"Fehler");}
+    else{showProgress(jobLabel(j));refreshDocs();setTimeout(poll,700);}};
+  poll();
+}
+$("#exportBtn").onclick=async()=>{const r=await api().export_library();if(r&&r.error)return showError(r.error);if(r&&r.cancelled)return;trackJob("Export",t("exportDone"));};
+$("#exportSelBtn").onclick=async()=>{const ids=[...selectedForExport];if(!ids.length)return showError(t("selectNone"));const r=await api().export_library(ids);if(r&&r.error)return showError(r.error);if(r&&r.cancelled)return;trackJob("Export",t("exportDone"));};
+$("#importBtn").onclick=async()=>{const r=await api().import_library();if(r&&r.error)return showError(r.error);if(r&&r.cancelled)return;trackJob("Import",t("importDone"));};
+
+/* ---------- Start ---------- */
+$("#brandIcon").innerHTML=svg("logo");
+paintIcons();
+(async()=>{
+  try{const s=await api().settings();applyLang(s.lang==="ar"?"ar":"de");}
+  catch(e){applyLang("de");}
+  paintIcons();
+  refreshStatus();refreshDocs();
+})();
+</script>
+</body>
+</html>

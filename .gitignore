@@ -1,0 +1,10 @@
+# Erzeugte/heruntergeladene Dinge – gehören nicht ins Repository
+.venv/
+dist/
+build/pyi/
+build/models/
+build/tesseract/
+build/innosetup/
+__pycache__/
+*.pyc
+.DS_Store

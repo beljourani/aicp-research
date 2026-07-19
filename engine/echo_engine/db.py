@@ -1,0 +1,70 @@
+# -*- coding: utf-8 -*-
+"""SQLite-Schema und Verbindung.
+
+Tabellen:
+  documents  – ein Eintrag pro Datei (Titel, Autor, Pfad, Status)
+  pages      – Rohtext pro Seite (Grundlage für Seitenzahlen)
+  passages   – Suchabschnitte (Chunks) mit Seitenbereich
+  passages_fts – FTS5-Volltextindex über zwei Felder:
+                 norm  = normalisierter Text  (exaktere Treffer, höher gewichtet)
+                 stems = gestemmter Text      (findet Konjugationen/Wurzeln)
+"""
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+SCHEMA = """
+PRAGMA journal_mode=WAL;
+PRAGMA foreign_keys=ON;
+-- Bei gleichzeitigen Schreibzugriffen bis zu 60s warten statt
+-- sofort mit "database is locked" abzubrechen.
+PRAGMA busy_timeout=60000;
+PRAGMA synchronous=NORMAL;
+
+CREATE TABLE IF NOT EXISTS documents (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    author TEXT,
+    file_path TEXT,
+    file_type TEXT,            -- pdf | docx | txt
+    page_count INTEGER,
+    needs_ocr INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'done',-- queued|processing|done|error
+    error TEXT,
+    reliability TEXT DEFAULT 'sicher',  -- sicher|exakt|ungefähr
+    engine TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS pages (
+    id INTEGER PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    page_no INTEGER NOT NULL,   -- 1-basiert, wie im Dokument sichtbar
+    text TEXT NOT NULL,
+    UNIQUE(document_id, page_no)
+);
+
+CREATE TABLE IF NOT EXISTS passages (
+    id INTEGER PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    idx INTEGER NOT NULL,       -- Reihenfolge im Dokument
+    page_from INTEGER NOT NULL,
+    page_to INTEGER NOT NULL,
+    text TEXT NOT NULL          -- Originaltext für die Anzeige
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS passages_fts USING fts5(
+    norm,
+    stems,
+    content='',
+    tokenize='unicode61'
+);
+"""
+
+
+def connect(path: str | Path = ":memory:") -> sqlite3.Connection:
+    con = sqlite3.connect(str(path), timeout=60)
+    con.row_factory = sqlite3.Row
+    con.executescript(SCHEMA)
+    return con
