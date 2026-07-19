@@ -75,6 +75,30 @@ def _asset_suffix() -> str:
     return ".dmg" if sys.platform == "darwin" else ".exe"
 
 
+def _pick_asset(assets: list) -> tuple:
+    """Wählt die passende Release-Datei für das aktuelle System.
+
+    Windows: der Setup-Installer (.exe).
+    macOS:   bevorzugt das App-ZIP (automatisches Ersetzen), sonst das DMG
+             (manuelle Installation).
+    """
+    pairs = [(a.get("name", ""), a.get("browser_download_url"))
+             for a in (assets or []) if a.get("browser_download_url")]
+    if sys.platform == "darwin":
+        for n, u in pairs:
+            nl = n.lower()
+            if nl.endswith(".zip") and "macos" in nl:
+                return u, n
+        for n, u in pairs:
+            if n.lower().endswith(".dmg"):
+                return u, n
+    else:
+        for n, u in pairs:
+            if n.lower().endswith(".exe"):
+                return u, n
+    return None, None
+
+
 def check(repo: str, timeout: int = 8) -> dict:
     """Prüft das neueste Release. Liefert immer ein dict mit 'ok'.
 
@@ -99,14 +123,7 @@ def check(repo: str, timeout: int = 8) -> dict:
                 "update_available": False}
 
     latest = (data.get("tag_name") or data.get("name") or "").strip()
-    suffix = _asset_suffix()
-    url, name = None, None
-    for a in data.get("assets", []):
-        an = a.get("name", "")
-        if an.lower().endswith(suffix):
-            url = a.get("browser_download_url")
-            name = an
-            break
+    url, name = _pick_asset(data.get("assets", []))
     avail = bool(latest) and is_newer(latest, cur) and bool(url)
     return {"ok": True, "current": cur, "latest": latest,
             "update_available": avail, "url": url, "name": name,
@@ -136,15 +153,64 @@ def download_installer(url: str, name: str | None = None, progress=None) -> Path
     return dest
 
 
-def launch_installer(path: Path) -> None:
-    """Startet den heruntergeladenen Installer. Der Aufrufer beendet danach
-    die App, damit der Installer die Dateien ersetzen kann."""
+def _mac_app_bundle() -> "Path | None":
+    """Pfad zum eigenen .app-Bundle (nur in der gepackten App unter macOS)."""
+    if sys.platform != "darwin" or not getattr(sys, "frozen", False):
+        return None
+    p = Path(sys.executable).resolve()
+    for anc in [p] + list(p.parents):
+        if anc.suffix == ".app":
+            return anc
+    return None
+
+
+def install_mac_zip(zip_path: Path) -> bool:
+    """Ersetzt die laufende .app automatisch durch die neue Version aus dem
+    ZIP – ohne Zutun des Nutzers. Ein kleines Hintergrundskript wartet, bis
+    diese App beendet ist, tauscht das Bundle aus und startet es neu.
+    Liefert True, wenn der Austausch angestoßen wurde."""
+    app = _mac_app_bundle()
+    if app is None:
+        return False
+    tmp = Path(tempfile.gettempdir()) / "aicp-research-update"
+    tmp.mkdir(parents=True, exist_ok=True)
+    script = tmp / "apply-update.sh"
+    script.write_text(
+        "#!/bin/bash\n"
+        f'ZIP="{zip_path}"\n'
+        f'APP="{app}"\n'
+        f'PID="{os.getpid()}"\n'
+        f'EXTRACT="{tmp}/extract"\n'
+        'while kill -0 "$PID" 2>/dev/null; do sleep 0.4; done\n'
+        'sleep 1\n'
+        'rm -rf "$EXTRACT"; mkdir -p "$EXTRACT"\n'
+        'ditto -x -k "$ZIP" "$EXTRACT" 2>/dev/null || '
+        '/usr/bin/unzip -oq "$ZIP" -d "$EXTRACT"\n'
+        'NEWAPP=$(/usr/bin/find "$EXTRACT" -maxdepth 2 -name "*.app" | head -1)\n'
+        '[ -z "$NEWAPP" ] && exit 1\n'
+        'rm -rf "$APP"\n'
+        'mv "$NEWAPP" "$APP"\n'
+        '/usr/bin/xattr -dr com.apple.quarantine "$APP" 2>/dev/null\n'
+        'open "$APP"\n'
+    )
+    subprocess.Popen(["/bin/bash", str(script)], start_new_session=True)
+    return True
+
+
+def launch_installer(path: Path) -> bool:
+    """Startet die passende Installation.
+
+    Windows: Inno-Setup läuft still, schließt die App und startet sie neu.
+    macOS:   .zip -> vollautomatischer Austausch; .dmg -> Fenster öffnen
+             (manuelle Installation als Rückfall).
+    Liefert True, wenn ein vollautomatischer Weg angestoßen wurde."""
     path = Path(path)
     if sys.platform == "darwin":
-        # DMG öffnen – der Nutzer zieht die App in den Programme-Ordner.
-        subprocess.Popen(["open", str(path)])
+        if path.suffix.lower() == ".zip" and install_mac_zip(path):
+            return True
+        subprocess.Popen(["open", str(path)])   # DMG-Rückfall (manuell)
+        return False
     elif os.name == "nt":
-        # Inno-Setup: laufende App schließen lassen und danach neu starten.
         try:
             subprocess.Popen(
                 [str(path), "/SILENT", "/CLOSEAPPLICATIONS",
@@ -152,5 +218,7 @@ def launch_installer(path: Path) -> None:
                 close_fds=True)
         except Exception:
             os.startfile(str(path))  # type: ignore[attr-defined]
+        return True
     else:
         subprocess.Popen(["xdg-open", str(path)])
+        return False
