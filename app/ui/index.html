@@ -167,6 +167,14 @@
     min-width: 120px; font-size: 14px; font-family: inherit; color: var(--ink);
     padding: 4px 2px; }
   .modalFoot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+  /* "Was ist neu"-Fenster */
+  .newsBody { max-height: 52vh; overflow-y: auto; font-size: 14px;
+    line-height: 1.75; color: #2a332e; }
+  .newsBody p { margin: 0 0 9px; }
+  .newsBody ul { margin: 0 0 9px; padding-inline-start: 20px; }
+  .newsBody li { margin-bottom: 5px; }
+  .verLabel { cursor: pointer; }
+  .verLabel:hover { color: var(--accent-ink); }
   .hint { font-size: 12.5px; color: var(--faint); margin-top: 12px; }
   .hint code { background: var(--surface); padding: 1px 6px; border-radius: 5px;
     font-size: 12px; color: var(--muted); }
@@ -534,6 +542,15 @@
   </div>
 </div>
 
+<div id="newsOverlay" class="overlay">
+  <div class="modal">
+    <div class="modalHead"><span id="newsHead"></span>
+      <button class="iconBtn" id="newsClose"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div id="newsBody" class="newsBody"></div>
+    <div class="modalFoot"><button class="btn primary" id="newsOk"></button></div>
+  </div>
+</div>
+
 <div id="editOverlay" class="overlay">
   <div class="modal">
     <div class="modalHead"><span id="editHead"></span>
@@ -647,6 +664,8 @@ const T = {
     readerSearch: "In diesem Dokument suchen …",
     readerSearchPrompt: "Suche in diesem Dokument, um Treffer zu sehen.",
     cite: "Zitat kopieren", citeDone: "Zitat mit Quelle kopiert",
+    newsTitle: (v)=>`Neu in Version ${v}`, newsOk: "Alles klar",
+    newsNone: "Für diese Version liegen keine Angaben vor.",
     navBookmarks: "Lesezeichen", titleBookmarks: "Lesezeichen",
     bmAdd: "Lesezeichen setzen/entfernen", bmSaved: "Lesezeichen gespeichert",
     bmRemoved: "Lesezeichen entfernt",
@@ -707,6 +726,8 @@ const T = {
     readerSearch: "ابحث في هذا المستند …",
     readerSearchPrompt: "ابحث في هذا المستند لعرض النتائج.",
     cite: "نسخ الاقتباس", citeDone: "تم نسخ الاقتباس مع المصدر",
+    newsTitle: (v)=>`الجديد في الإصدار ${v}`, newsOk: "حسناً",
+    newsNone: "لا توجد معلومات لهذا الإصدار.",
     navBookmarks: "العلامات", titleBookmarks: "العلامات المرجعية",
     bmAdd: "إضافة/إزالة علامة", bmSaved: "تم حفظ العلامة",
     bmRemoved: "تمت إزالة العلامة",
@@ -774,6 +795,8 @@ const API = {
   bookmarks:()=>_get("/api/bookmarks"),
   bookmark_add:b=>_post("/api/bookmark_add",b),
   bookmark_toggle:b=>_post("/api/bookmark_toggle",b),
+  whats_new:force=>_post("/api/whats_new",{force}),
+  whats_new_ack:()=>_post("/api/whats_new_ack",{}),
   bookmark_delete:id=>_post("/api/bookmark_delete",{id}),
   bookmark_note:(id,note)=>_post("/api/bookmark_note",{id,note}),
   version:()=>_get("/api/version"),
@@ -935,7 +958,7 @@ function openEditDialog(d){
   inp.addEventListener("keydown",e=>{
     if(e.key==="Enter"){e.preventDefault();addAuthorFromInput();}
     else if(e.key==="Backspace"&&!inp.value&&editState.authors.length){
-      editState.authors.pop();renderAuthorChips();}
+      e.preventDefault();editState.authors.pop();renderAuthorChips();}
   });
   box.onclick=e=>{if(e.target===box)inp.focus();};
   renderAuthorChips();
@@ -951,12 +974,17 @@ function saveEditDialog(){
     closeEditDialog();refreshDocs();
   });
 }
+// Enter im Titelfeld speichert (statt unbehandelt zu bleiben -> Fehlton)
+$("#editTitle").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){e.preventDefault();saveEditDialog();}
+});
 $("#editClose").onclick=closeEditDialog;
 $("#editCancel").onclick=closeEditDialog;
 $("#editSave").onclick=saveEditDialog;
 $("#editOverlay").onclick=e=>{if(e.target===$("#editOverlay"))closeEditDialog();};
 document.addEventListener("keydown",e=>{
-  if(e.key==="Escape"&&$("#editOverlay").classList.contains("show"))closeEditDialog();});
+  if(e.key==="Escape"&&$("#editOverlay").classList.contains("show")){
+    e.preventDefault();closeEditDialog();}});
 
 $("#selAll").onchange=e=>{
   $$(".selBox").forEach(b=>{b.checked=e.target.checked;const id=+b.dataset.id;
@@ -1034,10 +1062,12 @@ function renderPanel(cfg){
     inp.placeholder=gi===0&&!terms.length?t("termFirst"):t("termMore");
     inp.onkeydown=e=>{
       if(e.key==="Enter"){
+        e.preventDefault();          // sonst quittiert macOS mit Fehlton
         if(inp.value.trim()){st.groups[gi].push(inp.value.trim());renderPanel(cfg);
           $(cfg.groupsBox).querySelectorAll(".termGroup input")[gi].focus();}
         else cfg.onSearch();
       } else if(e.key==="Backspace"&&!inp.value&&terms.length){
+        e.preventDefault();
         st.groups[gi].pop();renderPanel(cfg);
         $(cfg.groupsBox).querySelectorAll(".termGroup input")[gi].focus();
       }
@@ -1087,9 +1117,11 @@ function wireExcludeInput(cfg){
   const inp=$(cfg.excludeInput);
   inp.addEventListener("keydown",e=>{
     if(e.key==="Enter"){
+      e.preventDefault();            // sonst quittiert macOS mit Fehlton
       if(inp.value.trim()){cfg.state.excludes.push(inp.value.trim());inp.value="";renderPanelExclude(cfg);}
       else cfg.onSearch();
     } else if(e.key==="Backspace"&&!inp.value&&cfg.state.excludes.length){
+      e.preventDefault();
       cfg.state.excludes.pop();renderPanelExclude(cfg);
     }
   });
@@ -1523,11 +1555,13 @@ $("#rFontPlus").onclick=()=>applyFont(rFont+.1);
 $("#rHitPrev").onclick=()=>selectHit(rHitIdx-1);
 $("#rHitNext").onclick=()=>selectHit(rHitIdx+1);
 $("#rPageInput").addEventListener("keydown",e=>{
-  if(e.key==="Enter"){const n=parseInt(e.target.value,10);if(!isNaN(n))gotoPage(n);e.target.blur();}
+  if(e.key==="Enter"){
+    e.preventDefault();              // sonst quittiert macOS mit Fehlton
+    const n=parseInt(e.target.value,10);if(!isNaN(n))gotoPage(n);e.target.blur();}
 });
 document.addEventListener("keydown",e=>{
   if(!$("#reader").classList.contains("open"))return;
-  if(e.key==="Escape"){closeReader();return;}
+  if(e.key==="Escape"){e.preventDefault();closeReader();return;}
   const tag=document.activeElement&&document.activeElement.tagName;
   if(tag==="INPUT"||tag==="TEXTAREA")return;
   if(e.key==="ArrowRight"||e.key==="PageDown"){e.preventDefault();gotoPage(rPage+1);}
@@ -1538,6 +1572,53 @@ document.addEventListener("keydown",e=>{
 
 /* ---------- Bedienung (beide Panels gleich) ---------- */
 $("#mSearchBtn").onclick=runSearch;
+
+/* ---------- "Was ist neu"-Fenster nach einem Update ---------- */
+// Notizen sicher darstellen: alles maskieren, nur Listen/Absätze bilden
+function renderNotes(txt){
+  const lines=String(txt||"").split(/\r?\n/);
+  let html="",inList=false;
+  for(const raw of lines){
+    const l=raw.trim();
+    if(/^[-*•]\s+/.test(l)){
+      if(!inList){html+="<ul>";inList=true;}
+      html+="<li>"+esc(l.replace(/^[-*•]\s+/,""))+"</li>";
+    }else{
+      if(inList){html+="</ul>";inList=false;}
+      if(l)html+="<p>"+esc(l)+"</p>";
+    }
+  }
+  if(inList)html+="</ul>";
+  return html||`<p>${esc(t("newsNone"))}</p>`;
+}
+function openNews(version,notes){
+  $("#newsHead").textContent=T[lang].newsTitle(version||"");
+  $("#newsBody").innerHTML=renderNotes(notes);
+  $("#newsOk").textContent=t("newsOk");
+  $("#newsOverlay").classList.add("show");
+}
+function closeNews(){
+  $("#newsOverlay").classList.remove("show");
+  try{api().whats_new_ack();}catch(e){}
+}
+$("#newsOk").onclick=closeNews;
+$("#newsClose").onclick=closeNews;
+$("#newsOverlay").onclick=e=>{if(e.target===$("#newsOverlay"))closeNews();};
+// Versionsnummer anklicken -> Änderungen jederzeit nachlesen
+$("#versionLabel").onclick=async()=>{
+  try{const n=await api().whats_new(true);openNews(n.version,n.notes);}catch(e){}
+};
+async function checkWhatsNew(){
+  try{
+    const n=await api().whats_new(false);
+    if(n&&n.show)openNews(n.version,n.notes);
+  }catch(e){}
+}
+
+/* macOS quittiert Tasten, die niemand verarbeitet, mit einem Fehlton.
+   Escape hat in dieser App keine Standardfunktion – daher überall als
+   erledigt markieren, auch wenn gerade kein Fenster offen ist. */
+document.addEventListener("keydown",e=>{ if(e.key==="Escape")e.preventDefault(); });
 
 /* ---------- "Nach oben"-Button ---------- */
 (function(){
@@ -1563,7 +1644,7 @@ $("#authorSel").addEventListener("input",e=>{
 $("#authorSel").addEventListener("keydown",e=>{
   if(e.key==="Enter"){e.preventDefault();addAuthorFilter(e.target.value);}
   else if(e.key==="Backspace"&&!e.target.value&&authorFilterSel.length){
-    removeAuthorFilter(authorFilterSel[authorFilterSel.length-1]);}
+    e.preventDefault();removeAuthorFilter(authorFilterSel[authorFilterSel.length-1]);}
 });
 // Beim Verlassen des Feldes nur den unbestätigten Resttext verwerfen.
 $("#authorSel").addEventListener("blur",e=>{ e.target.value=""; });
@@ -1640,6 +1721,7 @@ paintIcons();
   try{const f=await api().meta_get("font_scale");const n=parseFloat(f.value||"");
     if(n>=.8&&n<=1.8){rFont=n;$("#rReading").style.setProperty("--rfont",n.toFixed(2));}}catch(e){}
   refreshBmKeys();     // gesetzte Lesezeichen kennen (Symbolzustand)
+  checkWhatsNew();     // nach einem Update die Änderungen zeigen
 })();
 </script>
 </body>

@@ -131,6 +131,27 @@ def check(repo: str, timeout: int = 8) -> dict:
             "has_asset": bool(url)}
 
 
+def release_notes(repo: str, version: str, timeout: int = 8) -> str:
+    """Holt den Beschreibungstext des Releases zu einer Version."""
+    if not repo or "/" not in repo or not version:
+        return ""
+    for tag in (f"v{version}", version):
+        api = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+        req = urllib.request.Request(api, headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "AICP-Research-Updater",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=_SSL) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            body = (data.get("body") or "").strip()
+            if body:
+                return body
+        except Exception:
+            continue
+    return ""
+
+
 def download_installer(url: str, name: str | None = None, progress=None) -> Path:
     """Lädt den Installer in einen temporären Ordner und liefert den Pfad."""
     dest_dir = Path(tempfile.gettempdir()) / "aicp-research-update"

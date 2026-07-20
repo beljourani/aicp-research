@@ -283,6 +283,32 @@ class Core:
         con.close()
         return {"ok": True, "repo": repo}
 
+    def whats_new(self, body=None):
+        """Liefert die Änderungen der laufenden Version. show=True, wenn der
+        Nutzer sie noch nicht gesehen hat (also nach einem Update)."""
+        from echo_engine import updater
+        cur = updater.current_version()
+        force = bool((body or {}).get("force"))
+        notes = self._meta_get("notes:" + cur, "")
+        if not notes:
+            try:
+                notes = updater.release_notes(self.update_repo(), cur)
+            except Exception:
+                notes = ""
+            if notes:      # merken, damit es auch ohne Internet abrufbar ist
+                try:
+                    self.meta_set({"key": "notes:" + cur, "value": notes})
+                except Exception:
+                    pass
+        seen = self._meta_get("seen_version", "")
+        return {"version": cur, "notes": notes,
+                "show": bool(notes) and (force or seen != cur)}
+
+    def whats_new_ack(self, _body=None):
+        from echo_engine import updater
+        return self.meta_set({"key": "seen_version",
+                              "value": updater.current_version()})
+
     def check_update(self, _body=None):
         from echo_engine import updater
         res = updater.check(self.update_repo())
@@ -809,6 +835,8 @@ ROUTES = {
     ("POST", "/api/clear_jobs"): CORE.clear_jobs,
     ("GET", "/api/version"): CORE.version,
     ("POST", "/api/check_update"): CORE.check_update,
+    ("POST", "/api/whats_new"): CORE.whats_new,
+    ("POST", "/api/whats_new_ack"): CORE.whats_new_ack,
     ("POST", "/api/apply_update"): CORE.apply_update,
     ("POST", "/api/set_update_repo"): CORE.set_update_repo,
     ("GET", "/api/settings"): CORE.get_settings,
