@@ -519,6 +519,159 @@ class Core:
                 "text": row["text"] if row else "",
                 "has_image": has_image}
 
+    def pages(self, body):
+        """Liefert einen Bereich von Seiten auf einmal (für den Lesefluss).
+        Wird beim Scrollen nachgeladen, damit auch dicke Bücher flüssig sind."""
+        doc_id = body["document_id"]
+        try:
+            frm = max(1, int(body.get("from") or 1))
+            to = int(body.get("to") or frm)
+        except Exception:
+            return {"error": "ungültiger Bereich"}
+        if to < frm:
+            to = frm
+        to = min(to, frm + 40)          # Sicherheitsgrenze pro Anfrage
+        con = self._con()
+        rows = con.execute(
+            "SELECT page_no, text FROM pages WHERE document_id=? "
+            "AND page_no BETWEEN ? AND ? ORDER BY page_no",
+            (doc_id, frm, to)).fetchall()
+        lo, hi = con.execute(
+            "SELECT MIN(page_no), MAX(page_no) FROM pages WHERE document_id=?",
+            (doc_id,)).fetchone()
+        con.close()
+        return {"pages": [{"page_no": r["page_no"], "text": r["text"]}
+                          for r in rows],
+                "first_page": lo, "last_page": hi}
+
+    # --- Merker (Leseposition, Schriftgröße) ------------------------------
+    def meta_get(self, body):
+        return {"value": self._meta_get((body or {}).get("key", ""), "")}
+
+    def meta_set(self, body):
+        body = body or {}
+        key = (body.get("key") or "").strip()
+        if not key:
+            return {"error": "kein Schlüssel"}
+        con = self._con()
+        con.execute("CREATE TABLE IF NOT EXISTS meta "
+                    "(key TEXT PRIMARY KEY, value TEXT)")
+        con.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)",
+                    (key, str(body.get("value", ""))))
+        con.commit()
+        con.close()
+        return {"ok": True}
+
+    # --- Lesezeichen ------------------------------------------------------
+    def bookmark_add(self, body):
+        body = body or {}
+        con = self._con()
+        doc = con.execute("SELECT id, title FROM documents WHERE id=?",
+                          (body.get("document_id"),)).fetchone()
+        if not doc:
+            con.close()
+            return {"error": "Dokument nicht gefunden"}
+        con.execute(
+            "INSERT INTO bookmarks (document_id, passage_id, doc_title, "
+            "page_no, snippet, note, terms) VALUES (?,?,?,?,?,?,?)",
+            (doc["id"], body.get("passage_id"), doc["title"],
+             int(body.get("page_no") or 1), (body.get("snippet") or "")[:400],
+             (body.get("note") or "")[:2000],
+             json.dumps(body.get("terms") or [], ensure_ascii=False)))
+        con.commit()
+        con.close()
+        return {"ok": True}
+
+    def bookmark_toggle(self, body):
+        """Setzt ein Lesezeichen – oder entfernt es, wenn dieselbe Stelle
+        bereits gemerkt ist. Liefert saved=True/False."""
+        body = body or {}
+        doc_id = body.get("document_id")
+        pid = body.get("passage_id")
+        try:
+            page = int(body.get("page_no") or 1)
+        except Exception:
+            page = 1
+        con = self._con()
+        if pid:
+            row = con.execute("SELECT id FROM bookmarks WHERE document_id=? "
+                              "AND passage_id=?", (doc_id, pid)).fetchone()
+        else:
+            row = con.execute("SELECT id FROM bookmarks WHERE document_id=? "
+                              "AND page_no=? AND passage_id IS NULL",
+                              (doc_id, page)).fetchone()
+        if row:
+            con.execute("DELETE FROM bookmarks WHERE id=?", (row["id"],))
+            con.commit()
+            con.close()
+            return {"ok": True, "saved": False}
+        con.close()
+        res = self.bookmark_add(body)
+        if res.get("error"):
+            return res
+        return {"ok": True, "saved": True}
+
+    def bookmarks(self, _body=None):
+        """Liste aller Lesezeichen. Verlorene Verknüpfungen (z.B. nach einem
+        Neu-Scan) werden über Titel + Seite + Ausschnitt repariert."""
+        con = self._con()
+        out = []
+        for b in con.execute("SELECT * FROM bookmarks ORDER BY id DESC"):
+            doc = con.execute("SELECT id, title FROM documents WHERE id=?",
+                              (b["document_id"],)).fetchone()
+            if not doc:      # Buch wurde neu eingelesen -> über Titel suchen
+                doc = con.execute("SELECT id, title FROM documents "
+                                  "WHERE title=?", (b["doc_title"],)).fetchone()
+            pid, did = b["passage_id"], (doc["id"] if doc else None)
+            if did:
+                ok = con.execute("SELECT 1 FROM passages WHERE id=? AND "
+                                 "document_id=?", (pid, did)).fetchone()
+                if not ok:   # Passage neu -> auf der Seite per Ausschnitt finden
+                    cand = con.execute(
+                        "SELECT id, text FROM passages WHERE document_id=? AND "
+                        "? BETWEEN page_from AND page_to", (did, b["page_no"])
+                    ).fetchall()
+                    frag = (b["snippet"] or "")[:40]
+                    pid = None
+                    for c in cand:
+                        if frag and frag in (c["text"] or ""):
+                            pid = c["id"]
+                            break
+                    if pid is None and cand:
+                        pid = cand[0]["id"]
+                    if pid:
+                        con.execute("UPDATE bookmarks SET document_id=?, "
+                                    "passage_id=? WHERE id=?", (did, pid, b["id"]))
+            try:
+                terms = json.loads(b["terms"] or "[]")
+            except Exception:
+                terms = []
+            out.append({"id": b["id"], "document_id": did,
+                        "passage_id": pid, "doc_title": b["doc_title"],
+                        "title": (doc["title"] if doc else b["doc_title"]),
+                        "page_no": b["page_no"], "snippet": b["snippet"],
+                        "note": b["note"] or "", "terms": terms,
+                        "missing": did is None})
+        con.commit()
+        con.close()
+        return out
+
+    def bookmark_delete(self, body):
+        con = self._con()
+        con.execute("DELETE FROM bookmarks WHERE id=?", ((body or {}).get("id"),))
+        con.commit()
+        con.close()
+        return {"ok": True}
+
+    def bookmark_note(self, body):
+        body = body or {}
+        con = self._con()
+        con.execute("UPDATE bookmarks SET note=? WHERE id=?",
+                    ((body.get("note") or "")[:2000], body.get("id")))
+        con.commit()
+        con.close()
+        return {"ok": True}
+
     def update(self, body):
         # Mehrere Autoren: als Liste (bevorzugt) oder Einzelfeld entgegennehmen.
         authors = body.get("authors")
@@ -672,6 +825,14 @@ ROUTES = {
     ("POST", "/api/search"): CORE.search,
     ("POST", "/api/passage"): CORE.passage,
     ("POST", "/api/page"): CORE.page,
+    ("POST", "/api/pages"): CORE.pages,
+    ("POST", "/api/meta_get"): CORE.meta_get,
+    ("POST", "/api/meta_set"): CORE.meta_set,
+    ("GET", "/api/bookmarks"): CORE.bookmarks,
+    ("POST", "/api/bookmark_add"): CORE.bookmark_add,
+    ("POST", "/api/bookmark_toggle"): CORE.bookmark_toggle,
+    ("POST", "/api/bookmark_delete"): CORE.bookmark_delete,
+    ("POST", "/api/bookmark_note"): CORE.bookmark_note,
     ("POST", "/api/document"): CORE.document,
 }
 

@@ -60,6 +60,21 @@ CREATE VIRTUAL TABLE IF NOT EXISTS passages_fts USING fts5(
     content='',
     tokenize='unicode61'
 );
+
+-- Lesezeichen: bewusst OHNE Fremdschlüssel-Kaskade, damit sie ein
+-- Neu-Einlesen des Buches überleben. Wiedergefunden wird die Stelle über
+-- Titel + Seite + Textausschnitt, falls sich die internen IDs ändern.
+CREATE TABLE IF NOT EXISTS bookmarks (
+    id INTEGER PRIMARY KEY,
+    document_id INTEGER,        -- bester bekannter Stand
+    passage_id INTEGER,         -- bester bekannter Stand
+    doc_title TEXT NOT NULL,    -- zum Wiederfinden nach Neu-Scan
+    page_no INTEGER NOT NULL,
+    snippet TEXT NOT NULL,      -- Textausschnitt der Fundstelle
+    note TEXT DEFAULT '',       -- eigene Notiz
+    terms TEXT DEFAULT '',      -- Suchbegriffe (JSON) für die Hervorhebung
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
