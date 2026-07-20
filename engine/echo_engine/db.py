@@ -61,6 +61,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS passages_fts USING fts5(
     tokenize='unicode61'
 );
 
+-- Kategorien (frei benennbar, in den Einstellungen verwaltet). Ein Buch kann
+-- mehreren Kategorien angehören -> Zuordnung über die Verknüpfungstabelle.
+CREATE TABLE IF NOT EXISTS categories (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS document_categories (
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    PRIMARY KEY (document_id, category_id)
+);
+
 -- Lesezeichen: bewusst OHNE Fremdschlüssel-Kaskade, damit sie ein
 -- Neu-Einlesen des Buches überleben. Wiedergefunden wird die Stelle über
 -- Titel + Seite + Textausschnitt, falls sich die internen IDs ändern.

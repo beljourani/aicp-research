@@ -114,6 +114,7 @@ def structured_search(con: sqlite3.Connection,
                       exclude: list[str] | None = None,
                       limit: int = 20, author: str | None = None,
                       document_id: int | None = None,
+                      category=None,
                       offset: int = 0) -> list[SearchHit]:
     """Begriffssuche aus der Oberfläche: Gruppen von UND-Begriffen
     (ODER-verknüpft) plus globale Ausschlussliste – ohne Syntax-Parsing."""
@@ -136,16 +137,19 @@ def structured_search(con: sqlite3.Connection,
         if g.include or g.phrases:
             groups.append(g)
     return _search_groups(con, groups, limit=limit, author=author,
-                          document_id=document_id, offset=offset)
+                          document_id=document_id, category=category,
+                          offset=offset)
 
 
 def search(con: sqlite3.Connection, query: str, limit: int = 20,
            author: str | None = None,
            document_id: int | None = None,
+           category=None,
            offset: int = 0) -> list[SearchHit]:
     groups = parse_query(query or "")
     return _search_groups(con, groups, limit=limit, author=author,
-                          document_id=document_id, offset=offset)
+                          document_id=document_id, category=category,
+                          offset=offset)
 
 
 def _author_clause(author) -> tuple[str, list]:
@@ -161,13 +165,44 @@ def _author_clause(author) -> tuple[str, list]:
     return clause, [f"%{n}%" for n in names]
 
 
+def _doc_clause(document_id) -> tuple[str, list]:
+    """Buchfilter: ein einzelnes ODER mehrere Dokumente (d.id IN (…))."""
+    if not document_id:
+        return "", []
+    ids = document_id if isinstance(document_id, (list, tuple, set)) \
+        else [document_id]
+    ids = [int(i) for i in ids if i not in (None, "")]
+    if not ids:
+        return "", []
+    marks = ",".join("?" for _ in ids)
+    return f" AND d.id IN ({marks})", list(ids)
+
+
+def _category_clause(category) -> tuple[str, list]:
+    """Filter nach einer oder mehreren Kategorien. Ein Dokument passt, wenn
+    ihm eine der gewählten Kategorien zugeordnet ist."""
+    if not category:
+        return "", []
+    names = category if isinstance(category, (list, tuple, set)) else [category]
+    names = [n for n in names if n]
+    if not names:
+        return "", []
+    marks = ",".join("?" for _ in names)
+    clause = (" AND EXISTS (SELECT 1 FROM document_categories dc "
+              "JOIN categories c ON c.id = dc.category_id "
+              f"WHERE dc.document_id = d.id AND c.name IN ({marks}))")
+    return clause, list(names)
+
+
 def _search_groups(con: sqlite3.Connection, groups: list[QueryGroup],
                    limit: int, author,
-                   document_id: int | None, offset: int = 0) -> list[SearchHit]:
+                   document_id: int | None, category=None,
+                   offset: int = 0) -> list[SearchHit]:
     exprs = [e for e in (_group_expr(g) for g in groups) if e]
     if not exprs:
         return _browse(con, limit=limit, author=author,
-                       document_id=document_id, offset=offset)
+                       document_id=document_id, category=category,
+                       offset=offset)
     match_expr = " OR ".join(f"({e})" for e in exprs)
 
     # Für Hervorhebung/Snippets: alle positiven Begriffe aller Gruppen
@@ -187,9 +222,10 @@ def _search_groups(con: sqlite3.Connection, groups: list[QueryGroup],
     params: list = [match_expr]
     ac, ap = _author_clause(author)
     sql += ac; params += ap
-    if document_id:
-        sql += " AND d.id = ?"
-        params.append(document_id)
+    dc, dp = _doc_clause(document_id)
+    sql += dc; params += dp
+    cc, cp = _category_clause(category)
+    sql += cc; params += cp
     sql += " ORDER BY score LIMIT ? OFFSET ?"
     params.append(limit)
     params.append(offset)
@@ -210,6 +246,7 @@ def _search_groups(con: sqlite3.Connection, groups: list[QueryGroup],
 def hybrid_search(con: sqlite3.Connection, query: str, embedder=None,
                   limit: int = 20, author: str | None = None,
                   document_id: int | None = None,
+                  category=None,
                   k: int = 60, offset: int = 0) -> list[SearchHit]:
     """Kombiniert Volltext- und semantische Suche per Reciprocal Rank Fusion.
 
@@ -218,7 +255,7 @@ def hybrid_search(con: sqlite3.Connection, query: str, embedder=None,
     """
     span = offset + limit          # so viele Treffer werden insgesamt gebraucht
     fts_hits = search(con, query, limit=span * 3, author=author,
-                      document_id=document_id)
+                      document_id=document_id, category=category)
     # Boolesche Anfragen (ODER/Ausschluss/Phrase) laufen rein über FTS –
     # die semantische Suche kann Ausschlüsse nicht respektieren.
     if embedder is None or not query.strip() or is_boolean_query(query):
@@ -230,7 +267,7 @@ def hybrid_search(con: sqlite3.Connection, query: str, embedder=None,
     except Exception:
         return fts_hits[offset:span]
     vec_hits = vector_search(con, qvec, limit=span * 3, author=author,
-                             document_id=document_id)
+                             document_id=document_id, category=category)
 
     scores: dict[int, float] = {}
     by_id: dict[int, SearchHit] = {}
@@ -262,7 +299,8 @@ def hybrid_search(con: sqlite3.Connection, query: str, embedder=None,
 
 
 def _browse(con: sqlite3.Connection, limit: int, author,
-            document_id: int | None, offset: int = 0) -> list[SearchHit]:
+            document_id: int | None, category=None,
+            offset: int = 0) -> list[SearchHit]:
     """Ohne Suchbegriff: Passagen in Dokumentreihenfolge (Blättern)."""
     sql = ("SELECT p.id, p.document_id, p.page_from, p.page_to, p.text, "
            "d.title, d.author, d.reliability FROM passages p "
@@ -270,9 +308,10 @@ def _browse(con: sqlite3.Connection, limit: int, author,
     params: list = []
     ac, ap = _author_clause(author)
     sql += ac; params += ap
-    if document_id:
-        sql += " AND d.id = ?"
-        params.append(document_id)
+    dc, dp = _doc_clause(document_id)
+    sql += dc; params += dp
+    cc, cp = _category_clause(category)
+    sql += cc; params += cp
     sql += " ORDER BY p.document_id, p.idx LIMIT ? OFFSET ?"
     params.append(limit)
     params.append(offset)
@@ -308,6 +347,30 @@ def _matched_words(original_text: str, query_stems: set[str]) -> list[str]:
             seen.add(word)
             out.append(word)
     return out
+
+
+def stems_of_terms(terms) -> set[str]:
+    """Wandelt eine Liste von Suchbegriffen (einzelne Wörter ODER mehrwortige
+    Ausdrücke) in die Menge ihrer Wurzeln um – identisch zu der Menge, die
+    die Suche zum Finden der Treffer benutzt. Damit stimmen Markierungen und
+    Trefferauswahl überein."""
+    out: set[str] = set()
+    for term in (terms or []):
+        for tok in tokenize(term or ""):
+            out.add(stem(tok))
+    out.discard("")
+    return out
+
+
+def highlight_spans(text: str, terms) -> list[tuple[int, int]]:
+    """Liefert (start, ende)-Positionen aller Wörter in ``text``, deren Wurzel
+    zu einem der ``terms`` passt. Die Berechnung läuft wurzelbewusst gegen den
+    TATSÄCHLICH angezeigten Text – so werden alle Flexionen und Diakritika-
+    Varianten markiert (behebt den Markierungs-Bug im Leser)."""
+    stems = stems_of_terms(terms)
+    if not stems:
+        return []
+    return [(s, e) for s, e, _ in _match_spans(text, stems)]
 
 
 def _make_snippet(text: str, matched: list[str], width: int = 240) -> str:

@@ -116,22 +116,18 @@ def vector_search(con: sqlite3.Connection, query_vec: np.ndarray,
                   limit: int = 50,
                   author: str | None = None,
                   document_id: int | None = None,
+                  category=None,
                   min_similarity: float = 0.25) -> list[tuple[int, float]]:
     """Liefert [(passage_id, cosinus-ähnlichkeit)] absteigend sortiert."""
+    from .search import _author_clause, _doc_clause, _category_clause
     ensure_vector_schema(con)
     sql = ("SELECT v.passage_id, v.vec FROM passage_vectors v "
            "JOIN passages p ON p.id = v.passage_id "
            "JOIN documents d ON d.id = p.document_id WHERE 1=1")
     params: list = []
-    if author:
-        names = author if isinstance(author, (list, tuple)) else [author]
-        names = [n for n in names if n]
-        if names:
-            sql += " AND (" + " OR ".join("d.author LIKE ?" for _ in names) + ")"
-            params += [f"%{n}%" for n in names]
-    if document_id:
-        sql += " AND d.id = ?"
-        params.append(document_id)
+    for clause, cparams in (_author_clause(author), _doc_clause(document_id),
+                            _category_clause(category)):
+        sql += clause; params += cparams
     rows = con.execute(sql, params).fetchall()
     if not rows:
         return []

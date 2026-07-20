@@ -57,6 +57,7 @@ def join_authors(names) -> str | None:
     return AUTHOR_SEP.join(clean) if clean else None
 
 from echo_engine import connect, index_document, hybrid_search  # noqa: E402
+from echo_engine import highlight_spans  # noqa: E402
 from echo_engine.indexer import ensure_index_version  # noqa: E402
 from echo_engine.semantic import Embedder, embed_passages, ensure_vector_schema  # noqa: E402
 
@@ -349,8 +350,173 @@ class Core:
             "SELECT d.*, COUNT(p.id) AS passage_count FROM documents d "
             "LEFT JOIN passages p ON p.document_id = d.id "
             "GROUP BY d.id ORDER BY d.created_at DESC").fetchall()
+        cats: dict = {}
+        for r in con.execute(
+                "SELECT dc.document_id, c.name FROM document_categories dc "
+                "JOIN categories c ON c.id = dc.category_id ORDER BY c.name"):
+            cats.setdefault(r["document_id"], []).append(r["name"])
+        con.close()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["categories"] = cats.get(r["id"], [])
+            out.append(d)
+        return out
+
+    # --- Kategorien -------------------------------------------------------
+    def _doc_categories(self, con, doc_id) -> list[str]:
+        return [r[0] for r in con.execute(
+            "SELECT c.name FROM document_categories dc "
+            "JOIN categories c ON c.id = dc.category_id "
+            "WHERE dc.document_id = ? ORDER BY c.name", (doc_id,))]
+
+    def categories(self, _body=None):
+        """Alle Kategorien inkl. Buchanzahl (auch leere) – für Verwaltung,
+        Filter und Sammlungen."""
+        con = self._con()
+        rows = con.execute(
+            "SELECT c.id, c.name, COUNT(dc.document_id) AS count "
+            "FROM categories c "
+            "LEFT JOIN document_categories dc ON dc.category_id = c.id "
+            "GROUP BY c.id ORDER BY c.name").fetchall()
         con.close()
         return [dict(r) for r in rows]
+
+    def category_create(self, body):
+        name = ((body or {}).get("name") or "").strip()
+        if not name:
+            return {"error": "Kein Name"}
+        con = self._con()
+        con.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)",
+                    (name,))
+        con.commit()
+        row = con.execute("SELECT id, name FROM categories WHERE name=?",
+                          (name,)).fetchone()
+        con.close()
+        return {"ok": True, "id": row["id"], "name": row["name"]}
+
+    def category_rename(self, body):
+        body = body or {}
+        cid = body.get("id")
+        name = (body.get("name") or "").strip()
+        if not cid or not name:
+            return {"error": "id und Name nötig"}
+        con = self._con()
+        # Zielname existiert bereits -> beide Kategorien zusammenführen
+        other = con.execute("SELECT id FROM categories WHERE name=? AND id<>?",
+                            (name, cid)).fetchone()
+        if other:
+            con.execute("UPDATE OR IGNORE document_categories SET category_id=? "
+                        "WHERE category_id=?", (other["id"], cid))
+            con.execute("DELETE FROM categories WHERE id=?", (cid,))
+        else:
+            con.execute("UPDATE categories SET name=? WHERE id=?", (name, cid))
+        con.commit()
+        con.close()
+        return {"ok": True}
+
+    def category_delete(self, body):
+        cid = (body or {}).get("id")
+        if not cid:
+            return {"error": "id nötig"}
+        con = self._con()
+        con.execute("DELETE FROM categories WHERE id=?", (cid,))
+        con.commit()
+        con.close()
+        return {"ok": True}
+
+    def set_document_categories(self, body):
+        """Setzt die Kategorien eines Buches neu (fehlende werden angelegt)."""
+        body = body or {}
+        doc_id = body.get("document_id")
+        names = body.get("names")
+        if names is None:
+            names = body.get("categories") or []
+        clean = []
+        for n in names:
+            n = (n or "").strip()
+            if n and n not in clean:
+                clean.append(n)
+        con = self._con()
+        cat_ids = []
+        for n in clean:
+            con.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)",
+                        (n,))
+            row = con.execute("SELECT id FROM categories WHERE name=?",
+                              (n,)).fetchone()
+            if row:
+                cat_ids.append(row["id"])
+        con.execute("DELETE FROM document_categories WHERE document_id=?",
+                    (doc_id,))
+        for cid in cat_ids:
+            con.execute("INSERT OR IGNORE INTO document_categories "
+                        "(document_id, category_id) VALUES (?,?)",
+                        (doc_id, cid))
+        con.commit()
+        con.close()
+        return {"ok": True, "categories": clean}
+
+    # --- Autoren verwalten ------------------------------------------------
+    # Autoren stehen als Mehrfachwert-String in documents.author (Trenner
+    # AUTHOR_SEP). Es gibt keine eigene Tabelle – Umbenennen/Löschen schreibt
+    # die betroffenen Autorenlisten um.
+    def authors(self, _body=None):
+        """Alle Autorennamen mit Buchanzahl (aus den Dokumenten), sortiert."""
+        con = self._con()
+        counts: dict[str, int] = {}
+        for r in con.execute("SELECT author FROM documents"):
+            for name in split_authors(r[0]):
+                counts[name] = counts.get(name, 0) + 1
+        con.close()
+        return [{"name": n, "count": counts[n]}
+                for n in sorted(counts.keys())]
+
+    def author_rename(self, body):
+        """Benennt einen Autor in allen Büchern um (dedupliziert, falls der
+        Zielname dort schon steht). Reihenfolge bleibt erhalten."""
+        body = body or {}
+        old = (body.get("old") or "").strip()
+        new = (body.get("new") or "").strip()
+        if not old or not new:
+            return {"error": "alt und neu nötig"}
+        if old == new:
+            return {"ok": True, "changed": 0}
+        con = self._con()
+        changed = 0
+        for r in con.execute(
+                "SELECT id, author FROM documents WHERE author LIKE ?",
+                (f"%{old}%",)).fetchall():
+            names = split_authors(r["author"])
+            if old not in names:
+                continue           # LIKE-Treffer, aber kein exakter Name
+            names = [new if n == old else n for n in names]
+            con.execute("UPDATE documents SET author=? WHERE id=?",
+                        (join_authors(names), r["id"]))
+            changed += 1
+        con.commit()
+        con.close()
+        return {"ok": True, "changed": changed}
+
+    def author_delete(self, body):
+        """Entfernt einen Autor aus allen Büchern (leere Liste -> NULL)."""
+        name = ((body or {}).get("name") or "").strip()
+        if not name:
+            return {"error": "Name nötig"}
+        con = self._con()
+        changed = 0
+        for r in con.execute(
+                "SELECT id, author FROM documents WHERE author LIKE ?",
+                (f"%{name}%",)).fetchall():
+            names = split_authors(r["author"])
+            if name not in names:
+                continue
+            names = [n for n in names if n != name]
+            con.execute("UPDATE documents SET author=? WHERE id=?",
+                        (join_authors(names), r["id"]))
+            changed += 1
+        con.commit()
+        con.close()
+        return {"ok": True, "changed": changed}
 
     def upload(self, filename: str, data: bytes):
         """Per Drag&Drop übertragene Datei speichern und indexieren."""
@@ -540,9 +706,11 @@ class Core:
         con.close()
         has_image = bool(doc["file_type"] == "pdf" and doc["file_path"]
                          and os.path.exists(doc["file_path"]))
+        text = row["text"] if row else ""
         return {"title": doc["title"], "author": doc["author"],
                 "page_no": page_no, "first_page": lo, "last_page": hi,
-                "text": row["text"] if row else "",
+                "text": text,
+                "spans": highlight_spans(text, (body or {}).get("terms")),
                 "has_image": has_image}
 
     def pages(self, body):
@@ -557,6 +725,7 @@ class Core:
         if to < frm:
             to = frm
         to = min(to, frm + 40)          # Sicherheitsgrenze pro Anfrage
+        terms = (body or {}).get("terms")
         con = self._con()
         rows = con.execute(
             "SELECT page_no, text FROM pages WHERE document_id=? "
@@ -566,7 +735,8 @@ class Core:
             "SELECT MIN(page_no), MAX(page_no) FROM pages WHERE document_id=?",
             (doc_id,)).fetchone()
         con.close()
-        return {"pages": [{"page_no": r["page_no"], "text": r["text"]}
+        return {"pages": [{"page_no": r["page_no"], "text": r["text"],
+                           "spans": highlight_spans(r["text"], terms)}
                           for r in rows],
                 "first_page": lo, "last_page": hi}
 
@@ -756,8 +926,13 @@ class Core:
             "SELECT d.*, COUNT(p.id) AS passage_count FROM documents d "
             "LEFT JOIN passages p ON p.document_id = d.id "
             "WHERE d.id = ? GROUP BY d.id", (body["id"],)).fetchone()
+        if not row:
+            con.close()
+            return {"error": "nicht gefunden"}
+        d = dict(row)
+        d["categories"] = self._doc_categories(con, body["id"])
         con.close()
-        return dict(row) if row else {"error": "nicht gefunden"}
+        return d
 
     def delete(self, body):
         con = self._con()
@@ -789,6 +964,14 @@ class Core:
             author_filter = body.get("author") or None
         elif isinstance(author_filter, list):
             author_filter = [a for a in author_filter if a] or None
+        # Kategoriefilter: Liste (mehrere) oder Einzelwert.
+        category_filter = body.get("categories")
+        if not category_filter:
+            category_filter = body.get("category") or None
+        elif isinstance(category_filter, list):
+            category_filter = [c for c in category_filter if c] or None
+        # Buchfilter: mehrere Bücher (document_ids) oder ein einzelnes.
+        doc_filter = body.get("document_ids") or body.get("document_id") or None
         # Seitenweises Nachladen: limit + offset. Wir holen ein Ergebnis mehr
         # als angefragt, um zu erkennen, ob es noch weitere gibt.
         try:
@@ -807,13 +990,13 @@ class Core:
                 con, body.get("groups") or [],
                 exclude=body.get("exclude") or [],
                 limit=limit + 1, offset=offset, author=author_filter,
-                document_id=body.get("document_id") or None)
+                document_id=doc_filter, category=category_filter)
         else:
             emb = self._embedder if body.get("semantic", True) else None
             hits = hybrid_search(
                 con, body.get("q") or "", embedder=emb,
                 limit=limit + 1, offset=offset, author=author_filter,
-                document_id=body.get("document_id") or None)
+                document_id=doc_filter, category=category_filter)
         has_more = len(hits) > limit
         hits = hits[:limit]
         seen = {}
@@ -823,8 +1006,11 @@ class Core:
             for name in split_authors(r[0]):
                 seen[name] = True
         authors = sorted(seen.keys())
+        categories = [r[0] for r in con.execute(
+            "SELECT name FROM categories ORDER BY name")]
         con.close()
         return {"hits": [asdict(h) for h in hits], "authors": authors,
+                "categories": categories,
                 "offset": offset, "limit": limit, "has_more": has_more}
 
 
@@ -842,6 +1028,14 @@ ROUTES = {
     ("GET", "/api/settings"): CORE.get_settings,
     ("POST", "/api/settings"): CORE.set_settings,
     ("GET", "/api/documents"): CORE.documents,
+    ("GET", "/api/categories"): CORE.categories,
+    ("POST", "/api/category_create"): CORE.category_create,
+    ("POST", "/api/category_rename"): CORE.category_rename,
+    ("POST", "/api/category_delete"): CORE.category_delete,
+    ("POST", "/api/set_document_categories"): CORE.set_document_categories,
+    ("GET", "/api/authors"): CORE.authors,
+    ("POST", "/api/author_rename"): CORE.author_rename,
+    ("POST", "/api/author_delete"): CORE.author_delete,
     ("POST", "/api/pick"): CORE.pick,
     ("POST", "/api/update"): CORE.update,
     ("POST", "/api/download_document"): CORE.download_document,

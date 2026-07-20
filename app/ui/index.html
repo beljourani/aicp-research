@@ -16,9 +16,17 @@
     --accent: #12795a;
     --accent-weak: #eef5f1;
     --accent-ink: #0c5c44;
-    --hl: #fdeeb3;
+    /* Kräftige, gut lesbare Chip-/Badge-Farben (statt blasser Pastelltöne) */
+    --chip-bg: #d4ebe0;
+    --chip-ink: #0f6b4f;
+    --hl: #ffcf3f;          /* kräftiges Amber für Suchtreffer (vorher blass) */
+    --hl-ink: #3a2c00;      /* dunkler Text auf der Markierung */
     --err: #b23a2e;
+    --err-bg: #f7d7d1;
+    --err-ink: #8f2c20;
     --warn: #9a6a12;
+    --warn-bg: #f5e2b8;
+    --warn-ink: #7a5200;
     --radius: 10px;
     --shadow: 0 1px 2px rgba(20,30,25,.04), 0 8px 24px rgba(20,30,25,.06);
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -59,17 +67,20 @@
   .navItem {
     display: flex; align-items: center; gap: 11px; width: 100%;
     padding: 9px 11px; border: 0; background: none; cursor: pointer;
-    color: var(--muted); border-radius: 8px; font-size: 14.5px;
+    color: #2a332e; border-radius: 8px; font-size: 14.5px; font-weight: 500;
     text-align: start; margin-bottom: 2px; transition: background .12s, color .12s;
   }
+  .navItem svg { stroke: var(--muted); }
   .navItem:hover { background: rgba(18,121,90,.06); color: var(--ink); }
+  .navItem:hover svg { stroke: var(--ink); }
   .navItem.active { background: var(--accent-weak); color: var(--accent-ink);
     font-weight: 600; }
   .navItem.active svg { stroke: var(--accent); }
   .navSpacer { flex: 1; }
   .navSection { border-top: 1px solid var(--line); margin-top: 8px;
     padding-top: 8px; }
-  .navItem.subtle { color: var(--faint); font-size: 13.5px; padding: 8px 11px; }
+  .navItem.subtle { color: #3a423d; font-size: 13.5px; padding: 8px 11px;
+    font-weight: 500; }
   .navItem.updateItem { color: var(--accent-ink); background: var(--accent-weak);
     font-weight: 600; font-size: 13.5px; }
   .navItem.updateItem svg { stroke: var(--accent); }
@@ -79,6 +90,48 @@
   #navStatus .pulse { width: 7px; height: 7px; border-radius: 50%;
     background: var(--accent); flex: none; }
   #navStatus.off .pulse { background: var(--faint); }
+  /* ---------- Sammlungen (Seitenleiste + Index-Seiten) ---------- */
+  .navCollections { border-top: 1px solid var(--line); margin-top: 8px;
+    padding-top: 10px; }
+  .navSecLabel { font-size: 11px; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--faint); padding: 0 11px 6px; }
+  /* Index-Seite: Kopf mit Suchfeld + „verwalten"-Button */
+  .indexHead { max-width: 900px; margin: 0 auto 18px; display: flex;
+    align-items: center; gap: 12px; flex-wrap: wrap; }
+  .indexHead h1.title { margin: 0; flex: none; }
+  .indexSearch { flex: 1; min-width: 200px; position: relative; }
+  .indexSearch input { width: 100%; padding: 10px 14px 10px 40px;
+    border: 1px solid var(--line-strong); border-radius: 10px; font-size: 14px;
+    font-family: inherit; background: var(--panel); color: var(--ink); }
+  .indexSearch input:focus { outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-weak); }
+  .indexSearch .si { position: absolute; inset-inline-start: 12px; top: 50%;
+    transform: translateY(-50%); width: 17px; height: 17px; color: var(--faint);
+    pointer-events: none; }
+  /* Liste der Autoren/Kategorien */
+  .indexList { max-width: 900px; margin: 0 auto; border: 1px solid var(--line);
+    border-radius: var(--radius); overflow: hidden; background: var(--panel); }
+  .indexItem { display: flex; align-items: center; gap: 12px; width: 100%;
+    padding: 13px 18px; border: 0; border-bottom: 1px solid var(--line);
+    background: none; cursor: pointer; text-align: start;
+    transition: background .12s; }
+  .indexItem:last-child { border-bottom: 0; }
+  .indexItem:hover { background: var(--surface); }
+  .indexItem .in { font-weight: 600; font-size: 15px; color: var(--ink);
+    font-family: var(--arab); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .indexItem .ic-count { margin-inline-start: auto; flex: none; font-size: 12.5px;
+    font-weight: 600; color: var(--chip-ink); background: var(--chip-bg);
+    padding: 3px 10px; border-radius: 999px; }
+  .indexItem .chev { flex: none; width: 17px; height: 17px; color: var(--faint); }
+  /* Buchlisten-Kopf (Sammlung eines Autors/einer Kategorie) */
+  .collKind { font-size: 12px; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--accent-ink); margin-bottom: 2px; }
+  .backBtn { display: inline-flex; align-items: center; gap: 6px; border: 0;
+    background: none; cursor: pointer; color: var(--muted); font-size: 13px;
+    font-family: inherit; padding: 4px 0; margin-bottom: 6px; }
+  .backBtn:hover { color: var(--accent-ink); }
+  .backBtn svg { width: 16px; height: 16px; }
 
   /* ---------- Content ---------- */
   section.view { display: none; height: 100vh; overflow-y: auto;
@@ -128,11 +181,24 @@
   .filters select { padding: 6px 10px; border-radius: 8px;
     border: 1px solid var(--line-strong); font-family: inherit;
     background: var(--panel); color: var(--ink); max-width: 220px; }
-  .authorFilter { display: inline-flex; flex-wrap: wrap; align-items: center;
-    gap: 6px; min-width: 220px; max-width: 380px; padding: 4px 6px;
-    border: 1px solid var(--line-strong); border-radius: 8px;
+  .authorFilter { position: relative; display: inline-flex; flex-wrap: wrap;
+    align-items: center; gap: 6px; min-width: 220px; max-width: 380px;
+    padding: 4px 6px; border: 1px solid var(--line-strong); border-radius: 8px;
     background: var(--panel); cursor: text; }
   .authorFilter:focus-within { border-color: var(--accent); }
+  /* Hochwertiges Auswahl-Dropdown (statt nativem <datalist>) */
+  .comboPanel { position: absolute; top: calc(100% + 5px); inset-inline-start: 0;
+    min-width: 220px; max-width: 340px; max-height: 260px; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--line-strong);
+    border-radius: 11px; box-shadow: var(--shadow); z-index: 45; padding: 5px;
+    display: none; }
+  .comboPanel.show { display: block; }
+  .comboOpt { padding: 8px 11px; border-radius: 8px; cursor: pointer;
+    font-size: 13.5px; font-family: var(--arab); color: var(--ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .comboOpt:hover, .comboOpt.active { background: var(--accent-weak);
+    color: var(--accent-ink); }
+  .comboEmpty { padding: 9px 11px; font-size: 13px; color: var(--faint); }
   .authorFilter input { border: 0; outline: none; background: none; flex: 1;
     min-width: 90px; font-family: inherit; font-size: 13.5px; color: var(--ink);
     padding: 3px 2px; }
@@ -140,7 +206,7 @@
   .switch { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
   .switch input { accent-color: var(--accent); }
   .chip { display: inline-flex; align-items: center; gap: 7px;
-    background: var(--accent-weak); color: var(--accent-ink); font-weight: 600;
+    background: var(--chip-bg); color: var(--chip-ink); font-weight: 600;
     padding: 4px 6px 4px 12px; border-radius: 999px; font-size: 12.5px; }
   .chip button { border: 0; background: none; cursor: pointer; color: inherit;
     display: grid; place-items: center; padding: 2px; border-radius: 50%; }
@@ -159,14 +225,44 @@
     border-radius: 9px; font-size: 14px; font-family: inherit; background: var(--bg);
     color: var(--ink); }
   .mfInput:focus { outline: none; border-color: var(--accent); }
-  .chipField { display: flex; flex-wrap: wrap; gap: 7px; align-items: center;
-    padding: 7px; border: 1px solid var(--line-strong); border-radius: 9px;
-    min-height: 42px; background: var(--bg); cursor: text; }
+  .chipField { position: relative; display: flex; flex-wrap: wrap; gap: 7px;
+    align-items: center; padding: 7px; border: 1px solid var(--line-strong);
+    border-radius: 9px; min-height: 42px; background: var(--bg); cursor: text; }
   .chipField:focus-within { border-color: var(--accent); }
   .chipField input { border: 0; outline: none; background: none; flex: 1;
     min-width: 120px; font-size: 14px; font-family: inherit; color: var(--ink);
     padding: 4px 2px; }
   .modalFoot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+  /* Verwalten-Popup (Kategorien / Autoren) – hochwertige Variante */
+  .modal.modalLg { width: min(560px, 94vw); padding: 24px 24px 20px; }
+  .modalLg .modalHead { align-items: flex-start; margin-bottom: 18px; }
+  .mhTitle { display: flex; align-items: center; gap: 13px; }
+  .mhIcon { width: 40px; height: 40px; border-radius: 11px; flex: none;
+    background: var(--accent-weak); display: grid; place-items: center; }
+  .mhIcon svg { width: 21px; height: 21px; stroke: var(--accent); }
+  .mhTitle > span:last-child { display: flex; flex-direction: column; }
+  #manageHead { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+  .mhSub { font-size: 12.5px; color: var(--muted); font-weight: 400;
+    margin-top: 2px; }
+  .manageNewRow { display: flex; gap: 8px; align-items: stretch; margin: 4px 0 18px;
+    padding: 12px; background: var(--surface); border-radius: 11px; }
+  .manageNewRow .mfInput { flex: 1; background: var(--panel); }
+  .manageNewRow .btn { flex: none; padding: 0 20px; }
+  .manageList { max-height: 50vh; overflow-y: auto; display: flex;
+    flex-direction: column; gap: 8px; padding-right: 2px; }
+  .catRow { display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+    border: 1px solid var(--line); border-radius: 11px; background: var(--panel);
+    transition: border-color .12s, box-shadow .12s; }
+  .catRow:hover { border-color: var(--line-strong); box-shadow: var(--shadow); }
+  .catRow .cname { font-weight: 600; font-size: 14.5px; font-family: var(--arab);
+    color: var(--ink); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; flex: 1; min-width: 0; }
+  .catRow .cname input { width: 100%; }
+  .catRow .ccount { font-size: 12px; font-weight: 600; color: var(--chip-ink);
+    background: var(--chip-bg); padding: 2px 9px; border-radius: 999px; flex: none; }
+  .catRow .cacts { display: flex; gap: 2px; flex: none; }
+  .manageList .empty { color: var(--faint); text-align: center; padding: 30px 10px;
+    font-size: 13.5px; }
   /* "Was ist neu"-Fenster */
   .newsBody { max-height: 52vh; overflow-y: auto; font-size: 14px;
     line-height: 1.75; color: #2a332e; }
@@ -186,11 +282,11 @@
   .termGroup.focused { border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-weak); }
   .tchip { display: inline-flex; align-items: center; gap: 6px;
-    background: var(--accent-weak); color: var(--accent-ink); font-weight: 600;
+    background: var(--chip-bg); color: var(--chip-ink); font-weight: 600;
     font-size: 13.5px; padding: 4px 6px 4px 11px; border-radius: 8px; }
   .tchip button { border: 0; background: none; cursor: pointer; color: inherit;
     display: grid; place-items: center; padding: 0; }
-  .tchip.neg { background: #fbeae7; color: var(--err); }
+  .tchip.neg { background: var(--err-bg); color: var(--err-ink); }
   .termGroup input { flex: 1; min-width: 150px; border: 0; outline: none;
     font-family: inherit; font-size: 14.5px; background: none; padding: 5px 2px; }
   .orSep { text-align: center; color: var(--faint); font-weight: 600;
@@ -236,10 +332,12 @@
     border: 1px solid var(--line); }
   .rel { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
     white-space: nowrap; cursor: help; }
-  .rel.exact { background: var(--accent-weak); color: var(--accent-ink); }
-  .rel.approx { background: #fbf1df; color: var(--warn); }
-  .hit .text { line-height: 1.9; font-size: 14.5px; color: #2a332e; }
-  mark { background: var(--hl); padding: 0 2px; border-radius: 3px; }
+  .rel.exact { background: var(--chip-bg); color: var(--chip-ink); }
+  .rel.approx { background: var(--warn-bg); color: var(--warn-ink); }
+  .hit .text { line-height: 1.9; font-size: 14.5px; color: #2a332e;
+    font-family: var(--arab); }
+  mark { background: var(--hl); color: var(--hl-ink); font-weight: 600;
+    padding: 0 2px; border-radius: 3px; }
   .empty { text-align: center; color: var(--faint); padding: 70px 20px;
     font-size: 14px; }
   .empty svg { stroke: var(--line-strong); width: 34px; height: 34px;
@@ -322,7 +420,7 @@
   .rHit .bmBtn:hover { color: var(--accent); background: var(--accent-weak); }
   .rHit .bmBtn.on { color: var(--accent); }
   .rHit .bmBtn.on svg { fill: var(--accent); }
-  .rHit .rtext { color: #3a423d; line-height: 1.7; }
+  .rHit .rtext { color: #2a332e; line-height: 1.7; font-family: var(--arab); }
   /* Lesefluss: Seiten als Blätter untereinander */
   #rReading { overflow-y: auto; background: var(--surface);
     padding: 26px 24px 70px; --rfont: 1;
@@ -335,6 +433,7 @@
     padding: 2px 12px; font-size: 11.5px; color: var(--muted); font-weight: 600; }
   .pageSheet .pageText { white-space: pre-wrap; word-break: break-word;
     line-height: 2.05; font-size: calc(16.5px * var(--rfont));
+    font-family: var(--arab); color: var(--ink);
     -webkit-user-select: text; user-select: text; cursor: text; }
   .pageSheet.loading .pageText { color: var(--faint); }
   .pageSheet img { max-width: 100%; display: block; margin: 0 auto;
@@ -343,9 +442,9 @@
   /* Text in Treffern und Leser markierbar/kopierbar */
   .hit .text, .rHit .rtext, #rReading, .passageBox {
     -webkit-user-select: text; user-select: text; }
-  .passageBox { background: #fffdf3; border-inline-start: 3px solid var(--accent);
+  .passageBox { background: #fff6d9; border-inline-start: 4px solid var(--accent);
     padding: 8px 13px; border-radius: 8px; }
-  #rReading mark { font-weight: 600; }
+  #rReading mark { font-weight: 700; }
   /* Kopfzeile: Fortschritt, Seitensprung, Schriftgröße, Treffer */
   #rProgress { height: 3px; background: var(--line); flex: none; }
   #rProgressBar { height: 100%; width: 0; background: var(--accent);
@@ -413,6 +512,11 @@
     <button class="navItem" data-view="docs"><span class="ci" data-ic="docs"></span><span id="navDocs"></span></button>
     <button class="navItem" data-view="upload"><span class="ci" data-ic="upload"></span><span id="navUpload"></span></button>
     <button class="navItem" data-view="bookmarks"><span class="ci" data-ic="bookmark"></span><span id="navBookmarks"></span></button>
+    <div class="navCollections" id="navCollections">
+      <div class="navSecLabel" id="collTitle"></div>
+      <button class="navItem" id="navAuthorsBtn"><span class="ci" data-ic="author"></span><span id="collAuthorsLabel"></span></button>
+      <button class="navItem" id="navCatsBtn"><span class="ci" data-ic="tag"></span><span id="collCatsLabel"></span></button>
+    </div>
     <div class="navSpacer"></div>
     <div id="navStatus"><span class="pulse"></span><span id="navStatusText"></span></div>
     <div class="navSection">
@@ -441,8 +545,15 @@
       <div class="filters">
         <label><span id="authorLabel"></span>
           <span class="authorFilter" id="authorFilter">
-            <input id="authorSel" list="authorList" autocomplete="off">
-            <datalist id="authorList"></datalist>
+            <input id="authorSel" autocomplete="off">
+          </span></label>
+        <label><span id="bookLabel"></span>
+          <span class="authorFilter" id="bookFilter">
+            <input id="bookSel" autocomplete="off">
+          </span></label>
+        <label><span id="categoryLabel"></span>
+          <span class="authorFilter" id="catFilter">
+            <input id="catSel" autocomplete="off">
           </span></label>
         <label class="switch"><input type="checkbox" id="semantic" checked>
           <span id="semanticLabel"></span></label>
@@ -492,6 +603,29 @@
       <div id="bmList"></div>
       <div id="bmEmpty" class="empty" style="display:none"></div>
     </div>
+  </section>
+
+  <!-- Index: Autoren bzw. Kategorien (durchsuchbar) -->
+  <section class="view" id="view-index">
+    <div class="indexHead">
+      <h1 class="title" id="indexTitle"></h1>
+      <span class="indexSearch"><span class="si ci" data-ic="search"></span>
+        <input id="indexSearch" type="text" dir="auto" autocomplete="off"></span>
+      <button class="btn sm" id="indexManageBtn"></button>
+    </div>
+    <div class="indexList" id="indexList"></div>
+    <div id="indexEmpty" class="empty" style="display:none"></div>
+  </section>
+
+  <!-- Sammlung (Autor bzw. Kategorie) -->
+  <section class="view" id="view-collection">
+    <div class="viewHead">
+      <button class="backBtn" id="collBack"><span class="ci" data-ic="prev"></span><span id="collBackLabel"></span></button>
+      <div id="collKind" class="collKind"></div>
+      <h1 class="title" id="collName"></h1>
+    </div>
+    <div class="docList" id="collList"></div>
+    <div id="collEmpty" class="empty" style="display:none"></div>
   </section>
 </div>
 
@@ -559,10 +693,26 @@
     <input id="editTitle" class="mfInput" type="text">
     <label class="mfLabel" id="fldAuthorsLabel"></label>
     <div id="authorChips" class="chipField"></div>
+    <label class="mfLabel" id="fldCategoriesLabel"></label>
+    <div id="categoryChips" class="chipField"></div>
     <div class="modalFoot">
       <button class="btn ghost" id="editCancel"></button>
       <button class="btn primary" id="editSave"></button>
     </div>
+  </div>
+</div>
+
+<div id="manageOverlay" class="overlay">
+  <div class="modal modalLg">
+    <div class="modalHead">
+      <span class="mhTitle"><span class="mhIcon"><span class="ci" id="manageIcon" data-ic="tag"></span></span>
+        <span><span id="manageHead"></span><span class="mhSub" id="manageSub"></span></span></span>
+      <button class="iconBtn" id="manageClose"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div class="manageNewRow" id="manageNewRow">
+      <input id="manageNewInput" class="mfInput" type="text" dir="auto">
+      <button class="btn primary" id="manageAddBtn"></button>
+    </div>
+    <div id="manageList" class="manageList"></div>
   </div>
 </div>
 
@@ -600,6 +750,11 @@ const ICONS = {
   bookmark: '<path d="M6 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17l-6-4-6 4z"/>',
   bookmarkOn: '<path d="M6 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17l-6-4-6 4z" fill="currentColor"/>',
   quote: '<path d="M7 7h4v4a4 4 0 0 1-4 4"/><path d="M15 7h4v4a4 4 0 0 1-4 4"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  folder: '<path d="M4 5a2 2 0 0 1 2-2h4l2 3h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>',
+  chevron: '<path d="m9 18 6-6-6-6"/>',
+  author: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  tag: '<path d="M20.6 13.4 12 22l-9-9V4a1 1 0 0 1 1-1h8z"/><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor"/>',
 };
 function svg(name) { return `<svg class="ic" viewBox="0 0 24 24">${ICONS[name]||""}</svg>`; }
 function paintIcons(root) {
@@ -629,6 +784,18 @@ const T = {
     qPlaceholder: "In allen Büchern suchen …",
     searchBtn: "Suchen",
     authorLabel: "Autor", all: "alle", semanticLabel: "semantische Suche",
+    bookLabel: "Buch", categoryLabel: "Kategorie",
+    collectionsTitle: "Sammlungen", collByAuthors: "Autoren",
+    collByCategories: "Kategorien", collKindAuthor: "Autor",
+    collKindCategory: "Kategorie", collEmpty: "Keine Bücher in dieser Sammlung.",
+    collNoAuthors: "Noch keine Autoren.", collNoCats: "Noch keine Kategorien.",
+    indexSearchAuthors: "Autor suchen …", indexSearchCats: "Kategorie suchen …",
+    indexNoMatch: "Kein Treffer.",
+    manageAuthors: "Autoren verwalten", manageCategories: "Kategorien verwalten",
+    manageAuthorsSub: "Autoren umbenennen oder aus allen Büchern entfernen.",
+    manageCategoriesSub: "Kategorien anlegen, umbenennen oder löschen.",
+    authorEmpty: "Noch keine Autoren.",
+    authorDeleteConfirm: (name)=>`Autor „${name}" aus allen Büchern entfernen? Die Bücher selbst bleiben erhalten.`,
     syntaxHint: 'Zwei Wörter = beide nötig · <code>|</code> = oder · <code>-wort</code> = ausschließen · <code>"…"</code> = exakte Wortgruppe',
     termFirst: "Begriff eingeben, Enter (alle müssen vorkommen)",
     termMore: "weiterer Begriff …", orSep: "oder",
@@ -640,6 +807,11 @@ const T = {
     promptTitle: "Titel:", promptAuthor: "Autor:",
     editTitle: "Dokument bearbeiten", fldTitle: "Titel", fldAuthors: "Autoren",
     authorAdd: "Autor eingeben, dann Enter", save: "Speichern", cancel: "Abbrechen",
+    fldCategories: "Kategorien", categoryAdd: "Kategorie eingeben, dann Enter",
+    catNewPlaceholder: "Neue Kategorie …", catAdd: "Hinzufügen",
+    rename: "Umbenennen", catEmpty: "Noch keine Kategorien.",
+    catBooksN: (n)=>`${n} ${n===1?"Buch":"Bücher"}`,
+    catDeleteConfirm: (name)=>`Kategorie „${name}" löschen? Die Zuordnung bei den Büchern wird entfernt (die Bücher selbst bleiben).`,
     download: "Herunterladen", downloadDone: "Datei gespeichert",
     dzTitle: "Dokumente hinzufügen",
     dzHint: "Dateien hierher ziehen (auch mehrere) oder auswählen. PDF, Word, Text.",
@@ -691,6 +863,18 @@ const T = {
     qPlaceholder: "ابحث في كل الكتب …",
     searchBtn: "بحث",
     authorLabel: "المؤلف", all: "الكل", semanticLabel: "بحث دلالي",
+    bookLabel: "الكتاب", categoryLabel: "التصنيف",
+    collectionsTitle: "المجموعات", collByAuthors: "المؤلفون",
+    collByCategories: "التصنيفات", collKindAuthor: "المؤلف",
+    collKindCategory: "التصنيف", collEmpty: "لا كتب في هذه المجموعة.",
+    collNoAuthors: "لا مؤلفون بعد.", collNoCats: "لا تصنيفات بعد.",
+    indexSearchAuthors: "ابحث عن مؤلف …", indexSearchCats: "ابحث عن تصنيف …",
+    indexNoMatch: "لا نتائج.",
+    manageAuthors: "إدارة المؤلفين", manageCategories: "إدارة التصنيفات",
+    manageAuthorsSub: "إعادة تسمية المؤلفين أو إزالتهم من كل الكتب.",
+    manageCategoriesSub: "إنشاء التصنيفات وإعادة تسميتها وحذفها.",
+    authorEmpty: "لا مؤلفون بعد.",
+    authorDeleteConfirm: (name)=>`إزالة المؤلف «${name}» من كل الكتب؟ تبقى الكتب نفسها.`,
     syntaxHint: 'كلمتان = كلاهما مطلوب · <code>|</code> = أو · <code>-كلمة</code> = استبعاد · <code>"…"</code> = عبارة حرفية',
     termFirst: "اكتب مصطلحاً ثم Enter (يجب أن ترد كلها)",
     termMore: "مصطلح آخر …", orSep: "أو",
@@ -702,6 +886,11 @@ const T = {
     promptTitle: "العنوان:", promptAuthor: "المؤلف:",
     editTitle: "تعديل المستند", fldTitle: "العنوان", fldAuthors: "المؤلفون",
     authorAdd: "اكتب مؤلفاً ثم Enter", save: "حفظ", cancel: "إلغاء",
+    fldCategories: "التصنيفات", categoryAdd: "اكتب تصنيفاً ثم Enter",
+    catNewPlaceholder: "تصنيف جديد …", catAdd: "إضافة",
+    rename: "إعادة تسمية", catEmpty: "لا توجد تصنيفات بعد.",
+    catBooksN: (n)=>`${n} ${n===1?"كتاب":"كتب"}`,
+    catDeleteConfirm: (name)=>`حذف التصنيف «${name}»؟ ستُزال إشارته من الكتب (تبقى الكتب نفسها).`,
     download: "تنزيل", downloadDone: "تم حفظ الملف",
     dzTitle: "إضافة مستندات",
     dzHint: "اسحب الملفات إلى هنا (عدة ملفات) أو اخترها. PDF، Word، نص.",
@@ -760,10 +949,13 @@ function applyLang(l) {
   set("mToggleExclude", d.toggleExclude); set("rToggleExclude", d.toggleExclude);
   set("mExcludeLabel", d.excludeLabel); set("rExcludeLabel", d.excludeLabel);
   set("authorLabel", d.authorLabel); set("semanticLabel", d.semanticLabel);
+  set("bookLabel", d.bookLabel); set("categoryLabel", d.categoryLabel);
   set("dzTitle", d.dzTitle); set("dzHint", d.dzHint); set("pickBtn", d.pickBtn);
   set("clearJobsBtn", d.clearDone); set("updateLabel", d.updateAvail);
   set("exportLabel", d.exportLabel); set("importLabel", d.importLabel);
   set("langLabel", d.langLabel); set("selAllLabel", d.selAllLabel);
+  set("collTitle", d.collectionsTitle); set("collAuthorsLabel", d.collByAuthors);
+  set("collCatsLabel", d.collByCategories);
   $("#mExcludeInput").placeholder = d.excludePlaceholder;
   $("#rExcludeInput").placeholder = d.excludePlaceholder;
   $("#authorSel").placeholder = d.all;
@@ -789,7 +981,7 @@ const API = {
   update_document:(id,title,authors)=>_post("/api/update",{id,title,authors}),
   download_document:id=>_post("/api/download_document",{id}),
   clear_jobs:()=>_post("/api/clear_jobs",{}),
-  pages:(document_id,from,to)=>_post("/api/pages",{document_id,from,to}),
+  pages:(document_id,from,to,terms)=>_post("/api/pages",{document_id,from,to,terms}),
   meta_get:key=>_post("/api/meta_get",{key}),
   meta_set:(key,value)=>_post("/api/meta_set",{key,value}),
   bookmarks:()=>_get("/api/bookmarks"),
@@ -805,9 +997,17 @@ const API = {
   delete_documents:ids=>_post("/api/delete_documents",{ids}),
   reindex_document:(id,ocr)=>_post("/api/reindex",{id,ocr}),
   search:(q,authors,document_id,semantic)=>_post("/api/search",{q,authors,document_id,semantic}),
-  search_terms:(groups,exclude,authors,document_id,offset,limit)=>_post("/api/search",{mode:"terms",groups,exclude,authors,document_id,offset,limit}),
+  search_terms:(groups,exclude,authors,document_id,offset,limit,categories,document_ids)=>_post("/api/search",{mode:"terms",groups,exclude,authors,document_id,offset,limit,categories,document_ids}),
+  list_categories:()=>_get("/api/categories"),
+  category_create:name=>_post("/api/category_create",{name}),
+  category_rename:(id,name)=>_post("/api/category_rename",{id,name}),
+  category_delete:id=>_post("/api/category_delete",{id}),
+  set_document_categories:(document_id,names)=>_post("/api/set_document_categories",{document_id,names}),
+  list_authors:()=>_get("/api/authors"),
+  author_rename:(old,neu)=>_post("/api/author_rename",{old,new:neu}),
+  author_delete:name=>_post("/api/author_delete",{name}),
   passage:id=>_post("/api/passage",{id}),
-  page:(document_id,page_no)=>_post("/api/page",{document_id,page_no}),
+  page:(document_id,page_no,terms)=>_post("/api/page",{document_id,page_no,terms}),
   export_library:ids=>_post("/api/export_library",ids?{ids}:{}),
   import_library:()=>_post("/api/import_library"),
   upload:file=>fetch("/api/upload",{method:"POST",
@@ -838,14 +1038,55 @@ function setView(v){
 }
 $$("nav .navItem[data-view]").forEach(b=>b.onclick=()=>setView(b.dataset.view));
 
+/* ---------- Auswahl-Dropdown (Combobox, ersetzt <datalist>) ---------- */
+// input: das Textfeld; getOptions(): aktuelle Kandidatenliste (Strings);
+// onPick(v): Auswahl/Bestätigung; opts.onBackspace / opts.clearOnBlur.
+function attachCombo(input, getOptions, onPick, opts={}){
+  const host=input.closest(".authorFilter,.chipField")||input.parentElement;
+  const panel=document.createElement("div");panel.className="comboPanel";
+  host.appendChild(panel);
+  let items=[], active=-1;
+  function render(){
+    const q=(input.value||"").trim().toLowerCase();
+    items=(getOptions()||[]).filter(o=>!q||String(o).toLowerCase().includes(q));
+    active=-1;
+    if(!items.length){ panel.classList.remove("show"); panel.innerHTML=""; return; }
+    panel.innerHTML=items.map((o,i)=>
+      `<div class="comboOpt" data-i="${i}" dir="auto">${esc(o)}</div>`).join("");
+    panel.classList.add("show");
+  }
+  function close(){ panel.classList.remove("show"); active=-1; }
+  function hl(){ [...panel.children].forEach((c,i)=>c.classList.toggle("active",i===active));
+    if(active>=0&&panel.children[active])panel.children[active].scrollIntoView({block:"nearest"}); }
+  input.addEventListener("input",render);
+  input.addEventListener("focus",render);
+  input.addEventListener("keydown",e=>{
+    const open=panel.classList.contains("show");
+    if(e.key==="ArrowDown"){ e.preventDefault(); if(!open)render();
+      active=Math.min(active+1,items.length-1); hl(); }
+    else if(e.key==="ArrowUp"){ e.preventDefault(); if(open){active=Math.max(active-1,0);hl();} }
+    else if(e.key==="Enter"){ e.preventDefault();
+      if(open&&active>=0) onPick(items[active]);
+      else if((input.value||"").trim()) onPick(input.value.trim());
+      close(); }
+    else if(e.key==="Escape"){ if(open){e.preventDefault();close();} }
+    else if(e.key==="Backspace"&&!input.value&&opts.onBackspace){ e.preventDefault();opts.onBackspace(); }
+  });
+  panel.addEventListener("mousedown",e=>{
+    const el=e.target.closest(".comboOpt"); if(!el)return;
+    e.preventDefault(); onPick(items[+el.dataset.i]); close();
+  });
+  input.addEventListener("blur",()=>setTimeout(()=>{ close();
+    if(opts.clearOnBlur)input.value=""; },130));
+  return { render, close };
+}
+
 /* ---------- Autorenfilter (Mehrfachauswahl) ---------- */
 let authorFilterSel=[];
+let authorOptions=[];    // Kandidaten für das Autoren-Dropdown
 function fillAuthorSel(authors){
-  const dl=$("#authorList");if(!dl)return;
-  // Bereits gewählte Autoren nicht mehr vorschlagen
-  const list=[...new Set(authors)].filter(a=>!authorFilterSel.includes(a))
+  authorOptions=[...new Set(authors||[])].filter(Boolean)
     .sort((a,b)=>a.localeCompare(b,"ar"));
-  dl.innerHTML=list.map(a=>`<option value="${esc(a)}"></option>`).join("");
 }
 function removeAuthorFilter(name){
   authorFilterSel=authorFilterSel.filter(x=>x!==name);
@@ -869,11 +1110,79 @@ function addAuthorFilter(name){
   $("#authorSel").value="";
   renderAuthorFilter();runSearch();
 }
+
+/* ---------- Buchfilter (Mehrfachauswahl) ---------- */
+let bookFilterSel=[];    // [{id,title}]
+let allDocs=[];          // Cache aller Dokumente (Titel -> id auflösen)
+function fillBookSel(docs){
+  allDocs=(docs||allDocs||[]).slice()
+    .sort((a,b)=>(a.title||"").localeCompare(b.title||"","ar"));
+}
+function removeBookFilter(id){
+  bookFilterSel=bookFilterSel.filter(b=>b.id!==id);
+  renderBookFilter();fillBookSel();runSearch();
+}
+function renderBookFilter(){
+  const box=$("#bookFilter"),inp=$("#bookSel");if(!box||!inp)return;
+  box.querySelectorAll(".chip").forEach(c=>c.remove());
+  bookFilterSel.forEach(b=>{
+    const c=document.createElement("span");c.className="chip";
+    c.innerHTML=`<span>${esc(b.title)}</span><button type="button">${svg("x")}</button>`;
+    c.querySelector("button").addEventListener("click",e=>{
+      e.stopPropagation();e.preventDefault();removeBookFilter(b.id);});
+    box.insertBefore(c,inp);
+  });
+}
+function addBookFilter(title){
+  title=(title||"").trim();
+  if(!title)return;
+  const chosen=new Set(bookFilterSel.map(b=>b.id));
+  const doc=(allDocs||[]).find(d=>d.title===title&&!chosen.has(d.id));
+  if(doc)bookFilterSel.push({id:doc.id,title:doc.title});
+  $("#bookSel").value="";
+  renderBookFilter();fillBookSel();if(doc)runSearch();
+}
+
+/* ---------- Kategoriefilter (Mehrfachauswahl) ---------- */
+let catFilterSel=[];
+let catOptions=[];       // Kandidaten für Kategorie-Dropdowns
+function fillCatSel(cats){
+  const names=(cats||[]).map(c=>typeof c==="string"?c:c.name);
+  catOptions=[...new Set(names)].filter(Boolean)
+    .sort((a,b)=>a.localeCompare(b,"ar"));
+}
+function removeCatFilter(name){
+  catFilterSel=catFilterSel.filter(x=>x!==name);
+  renderCatFilter();runSearch();
+}
+function renderCatFilter(){
+  const box=$("#catFilter"),inp=$("#catSel");if(!box||!inp)return;
+  box.querySelectorAll(".chip").forEach(c=>c.remove());
+  catFilterSel.forEach(name=>{
+    const c=document.createElement("span");c.className="chip";
+    c.innerHTML=`<span>${esc(name)}</span><button type="button">${svg("x")}</button>`;
+    c.querySelector("button").addEventListener("click",e=>{
+      e.stopPropagation();e.preventDefault();removeCatFilter(name);});
+    box.insertBefore(c,inp);
+  });
+}
+function addCatFilter(name){
+  name=(name||"").trim();
+  if(!name)return;
+  if(!catFilterSel.includes(name)){catFilterSel.push(name);}
+  $("#catSel").value="";
+  renderCatFilter();runSearch();
+}
+// Kategorie-Vorschläge laden (auch leere, aus der Verwaltung)
+async function refreshCategorySources(){
+  try{ const cats=await api().list_categories(); fillCatSel(cats); }catch(e){}
+}
 async function refreshDocs(){
   const docs=await api().list_documents();
   // Autorenfilter aus allen Dokumenten füllen (auch ohne vorherige Suche)
   const auth=[];for(const d of docs)auth.push(...splitAuthors(d.author));
   fillAuthorSel(auth);
+  fillBookSel(docs);      // Buchfilter-Vorschläge (Titel -> id)
   const box=$("#docList");box.innerHTML="";
   box.style.display=docs.length?"":"none";
   $("#docsToolbar").style.display=docs.length?"flex":"none";
@@ -916,6 +1225,7 @@ async function refreshDocs(){
     box.appendChild(row);
   }
   updateSelCount();
+  collDocs=docs;     // dieselben Daten für die Sammlungs-Index-Seiten nutzen
 }
 function updateSelCount(){
   const n=selectedForExport.size;
@@ -925,8 +1235,100 @@ function updateSelCount(){
   const d=$("#delSelBtn");if(d)d.textContent=`${t("deleteSel")} (${n})`;
 }
 
+/* ---------- Sammlungen: Index-Seiten (Autoren/Kategorien) ---------- */
+let collDocs=[];              // Cache aller Dokumente (Datenquelle)
+let indexKind="author";      // aktueller Index (author|category)
+let indexEntries=[];         // [{name,count}] der aktuellen Index-Seite
+
+async function refreshCollectionData(){
+  try{ collDocs=await api().list_documents(); }catch(e){}
+}
+// Namen + Buchanzahl je nach Art bestimmen
+async function loadIndexEntries(kind){
+  if(!collDocs.length) await refreshCollectionData();
+  if(kind==="author"){
+    const counts={};
+    for(const d of collDocs)
+      for(const a of splitAuthors(d.author)) counts[a]=(counts[a]||0)+1;
+    return Object.keys(counts).sort((a,b)=>a.localeCompare(b,"ar"))
+      .map(name=>({name,count:counts[name]}));
+  }
+  let cats=[];
+  try{ cats=await api().list_categories(); }catch(e){}
+  return cats.map(c=>({name:c.name,count:c.count||0}));
+}
+function renderIndexList(filter){
+  const box=$("#indexList");if(!box)return;
+  const q=(filter||"").trim().toLowerCase();
+  const list=indexEntries.filter(e=>!q||e.name.toLowerCase().includes(q));
+  box.innerHTML="";
+  $("#indexEmpty").style.display=list.length?"none":"";
+  $("#indexEmpty").textContent = indexEntries.length
+    ? t("indexNoMatch")
+    : (indexKind==="author"?t("collNoAuthors"):t("collNoCats"));
+  box.style.display=list.length?"":"none";
+  for(const e of list){
+    const b=document.createElement("button");b.className="indexItem";
+    b.setAttribute("dir","auto");
+    b.innerHTML=`<span class="in">${esc(e.name)}</span>`
+      +`<span class="ic-count">${t("catBooksN")(e.count)}</span>`
+      +`<span class="chev">${svg("next")}</span>`;
+    b.onclick=()=>openCollection(indexKind,e.name);
+    box.appendChild(b);
+  }
+}
+async function openIndex(kind){
+  indexKind=kind;
+  await refreshCollectionData();
+  $("#indexTitle").textContent = kind==="author"?t("collByAuthors"):t("collByCategories");
+  $("#indexSearch").placeholder = kind==="author"?t("indexSearchAuthors"):t("indexSearchCats");
+  $("#indexSearch").value="";
+  $("#indexManageBtn").textContent = kind==="author"?t("manageAuthors"):t("manageCategories");
+  indexEntries=await loadIndexEntries(kind);
+  renderIndexList("");
+  setView("index");
+  $("#indexSearch").focus();
+}
+$("#indexSearch").addEventListener("input",e=>renderIndexList(e.target.value));
+$("#indexManageBtn").onclick=()=>openManage(indexKind);
+$("#navAuthorsBtn").onclick=()=>openIndex("author");
+$("#navCatsBtn").onclick=()=>openIndex("category");
+
+/* ---------- Buchliste einer Sammlung ---------- */
+function openCollection(kind,name){
+  indexKind=kind;      // Zurück-Button führt zur passenden Index-Seite
+  const books=collDocs.filter(d=> kind==="author"
+    ? splitAuthors(d.author).includes(name)
+    : (d.categories||[]).includes(name));
+  $("#collKind").textContent = kind==="author"?t("collKindAuthor"):t("collKindCategory");
+  $("#collName").textContent = name;
+  $("#collBackLabel").textContent = kind==="author"?t("collByAuthors"):t("collByCategories");
+  const box=$("#collList");box.innerHTML="";
+  $("#collEmpty").style.display=books.length?"none":"";
+  $("#collEmpty").textContent=t("collEmpty");
+  box.style.display=books.length?"":"none";
+  for(const d of books){
+    const row=document.createElement("div");row.className="docRow";
+    row.style.cursor="pointer";
+    row.innerHTML=`
+      <div class="docMain">
+        <div class="dt">${esc(d.title)}</div>
+        <div class="dm"><span>${esc(authorText(d.author))}</span>
+          <span>${d.page_count||"?"} ${esc(t("pages"))}</span>
+          ${(d.categories||[]).map(c=>`<span>${esc(c)}</span>`).join("")}</div>
+      </div>
+      <div class="docActions">
+        <button class="iconBtn" data-act="open" title="${esc(t("open"))}">${svg("open")}</button>
+      </div>`;
+    row.addEventListener("click",()=>openReader(d.id));
+    box.appendChild(row);
+  }
+  setView("collection");
+}
+$("#collBack").onclick=()=>openIndex(indexKind);
+
 // ---- Bearbeiten-Dialog (Titel + mehrere Autoren) ----------------------
-let editState={id:null,authors:[],origTitle:""};
+let editState={id:null,authors:[],categories:[],origTitle:""};
 function renderAuthorChips(){
   const box=$("#authorChips"),inp=$("#authorChipInput");
   box.querySelectorAll(".chip").forEach(c=>c.remove());
@@ -943,14 +1345,34 @@ function addAuthorFromInput(){
   if(v&&!editState.authors.includes(v))editState.authors.push(v);
   inp.value="";renderAuthorChips();
 }
+function renderEditCatChips(){
+  const box=$("#categoryChips"),inp=$("#catChipInput");
+  box.querySelectorAll(".chip").forEach(c=>c.remove());
+  editState.categories.forEach((a,i)=>{
+    const c=document.createElement("span");c.className="chip";
+    c.innerHTML=`<span>${esc(a)}</span><button type="button">${svg("x")}</button>`;
+    c.querySelector("button").onclick=()=>{editState.categories.splice(i,1);renderEditCatChips();};
+    box.insertBefore(c,inp);
+  });
+}
+function addEditCatFromInput(val){
+  const inp=$("#catChipInput");
+  const v=((val!=null?val:(inp?inp.value:""))||"").trim();
+  if(v&&!editState.categories.includes(v))editState.categories.push(v);
+  if(inp)inp.value="";
+  renderEditCatChips();
+}
 function openEditDialog(d){
-  editState={id:d.id,authors:splitAuthors(d.author),origTitle:d.title||""};
+  editState={id:d.id,authors:splitAuthors(d.author),
+             categories:(d.categories||[]).slice(),origTitle:d.title||""};
   $("#editHead").textContent=t("editTitle");
   $("#fldTitleLabel").textContent=t("fldTitle");
   $("#fldAuthorsLabel").textContent=t("fldAuthors");
+  $("#fldCategoriesLabel").textContent=t("fldCategories");
   $("#editCancel").textContent=t("cancel");
   $("#editSave").textContent=t("save");
   $("#editTitle").value=d.title||"";
+  // Autoren-Chipfeld
   const box=$("#authorChips");box.innerHTML="";
   const inp=document.createElement("input");inp.id="authorChipInput";
   inp.placeholder=t("authorAdd");inp.setAttribute("dir","auto");
@@ -962,16 +1384,29 @@ function openEditDialog(d){
   });
   box.onclick=e=>{if(e.target===box)inp.focus();};
   renderAuthorChips();
+  // Kategorien-Chipfeld mit hochwertigem Auswahl-Dropdown
+  const cbox=$("#categoryChips");cbox.innerHTML="";
+  const cinp=document.createElement("input");cinp.id="catChipInput";
+  cinp.placeholder=t("categoryAdd");cinp.setAttribute("dir","auto");
+  cbox.appendChild(cinp);
+  attachCombo(cinp,
+    ()=>catOptions.filter(c=>!editState.categories.includes(c)),
+    v=>addEditCatFromInput(v),
+    {onBackspace:()=>{ if(editState.categories.length){editState.categories.pop();renderEditCatChips();} }});
+  cbox.onclick=e=>{if(e.target===cbox)cinp.focus();};
+  renderEditCatChips();
   $("#editOverlay").classList.add("show");
   $("#editTitle").focus();
 }
 function closeEditDialog(){$("#editOverlay").classList.remove("show");}
 function saveEditDialog(){
-  addAuthorFromInput();
+  addAuthorFromInput();addEditCatFromInput();
   const title=$("#editTitle").value.trim()||editState.origTitle;
-  api().update_document(editState.id,title,editState.authors).then(r=>{
+  const id=editState.id, cats=editState.categories.slice();
+  api().update_document(id,title,editState.authors).then(async r=>{
     if(r&&r.error){showError(r.error);return;}
-    closeEditDialog();refreshDocs();
+    try{ await api().set_document_categories(id,cats); }catch(e){}
+    closeEditDialog();refreshDocs();refreshCategorySources();
   });
 }
 // Enter im Titelfeld speichert (statt unbehandelt zu bleiben -> Fehlton)
@@ -985,6 +1420,109 @@ $("#editOverlay").onclick=e=>{if(e.target===$("#editOverlay"))closeEditDialog();
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape"&&$("#editOverlay").classList.contains("show")){
     e.preventDefault();closeEditDialog();}});
+
+// ---- Verwalten-Popup (Kategorien / Autoren) ---------------------------
+let manageKind="category";   // aktueller Modus des Popups
+async function loadManageEntries(kind){
+  if(kind==="author"){
+    try{ return await api().list_authors(); }catch(e){ return []; }
+  }
+  try{ return await api().list_categories(); }catch(e){ return []; }
+}
+async function renderManageList(){
+  const box=$("#manageList");if(!box)return;
+  const entries=await loadManageEntries(manageKind);
+  box.innerHTML="";
+  if(!entries.length){
+    box.innerHTML=`<div class="empty">${esc(manageKind==="author"?t("authorEmpty"):t("catEmpty"))}</div>`;
+    return;
+  }
+  for(const c of entries){
+    const row=document.createElement("div");row.className="catRow";
+    row.innerHTML=`<span class="cname">${esc(c.name)}</span>`
+      +`<span class="ccount">${esc(t("catBooksN")(c.count||0))}</span>`
+      +`<span class="cacts">`
+      +`<button class="iconBtn" data-act="rename" title="${esc(t("rename"))}">${svg("edit")}</button>`
+      +`<button class="iconBtn danger" data-act="del" title="${esc(t("del"))}">${svg("trash")}</button>`
+      +`</span>`;
+    row.querySelector('[data-act="rename"]').onclick=()=>{
+      // Inline umbenennen (kein window.prompt – unter pywebview unzuverlässig)
+      const nameEl=row.querySelector(".cname");
+      nameEl.innerHTML=`<input class="mfInput" dir="auto" value="${esc(c.name)}" `
+        +`style="padding:6px 9px;font-size:14px">`;
+      const inp=nameEl.querySelector("input");
+      inp.focus();inp.select();
+      let done=false;
+      const commit=async()=>{
+        if(done)return;done=true;
+        const v=(inp.value||"").trim();
+        if(!v||v===c.name){renderManageList();return;}
+        const r=manageKind==="author"
+          ? await api().author_rename(c.name,v)
+          : await api().category_rename(c.id,v);
+        if(r&&r.error){showError(r.error);renderManageList();return;}
+        await afterManageChange();
+      };
+      inp.addEventListener("keydown",e=>{
+        if(e.key==="Enter"){e.preventDefault();commit();}
+        else if(e.key==="Escape"){e.preventDefault();done=true;renderManageList();}
+      });
+      inp.addEventListener("blur",commit);
+    };
+    row.querySelector('[data-act="del"]').onclick=async()=>{
+      const msg=manageKind==="author"?t("authorDeleteConfirm")(c.name):t("catDeleteConfirm")(c.name);
+      if(!confirm(msg))return;
+      const r=manageKind==="author"
+        ? await api().author_delete(c.name)
+        : await api().category_delete(c.id);
+      if(r&&r.error){showError(r.error);return;}
+      await afterManageChange();
+    };
+    box.appendChild(row);
+  }
+}
+// Nach jeder Änderung: Popup-Liste, Filter-Vorschläge, Bücher und Index frisch
+async function afterManageChange(){
+  await renderManageList();
+  refreshCategorySources();
+  await refreshDocs();     // aktualisiert collDocs (Datenquelle der Index-Seiten)
+  // offene Index-/Sammlungs-Seite direkt mitziehen
+  if($("#view-index").classList.contains("active")){
+    indexEntries=await loadIndexEntries(indexKind);
+    renderIndexList($("#indexSearch").value);
+  }
+}
+async function addFromManage(){
+  const inp=$("#manageNewInput");const v=(inp.value||"").trim();
+  if(!v)return;
+  const r=await api().category_create(v);   // nur Kategorien anlegbar
+  if(r&&r.error){showError(r.error);return;}
+  inp.value="";
+  await afterManageChange();
+}
+function openManage(kind){
+  manageKind=kind;
+  const isAuthor=kind==="author";
+  $("#manageIcon").innerHTML=svg(isAuthor?"author":"tag");
+  $("#manageHead").textContent=isAuthor?t("manageAuthors"):t("manageCategories");
+  $("#manageSub").textContent=isAuthor?t("manageAuthorsSub"):t("manageCategoriesSub");
+  // Autoren können nicht angelegt werden – nur Kategorien haben die Eingabezeile
+  $("#manageNewRow").style.display=isAuthor?"none":"flex";
+  $("#manageNewInput").placeholder=t("catNewPlaceholder");
+  $("#manageAddBtn").textContent=t("catAdd");
+  $("#manageNewInput").value="";
+  renderManageList();
+  $("#manageOverlay").classList.add("show");
+}
+function closeManage(){$("#manageOverlay").classList.remove("show");}
+$("#manageClose").onclick=closeManage;
+$("#manageAddBtn").onclick=addFromManage;
+$("#manageNewInput").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){e.preventDefault();addFromManage();}});
+$("#manageOverlay").onclick=e=>{if(e.target===$("#manageOverlay"))closeManage();};
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&$("#manageOverlay").classList.contains("show")){
+    e.preventDefault();closeManage();}});
 
 $("#selAll").onchange=e=>{
   $$(".selBox").forEach(b=>{b.checked=e.target.checked;const id=+b.dataset.id;
@@ -1143,13 +1681,13 @@ async function runSearch(){
   mainQuery={groups,excludes}; mainOffset=0; mainLoaded=0;
   lastSearchTerms=groups.flat();     // für Lesezeichen-Hervorhebung
   lastSearchQuery={groups:groups.map(g=>g.slice()),excludes:excludes.slice()};
-  const res = await api().search_terms(groups, excludes, authorFilterSel, selectedDoc, 0, PAGE);
+  const res = await api().search_terms(groups, excludes, authorFilterSel, selectedDoc, 0, PAGE, catFilterSel, bookFilterSel.map(b=>b.id));
   showResults(res, false);
 }
 async function loadMoreMain(){
   if(!mainQuery)return;
   mainOffset+=PAGE;
-  const res = await api().search_terms(mainQuery.groups, mainQuery.excludes, authorFilterSel, selectedDoc, mainOffset, PAGE);
+  const res = await api().search_terms(mainQuery.groups, mainQuery.excludes, authorFilterSel, selectedDoc, mainOffset, PAGE, catFilterSel, bookFilterSel.map(b=>b.id));
   showResults(res, true);
 }
 function hitEl(h){
@@ -1213,7 +1751,7 @@ function termsForReader(h){
   return (h && h.matched_words) ? h.matched_words.slice() : [];
 }
 function showResults(res, append){
-  if(!append)fillAuthorSel(res.authors||[]);
+  if(!append){fillAuthorSel(res.authors||[]);fillCatSel(res.categories||[]);}
   const box=$("#results");
   const old=$("#loadMore"); if(old)old.remove();
   if(!append){ box.innerHTML=""; mainLoaded=0; }
@@ -1347,21 +1885,55 @@ function buildSheets(){
   $("#rPageTotal").textContent=`/ ${rLast}`;
 }
 
-// Seiteninhalt rendern (Text oder Originalbild), inkl. Hervorhebung
-function fillSheet(pageNo,text){
+// Aktive Include-Begriffe des Lesers (für wurzelbewusste Server-Markierung)
+function readerTerms(){return (readerState.groups||[]).flat().filter(Boolean);}
+
+// Fallback: geerntete Wortformen literal im Text finden (nur ohne Server-Spans)
+function wordSpans(text,words){
+  const out=[];
+  for(const w of (words||[])){
+    if(!w)continue;
+    let from=0,idx;
+    while((idx=text.indexOf(w,from))>=0){out.push([idx,idx+w.length]);from=idx+w.length;}
+  }
+  return out;
+}
+
+// Setzt Seitentext + Markierungen (Zeichen-Offsets) + optionalen Passagenkasten
+// in EINEM Durchlauf zusammen. Markierungen liegen wortweise und stets ganz
+// innerhalb oder ganz außerhalb der Passagenregion → korrekte Verschachtelung.
+function stitchMarks(text,spans,boxStart,boxEnd){
+  let marks=(spans||[]).filter(s=>s&&s[1]>s[0]).sort((a,b)=>a[0]-b[0]);
+  const merged=[];
+  for(const s of marks){const last=merged[merged.length-1];
+    if(last&&s[0]<=last[1])last[1]=Math.max(last[1],s[1]);else merged.push([s[0],s[1]]);}
+  const ev=[];
+  for(const [a,b] of merged){ev.push({pos:a,rank:4,str:"<mark>"});ev.push({pos:b,rank:1,str:"</mark>"});}
+  if(boxStart!=null&&boxEnd!=null&&boxEnd>boxStart){
+    ev.push({pos:boxStart,rank:3,str:'<span class="passageBox">'});
+    ev.push({pos:boxEnd,rank:2,str:"</span>"});
+  }
+  // gleiche Position: erst schließen (mark<box), dann öffnen (box<mark)
+  ev.sort((a,b)=>a.pos-b.pos||a.rank-b.rank);
+  let out="",cur=0;
+  for(const e of ev){if(e.pos>cur){out+=esc(text.slice(cur,e.pos));cur=e.pos;}out+=e.str;}
+  out+=esc(text.slice(cur));
+  return out;
+}
+
+// Seiteninhalt rendern (Text oder Originalbild), inkl. Hervorhebung.
+// spans = wurzelbewusst serverseitig gegen DIESEN Seitentext berechnet.
+function fillSheet(pageNo,text,spans){
   const s=sheetOf(pageNo);if(!s)return;
   const body=s.querySelector(".pageText");
   if(rImg&&rHasImg){
     body.innerHTML=`<img loading="lazy" src="/api/page_image?doc=${rDoc}&page=${pageNo}" alt="">`;
   }else{
+    text=text||"";
     const re=rPassageText?passageRe(rPassageText):null;
-    const m=re?re.exec(text||""):null;
-    let html;
-    if(m){html=esc(text.slice(0,m.index))
-      +`<span class="passageBox">`+highlight(m[0],rWords)+`</span>`
-      +esc(text.slice(m.index+m[0].length));}
-    else html=highlight(text||"",rWords);
-    body.innerHTML=html||"—";
+    const m=re?re.exec(text):null;
+    let marks=(spans&&spans.length)?spans:(rWords.length?wordSpans(text,rWords):[]);
+    body.innerHTML=stitchMarks(text,marks,m?m.index:null,m?m.index+m[0].length:null)||"—";
   }
   s.classList.remove("loading");
 }
@@ -1373,8 +1945,8 @@ async function ensurePages(from,to){
   const a=need[0],b=need[need.length-1];
   need.forEach(p=>rLoaded.add(p));      // doppelte Anfragen vermeiden
   try{
-    const res=await api().pages(rDoc,a,b);
-    for(const pg of (res.pages||[]))fillSheet(pg.page_no,pg.text);
+    const res=await api().pages(rDoc,a,b,readerTerms());
+    for(const pg of (res.pages||[]))fillSheet(pg.page_no,pg.text,pg.spans);
   }catch(e){need.forEach(p=>rLoaded.delete(p));}
   pruneFar();
 }
@@ -1634,21 +2206,26 @@ $("#mAddGroup").onclick=()=>panelAddGroup(MAIN);
 $("#mToggleExclude").onclick=()=>panelToggleExclude(MAIN);
 // Chip NUR bei echter Auswahl aus der Vorschlagsliste oder mit Enter übernehmen –
 // nicht beim bloßen Rausklicken/Verlassen des Feldes.
-$("#authorSel").addEventListener("input",e=>{
-  const v=e.target.value;
-  // Klick auf einen Vorschlag ersetzt den Text komplett (kein normales Tippen).
-  const picked = e.inputType==null || e.inputType==="insertReplacementText";
-  const exact = [...$("#authorList").options].some(o=>o.value===v);
-  if(v && picked && exact) addAuthorFilter(v);
-});
-$("#authorSel").addEventListener("keydown",e=>{
-  if(e.key==="Enter"){e.preventDefault();addAuthorFilter(e.target.value);}
-  else if(e.key==="Backspace"&&!e.target.value&&authorFilterSel.length){
-    e.preventDefault();removeAuthorFilter(authorFilterSel[authorFilterSel.length-1]);}
-});
-// Beim Verlassen des Feldes nur den unbestätigten Resttext verwerfen.
-$("#authorSel").addEventListener("blur",e=>{ e.target.value=""; });
+// Hochwertige Auswahl-Dropdowns statt nativem <datalist>
+attachCombo($("#authorSel"),
+  ()=>authorOptions.filter(a=>!authorFilterSel.includes(a)),
+  v=>addAuthorFilter(v),
+  {clearOnBlur:true,
+   onBackspace:()=>{ if(authorFilterSel.length)removeAuthorFilter(authorFilterSel[authorFilterSel.length-1]); }});
+attachCombo($("#bookSel"),
+  ()=>{ const chosen=new Set(bookFilterSel.map(b=>b.id));
+        return (allDocs||[]).filter(d=>!chosen.has(d.id)).map(d=>d.title); },
+  v=>addBookFilter(v),
+  {clearOnBlur:true,
+   onBackspace:()=>{ if(bookFilterSel.length)removeBookFilter(bookFilterSel[bookFilterSel.length-1].id); }});
+attachCombo($("#catSel"),
+  ()=>catOptions.filter(c=>!catFilterSel.includes(c)),
+  v=>addCatFilter(v),
+  {clearOnBlur:true,
+   onBackspace:()=>{ if(catFilterSel.length)removeCatFilter(catFilterSel[catFilterSel.length-1]); }});
 $("#authorFilter").onclick=e=>{ if(e.target.id==="authorFilter") $("#authorSel").focus(); };
+$("#bookFilter").onclick=e=>{ if(e.target.id==="bookFilter") $("#bookSel").focus(); };
+$("#catFilter").onclick=e=>{ if(e.target.id==="catFilter") $("#catSel").focus(); };
 $("#semantic").onchange=runSearch;
 $("#rSearchBtn").onclick=runReaderSearch;
 $("#rAddGroup").onclick=()=>panelAddGroup(READER);
@@ -1715,7 +2292,7 @@ paintIcons();
   try{const s=await api().settings();applyLang(s.lang==="ar"?"ar":"de");}
   catch(e){applyLang("de");}
   paintIcons();
-  refreshStatus();refreshDocs();
+  refreshStatus();refreshDocs();refreshCategorySources();
   try{const v=await api().version();if(v&&v.version)$("#versionLabel").textContent="v"+v.version;}catch(e){}
   // gespeicherte Schriftgröße für den Leser übernehmen
   try{const f=await api().meta_get("font_scale");const n=parseFloat(f.value||"");
