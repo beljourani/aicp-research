@@ -13,6 +13,7 @@ Bibliothek – ohne Word, ohne OCR, ohne Neuverarbeitung. Die Seitenzahlen
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -24,6 +25,23 @@ from .normalize import to_index_forms
 from .semantic import ensure_vector_schema
 
 FORMAT_VERSION = 1
+
+
+def _split_authors(value) -> list[str]:
+    """Zerlegt den Mehrfachwert-String documents.author in Einzelnamen
+    (Trenner arabisches/lateinisches Semikolon). Bewusst identisch zur
+    split_authors-Logik in app/main.py, damit der Import die Autoren-Tabellen
+    genauso befüllt wie die Migration."""
+    if not value:
+        return []
+    parts = re.split(r"\s*[؛;]\s*", str(value))
+    seen, out = set(), []
+    for p in parts:
+        p = p.strip()
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
 
 
 def export_library(db_path: Path, out_file: Path,
@@ -168,6 +186,18 @@ def import_library(db_path: Path, in_file: Path, files_target: Path,
                 f"INSERT INTO documents ({keys}) VALUES ({qs})",
                 list(data.values()))
             new_id = cur.lastrowid
+
+            # Autoren-Verknüpfungen aus dem Autor-String neu aufbauen (der
+            # String ist der Transport; alte Archive haben die Tabellen nicht).
+            for name in _split_authors(data.get("author")):
+                dst.execute("INSERT OR IGNORE INTO authors (name) VALUES (?)",
+                            (name,))
+                aid = dst.execute("SELECT id FROM authors WHERE name=?",
+                                  (name,)).fetchone()
+                if aid:
+                    dst.execute("INSERT OR IGNORE INTO document_authors "
+                                "(document_id, author_id) VALUES (?,?)",
+                                (new_id, aid["id"]))
 
             # Seiten übernehmen
             for pg in src.execute(

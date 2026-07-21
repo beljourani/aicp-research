@@ -74,6 +74,21 @@ CREATE TABLE IF NOT EXISTS document_categories (
     PRIMARY KEY (document_id, category_id)
 );
 
+-- Autoren (frei benennbar, wie Kategorien in den Sammlungen verwaltbar). Ein
+-- Buch kann mehrere Autoren haben -> Zuordnung über die Verknüpfungstabelle.
+-- documents.author bleibt als synchron gehaltener Cache bestehen (Suche,
+-- Reader-Kopf und der .echolib-Export/-Import lesen weiterhin aus der Spalte).
+CREATE TABLE IF NOT EXISTS authors (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS document_authors (
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    author_id   INTEGER NOT NULL REFERENCES authors(id)   ON DELETE CASCADE,
+    PRIMARY KEY (document_id, author_id)
+);
+
 -- Lesezeichen: bewusst OHNE Fremdschlüssel-Kaskade, damit sie ein
 -- Neu-Einlesen des Buches überleben. Wiedergefunden wird die Stelle über
 -- Titel + Seite + Textausschnitt, falls sich die internen IDs ändern.

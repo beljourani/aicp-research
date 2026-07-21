@@ -176,6 +176,14 @@ class Core:
             con.close()
         except Exception:
             traceback.print_exc()
+        # Autoren aus der documents.author-Spalte in die Autoren-Tabellen
+        # übernehmen (einmalig, idempotent – siehe _migrate_authors)
+        try:
+            con = self._con()
+            self._migrate_authors(con)
+            con.close()
+        except Exception:
+            traceback.print_exc()
         # Im Hintergrund nach einem Update sehen (scheitert leise ohne Netz)
         try:
             from echo_engine import updater
@@ -355,11 +363,17 @@ class Core:
                 "SELECT dc.document_id, c.name FROM document_categories dc "
                 "JOIN categories c ON c.id = dc.category_id ORDER BY c.name"):
             cats.setdefault(r["document_id"], []).append(r["name"])
+        auths: dict = {}
+        for r in con.execute(
+                "SELECT da.document_id, a.name FROM document_authors da "
+                "JOIN authors a ON a.id = da.author_id ORDER BY a.name"):
+            auths.setdefault(r["document_id"], []).append(r["name"])
         con.close()
         out = []
         for r in rows:
             d = dict(r)
             d["categories"] = cats.get(r["id"], [])
+            d["authors"] = auths.get(r["id"], [])
             out.append(d)
         return out
 
@@ -457,66 +471,154 @@ class Core:
         return {"ok": True, "categories": clean}
 
     # --- Autoren verwalten ------------------------------------------------
-    # Autoren stehen als Mehrfachwert-String in documents.author (Trenner
-    # AUTHOR_SEP). Es gibt keine eigene Tabelle – Umbenennen/Löschen schreibt
-    # die betroffenen Autorenlisten um.
-    def authors(self, _body=None):
-        """Alle Autorennamen mit Buchanzahl (aus den Dokumenten), sortiert."""
-        con = self._con()
-        counts: dict[str, int] = {}
-        for r in con.execute("SELECT author FROM documents"):
-            for name in split_authors(r[0]):
-                counts[name] = counts.get(name, 0) + 1
-        con.close()
-        return [{"name": n, "count": counts[n]}
-                for n in sorted(counts.keys())]
-
-    def author_rename(self, body):
-        """Benennt einen Autor in allen Büchern um (dedupliziert, falls der
-        Zielname dort schon steht). Reihenfolge bleibt erhalten."""
-        body = body or {}
-        old = (body.get("old") or "").strip()
-        new = (body.get("new") or "").strip()
-        if not old or not new:
-            return {"error": "alt und neu nötig"}
-        if old == new:
-            return {"ok": True, "changed": 0}
-        con = self._con()
-        changed = 0
+    # Autoren spiegeln die Kategorien: eigene Tabellen authors/document_authors
+    # sind die Quelle der Wahrheit (frei anlegbar, id-basiert, leere Autoren
+    # möglich). documents.author bleibt als synchron gehaltener Cache bestehen,
+    # damit Suche, Reader-Kopf und der .echolib-Export/-Import unverändert
+    # weiterlaufen. _sync_document_authors hält beide Seiten deckungsgleich.
+    def _migrate_authors(self, con):
+        """Einmalig: Autoren aus documents.author in die Tabellen übernehmen.
+        Idempotent – läuft bei jedem Start, tut aber nichts, wenn schon
+        Zuordnungen bestehen."""
+        have = con.execute("SELECT COUNT(*) FROM document_authors").fetchone()
+        if have and have[0]:
+            return
         for r in con.execute(
-                "SELECT id, author FROM documents WHERE author LIKE ?",
-                (f"%{old}%",)).fetchall():
-            names = split_authors(r["author"])
-            if old not in names:
-                continue           # LIKE-Treffer, aber kein exakter Name
-            names = [new if n == old else n for n in names]
-            con.execute("UPDATE documents SET author=? WHERE id=?",
-                        (join_authors(names), r["id"]))
-            changed += 1
+                "SELECT id FROM documents "
+                "WHERE author IS NOT NULL AND author <> ''").fetchall():
+            self._sync_document_authors(con, r["id"])
         con.commit()
-        con.close()
-        return {"ok": True, "changed": changed}
 
-    def author_delete(self, body):
-        """Entfernt einen Autor aus allen Büchern (leere Liste -> NULL)."""
+    def _sync_document_authors(self, con, doc_id):
+        """Leitet die Autoren-Verknüpfungen eines Buches aus dem String
+        documents.author ab (String -> Tabellen). Für Upload/Reindex/Import
+        und den generischen Bearbeiten-Pfad."""
+        row = con.execute("SELECT author FROM documents WHERE id=?",
+                          (doc_id,)).fetchone()
+        names = split_authors(row["author"]) if row else []
+        con.execute("DELETE FROM document_authors WHERE document_id=?",
+                    (doc_id,))
+        for n in names:
+            con.execute("INSERT OR IGNORE INTO authors (name) VALUES (?)", (n,))
+            aid = con.execute("SELECT id FROM authors WHERE name=?",
+                              (n,)).fetchone()
+            if aid:
+                con.execute("INSERT OR IGNORE INTO document_authors "
+                            "(document_id, author_id) VALUES (?,?)",
+                            (doc_id, aid["id"]))
+
+    def _doc_authors(self, con, doc_id) -> list[str]:
+        return [r[0] for r in con.execute(
+            "SELECT a.name FROM document_authors da "
+            "JOIN authors a ON a.id = da.author_id "
+            "WHERE da.document_id = ? ORDER BY a.name", (doc_id,))]
+
+    def _recache_author_string(self, con, doc_id):
+        """Schreibt documents.author aus der Verknüpfungstabelle neu
+        (Tabellen -> String). Nach id-basierten Änderungen (Umbenennen/Löschen)."""
+        con.execute("UPDATE documents SET author=? WHERE id=?",
+                    (join_authors(self._doc_authors(con, doc_id)), doc_id))
+
+    def authors(self, _body=None):
+        """Alle Autoren inkl. Buchanzahl (auch leere) – für Verwaltung,
+        Filter und Sammlungen."""
+        con = self._con()
+        rows = con.execute(
+            "SELECT a.id, a.name, COUNT(da.document_id) AS count "
+            "FROM authors a "
+            "LEFT JOIN document_authors da ON da.author_id = a.id "
+            "GROUP BY a.id ORDER BY a.name").fetchall()
+        con.close()
+        return [dict(r) for r in rows]
+
+    def author_create(self, body):
         name = ((body or {}).get("name") or "").strip()
         if not name:
-            return {"error": "Name nötig"}
+            return {"error": "Kein Name"}
         con = self._con()
-        changed = 0
-        for r in con.execute(
-                "SELECT id, author FROM documents WHERE author LIKE ?",
-                (f"%{name}%",)).fetchall():
-            names = split_authors(r["author"])
-            if name not in names:
-                continue
-            names = [n for n in names if n != name]
-            con.execute("UPDATE documents SET author=? WHERE id=?",
-                        (join_authors(names), r["id"]))
-            changed += 1
+        con.execute("INSERT OR IGNORE INTO authors (name) VALUES (?)", (name,))
+        con.commit()
+        row = con.execute("SELECT id, name FROM authors WHERE name=?",
+                          (name,)).fetchone()
+        con.close()
+        return {"ok": True, "id": row["id"], "name": row["name"]}
+
+    def author_rename(self, body):
+        """Benennt einen Autor um. Existiert der Zielname schon, werden beide
+        zusammengeführt. documents.author der betroffenen Bücher wird neu
+        aus der Tabelle abgeleitet."""
+        body = body or {}
+        aid = body.get("id")
+        name = (body.get("name") or "").strip()
+        if not aid or not name:
+            return {"error": "id und Name nötig"}
+        con = self._con()
+        # betroffene Bücher vorab merken (für die Cache-Neuberechnung)
+        docs = {r[0] for r in con.execute(
+            "SELECT document_id FROM document_authors WHERE author_id=?",
+            (aid,))}
+        other = con.execute("SELECT id FROM authors WHERE name=? AND id<>?",
+                            (name, aid)).fetchone()
+        if other:
+            con.execute("UPDATE OR IGNORE document_authors SET author_id=? "
+                        "WHERE author_id=?", (other["id"], aid))
+            con.execute("DELETE FROM authors WHERE id=?", (aid,))
+        else:
+            con.execute("UPDATE authors SET name=? WHERE id=?", (name, aid))
+        for doc_id in docs:
+            self._recache_author_string(con, doc_id)
         con.commit()
         con.close()
-        return {"ok": True, "changed": changed}
+        return {"ok": True}
+
+    def author_delete(self, body):
+        """Entfernt einen Autor komplett (aus allen Büchern). Bücher bleiben."""
+        aid = (body or {}).get("id")
+        if not aid:
+            return {"error": "id nötig"}
+        con = self._con()
+        docs = {r[0] for r in con.execute(
+            "SELECT document_id FROM document_authors WHERE author_id=?",
+            (aid,))}
+        con.execute("DELETE FROM authors WHERE id=?", (aid,))
+        for doc_id in docs:
+            self._recache_author_string(con, doc_id)
+        con.commit()
+        con.close()
+        return {"ok": True}
+
+    def set_document_authors(self, body):
+        """Setzt die Autoren eines Buches neu (fehlende werden angelegt) und
+        hält documents.author als Cache synchron."""
+        body = body or {}
+        doc_id = body.get("document_id")
+        names = body.get("names")
+        if names is None:
+            names = body.get("authors") or []
+        clean = []
+        for n in names:
+            n = (n or "").strip()
+            if n and n not in clean:
+                clean.append(n)
+        con = self._con()
+        aut_ids = []
+        for n in clean:
+            con.execute("INSERT OR IGNORE INTO authors (name) VALUES (?)", (n,))
+            row = con.execute("SELECT id FROM authors WHERE name=?",
+                              (n,)).fetchone()
+            if row:
+                aut_ids.append(row["id"])
+        con.execute("DELETE FROM document_authors WHERE document_id=?",
+                    (doc_id,))
+        for aid in aut_ids:
+            con.execute("INSERT OR IGNORE INTO document_authors "
+                        "(document_id, author_id) VALUES (?,?)",
+                        (doc_id, aid))
+        con.execute("UPDATE documents SET author=? WHERE id=?",
+                    (join_authors(clean), doc_id))
+        con.commit()
+        con.close()
+        return {"ok": True, "authors": clean}
 
     def upload(self, filename: str, data: bytes):
         """Per Drag&Drop übertragene Datei speichern und indexieren."""
@@ -647,6 +749,10 @@ class Core:
                 con.commit()
             doc_id = index_document(con, path, title=title, author=author,
                                     force_ocr=force_ocr, progress=progress)
+            # Autoren-Verknüpfungen aus dem (evtl. bei Reindex erhaltenen)
+            # Autor-String ableiten – deckt Erst-Upload und Neu-Einlesen ab.
+            self._sync_document_authors(con, doc_id)
+            con.commit()
             if self._embedder is not None:
                 self._jobs[job_id]["state"] = "vektorisiere"
                 embed_passages(con, self._embedder, document_id=doc_id)
@@ -877,6 +983,8 @@ class Core:
         con = self._con()
         con.execute("UPDATE documents SET title=?, author=? WHERE id=?",
                     (body["title"], author, body["id"]))
+        # Autoren-Verknüpfungen dem neuen String nachziehen (Cache <-> Tabelle)
+        self._sync_document_authors(con, body["id"])
         con.commit()
         con.close()
         return {"ok": True}
@@ -1034,8 +1142,10 @@ ROUTES = {
     ("POST", "/api/category_delete"): CORE.category_delete,
     ("POST", "/api/set_document_categories"): CORE.set_document_categories,
     ("GET", "/api/authors"): CORE.authors,
+    ("POST", "/api/author_create"): CORE.author_create,
     ("POST", "/api/author_rename"): CORE.author_rename,
     ("POST", "/api/author_delete"): CORE.author_delete,
+    ("POST", "/api/set_document_authors"): CORE.set_document_authors,
     ("POST", "/api/pick"): CORE.pick,
     ("POST", "/api/update"): CORE.update,
     ("POST", "/api/download_document"): CORE.download_document,
