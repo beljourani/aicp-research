@@ -2250,9 +2250,20 @@ function renderNotes(txt){
   if(inList)html+="</ul>";
   return html||`<p>${esc(t("newsNone"))}</p>`;
 }
+// Zweisprachige Release-Notizen: deutscher Teil, dann Marker <!--ar-->, dann
+// arabischer Teil. Zeigt den Abschnitt der aktuellen App-Sprache (Fallback auf
+// den jeweils anderen). Ohne Marker (ältere Releases) wird alles gezeigt.
+function notesForLang(body,l){
+  const txt=String(body||"");
+  const parts=txt.split(/<!--\s*ar\s*-->/i);
+  if(parts.length<2)return txt.trim();
+  const de=parts[0].replace(/<!--\s*de\s*-->/ig,"").trim();
+  const ar=parts.slice(1).join("").replace(/<!--\s*de\s*-->/ig,"").trim();
+  return ((l==="ar"?ar:de)||de||ar||"").trim();
+}
 function openNews(version,notes){
   $("#newsHead").textContent=T[lang].newsTitle(version||"");
-  $("#newsBody").innerHTML=renderNotes(notes);
+  $("#newsBody").innerHTML=renderNotes(notesForLang(notes,lang));
   $("#newsOk").textContent=t("newsOk");
   $("#newsOverlay").classList.add("show");
 }
