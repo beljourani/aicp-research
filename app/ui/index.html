@@ -648,6 +648,7 @@
         <button class="btn sm" id="rFontMinus">A−</button>
         <button class="btn sm" id="rFontPlus">A+</button>
       </span>
+      <button class="btn sm" id="rTashkil"></button>
       <button class="btn sm" id="rImgToggle" style="display:none"></button>
       <span class="pageJump">
         <input id="rPageInput" inputmode="numeric" autocomplete="off">
@@ -845,6 +846,7 @@ const T = {
     bmConfirmDel: "Lesezeichen wirklich entfernen?",
     bmMissing: "Buch nicht mehr in der Bibliothek",
     viewOriginal: "Originalseite", viewText: "Textansicht",
+    hideTashkil: "Vokalzeichen aus", showTashkil: "Vokalzeichen an",
     jobs: { wartet: "wartet", verarbeite: "wird verarbeitet",
             vektorisiere: "wird vektorisiert", fertig: "fertig",
             fehler: "Fehler", "übersprungen": "übersprungen" },
@@ -924,6 +926,7 @@ const T = {
     bmConfirmDel: "حذف العلامة؟",
     bmMissing: "الكتاب لم يعد في المكتبة",
     viewOriginal: "الصفحة الأصلية", viewText: "عرض النص",
+    hideTashkil: "إخفاء التشكيل", showTashkil: "إظهار التشكيل",
     jobs: { wartet: "في الانتظار", verarbeite: "قيد المعالجة",
             vektorisiere: "حساب المتجهات", fertig: "تم",
             fehler: "خطأ", "übersprungen": "تم التخطي" },
@@ -961,6 +964,7 @@ function applyLang(l) {
   if (!$("#results").querySelector(".hit"))
     $("#results").innerHTML = emptyBox(d.start);
   renderPanel(MAIN); renderPanel(READER);
+  if(typeof updateTashkilBtn==="function") updateTashkilBtn();
   updateSelCount(); refreshDocs(); refreshStatusLabel();
 }
 function emptyBox(msg) {
@@ -1824,6 +1828,7 @@ async function refreshBookmarks(){
 /* ---------- Leser: durchgehender Lesefluss ---------- */
 let rDoc=null,rPage=1,rFirst=1,rLast=1,rWords=[],rPassageText="",rImg=false,rHasImg=false;
 let rTitleTxt="",rLoaded=new Set(),rHits=[],rHitIdx=-1,rFont=1,rReady=false;
+let rHideTashkil=false;     // globaler Schalter: Vokalzeichen im Lesetext ausblenden
 // Generationszähler für Reader-Navigation: jeder Sprung (Klick/Taste) erhöht
 // ihn; veraltete, noch laufende Sprünge erkennen das und brechen ab (kein
 // Verschränken bei schnellen Klicks).
@@ -1870,6 +1875,7 @@ async function openReader(docId,passageId,words,terms){
   rFirst=info.first_page||1;rLast=info.last_page||1;
   buildSheets();
   applyFont(rFont);
+  updateTashkilBtn();
   // Startseite: Treffer > gemerkte Leseposition > erste Seite
   let start=rFirst;
   if(passageId){
@@ -1925,6 +1931,13 @@ function wordSpans(text,words){
 // Setzt Seitentext + Markierungen (Zeichen-Offsets) + optionalen Passagenkasten
 // in EINEM Durchlauf zusammen. Markierungen liegen wortweise und stets ganz
 // innerhalb oder ganz außerhalb der Passagenregion → korrekte Verschachtelung.
+// Arabische Vokalzeichen (Tashkil) + Tatweel – spiegelt _TASHKIL aus
+// engine/echo_engine/normalize.py. Wird beim Anzeigen (nicht beim Suchen) genutzt.
+const TASHKIL=/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g;
+function stripTashkil(s){return (s||"").replace(TASHKIL,"");}
+// Anzeige-Filter: blendet Vokalzeichen aus, wenn der globale Schalter aktiv ist.
+const disp=s=>rHideTashkil?stripTashkil(s):s;
+
 function stitchMarks(text,spans,boxStart,boxEnd){
   let marks=(spans||[]).filter(s=>s&&s[1]>s[0]).sort((a,b)=>a[0]-b[0]);
   const merged=[];
@@ -1938,9 +1951,11 @@ function stitchMarks(text,spans,boxStart,boxEnd){
   }
   // gleiche Position: erst schließen (mark<box), dann öffnen (box<mark)
   ev.sort((a,b)=>a.pos-b.pos||a.rank-b.rank);
+  // Wichtig: an den ORIGINAL-Positionen schneiden, Vokalzeichen erst INNERHALB
+  // der Stücke entfernen (disp) – so verrutscht keine Markierung.
   let out="",cur=0;
-  for(const e of ev){if(e.pos>cur){out+=esc(text.slice(cur,e.pos));cur=e.pos;}out+=e.str;}
-  out+=esc(text.slice(cur));
+  for(const e of ev){if(e.pos>cur){out+=esc(disp(text.slice(cur,e.pos)));cur=e.pos;}out+=e.str;}
+  out+=esc(disp(text.slice(cur)));
   return out;
 }
 
@@ -2193,6 +2208,17 @@ $("#rClose").onclick=closeReader;
 $("#rImgToggle").onclick=()=>{rImg=!rImg;$("#rImgToggle").textContent=rImg?t("viewText"):t("viewOriginal");
   rLoaded=new Set();$$("#rReading .pageSheet").forEach(s=>{s.classList.add("loading");s.querySelector(".pageText").innerHTML="…";});
   ensurePages(rPage-1,rPage+2);};
+// Vokalzeichen (Tashkil) im Lesetext ein-/ausblenden – global, gemerkt
+function updateTashkilBtn(){
+  const b=$("#rTashkil");if(b)b.textContent=rHideTashkil?t("showTashkil"):t("hideTashkil");
+}
+$("#rTashkil").onclick=()=>{
+  rHideTashkil=!rHideTashkil;
+  try{api().meta_set("hide_tashkil",rHideTashkil?"1":"0");}catch(e){}
+  updateTashkilBtn();
+  rLoaded=new Set();$$("#rReading .pageSheet").forEach(s=>{s.classList.add("loading");s.querySelector(".pageText").innerHTML="…";});
+  ensurePages(rPage-1,rPage+2);
+};
 // Lesezeichen für die Stelle, an der gerade gelesen wird (an/aus)
 function readerBmData(){
   const s=sheetOf(rPage);
@@ -2395,6 +2421,9 @@ paintIcons();
   // gespeicherte Schriftgröße für den Leser übernehmen
   try{const f=await api().meta_get("font_scale");const n=parseFloat(f.value||"");
     if(n>=.8&&n<=1.8){rFont=n;$("#rReading").style.setProperty("--rfont",n.toFixed(2));}}catch(e){}
+  // gemerkten Tashkil-Schalter übernehmen (global)
+  try{const tk=await api().meta_get("hide_tashkil");rHideTashkil=(tk.value==="1");}catch(e){}
+  updateTashkilBtn();
   refreshBmKeys();     // gesetzte Lesezeichen kennen (Symbolzustand)
   checkWhatsNew();     // nach einem Update die Änderungen zeigen
 })();
