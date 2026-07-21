@@ -173,11 +173,19 @@ Assets and why their names matter (`echo_engine/updater.py` → `_pick_asset`):
 Renaming these breaks self-update silently. If you change them, update `_pick_asset` in the same commit.
 
 Other things worth knowing:
-- **The commit message becomes the release body**, which the app shows in its "Was ist neu" dialog after
-  an update (`/api/whats_new`, cached in `meta`). Write release commits as a short title plus `-` bullet
-  points, in German — end users read them.
+- **The "Was ist neu" text is the GitHub Release *body*** (`updater.release_notes` → release `body`,
+  shown by `openNews` via `/api/whats_new`, cached in `meta`). CI does **not** set it — the workflows use
+  `softprops/action-gh-release` without a `body`, so the body is empty unless you set it. After tagging,
+  set it explicitly: `gh release edit vX.Y.Z --notes-file NOTES.md` (softprops preserves an existing body
+  when it later attaches the installers — but re-verify body + assets once the builds finish).
+- **Release notes must be bilingual (German + Arabic)** — the app runs in either language and users read
+  these. Format the body as: German section, then a line `<!--ar-->`, then the Arabic section. The HTML
+  comment is invisible on the GitHub release page; in the app, `notesForLang(body, lang)` shows only the
+  active language (falls back to the other; a body with no marker shows as-is). This is the same
+  DE+AR rule as UI strings (`T.de`/`T.ar`) — nothing user-facing ships in only one language.
 - A change to the *update mechanism itself* only takes effect for updates **after** the version that
-  introduces it; the installed older version still runs its own updater code.
+  introduces it; the installed older version still runs its own updater code. (So the language-aware
+  notes above are live from the **first release built after** they were added, not retroactively.)
 - Builds are unsigned. macOS shows "unidentified developer" on first manual launch (right-click → Open);
   the auto-update path avoids this by removing the quarantine attribute.
 
