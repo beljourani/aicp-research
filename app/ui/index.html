@@ -500,6 +500,28 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .verLabel { font-size: 11.5px; color: var(--faint); padding: 8px 11px 2px;
     letter-spacing: .02em; }
+  /* Quellen-Umschalter (Bibliothek / Shamela online) */
+  #srcToggle { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .srcSeg { display: inline-flex; background: var(--panel); border: 1px solid var(--line-strong);
+    border-radius: 9px; padding: 3px; }
+  .srcBtn { border: none; background: transparent; color: var(--muted); cursor: pointer;
+    padding: 6px 15px; border-radius: 7px; font-size: 13.5px; font-family: inherit; font-weight: 500; }
+  .srcBtn.active { background: var(--accent); color: #fff; }
+  .srcGear { border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted);
+    cursor: pointer; width: 32px; height: 32px; border-radius: 8px; display: inline-flex;
+    align-items: center; justify-content: center; }
+  .srcGear:hover { color: var(--ink); }
+  .srcGear .ic { width: 17px; height: 17px; }
+  .shamelaState { font-size: 12.5px; color: var(--muted); }
+  .shamelaState.ok { color: var(--accent); }
+  .shamelaState.off { color: var(--err); }
+  .mfHint { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0 0 14px; }
+  .shamelaMsg { font-size: 12.5px; margin-top: 12px; min-height: 18px; }
+  .shamelaMsg.ok { color: var(--accent); }
+  .shamelaMsg.err { color: var(--err); }
+  .onlineBadge { display: inline-block; font-size: 11px; font-weight: 600; color: #fff;
+    background: var(--accent); border-radius: 5px; padding: 1px 7px; margin-inline-start: 8px;
+    vertical-align: middle; letter-spacing: .02em; }
 </style>
 </head>
 <body>
@@ -532,6 +554,14 @@
   <section class="view active" id="view-search">
     <div class="viewHead"><h1 class="title" id="titleSearch"></h1></div>
     <div class="viewInner">
+      <div id="srcToggle">
+        <div class="srcSeg">
+          <button class="srcBtn active" data-src="local" id="srcLocalBtn"></button>
+          <button class="srcBtn" data-src="shamela" id="srcShamelaBtn"></button>
+        </div>
+        <button class="srcGear" id="shamelaCfgBtn" title=""><span class="ci" data-ic="gear"></span></button>
+        <span id="shamelaState" class="shamelaState"></span>
+      </div>
       <div id="mGroups"></div>
       <div id="mExcludeArea" style="display:none">
         <div class="orSep" id="mExcludeLabel"></div>
@@ -686,6 +716,24 @@
   </div>
 </div>
 
+<div id="shamelaOverlay" class="overlay">
+  <div class="modal">
+    <div class="modalHead"><span id="shamelaHead"></span>
+      <button class="iconBtn" id="shamelaClose"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <p id="shamelaIntro" class="mfHint"></p>
+    <label class="mfLabel" id="shamelaUrlLabel"></label>
+    <input id="shamelaUrl" class="mfInput" type="text" dir="ltr" placeholder="https://…" autocomplete="off">
+    <label class="mfLabel" id="shamelaTokenLabel"></label>
+    <input id="shamelaToken" class="mfInput" type="password" dir="ltr" autocomplete="off">
+    <div id="shamelaMsg" class="shamelaMsg"></div>
+    <div class="modalFoot">
+      <button class="btn ghost danger" id="shamelaClearBtn" style="margin-inline-end:auto"></button>
+      <button class="btn ghost" id="shamelaCancel"></button>
+      <button class="btn primary" id="shamelaSave"></button>
+    </div>
+  </div>
+</div>
+
 <div id="editOverlay" class="overlay">
   <div class="modal">
     <div class="modalHead"><span id="editHead"></span>
@@ -741,6 +789,8 @@ const ICONS = {
   rescan: '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/>',
   trash: '<path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/>',
   close: '<path d="M18 6 6 18M6 6l12 12"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H10a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  cloud: '<path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6-1.5A4 4 0 0 0 6 19z"/>',
   prev: '<path d="m15 18-6-6 6-6"/>',
   next: '<path d="m9 18 6-6-6-6"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
@@ -785,6 +835,25 @@ const T = {
     searchBtn: "Suchen",
     authorLabel: "Autor", all: "alle", semanticLabel: "semantische Suche",
     bookLabel: "Buch", categoryLabel: "Kategorie",
+    srcLocal: "Meine Bibliothek", srcShamela: "Shamela (online)",
+    onlineTag: "online",
+    shamelaCfgTip: "Shamela-Server einrichten",
+    shamelaHead: "Shamela-Server",
+    shamelaIntro: "Durchsuche die ~8.600 Bücher der Al-Maktaba Al-Shamela über deinen eigenen Server – semantisch, ohne die Bücher lokal zu speichern. Der Zugang wird einmalig gespeichert und bleibt bestehen.",
+    shamelaUrlLabel: "Server-Adresse",
+    shamelaTokenLabel: "Zugangs-Token",
+    shamelaSaveBtn: "Verbinden & speichern",
+    shamelaClearBtn: "Verbindung trennen",
+    shamelaCancel: "Schließen",
+    shamelaTesting: "Verbindung wird geprüft …",
+    shamelaOkN: (n)=>`Verbunden · ${Number(n).toLocaleString("de")} Abschnitte durchsuchbar.`,
+    shamelaOk: "Verbindung erfolgreich.",
+    shamelaCleared: "Verbindung getrennt.",
+    shamelaConnected: "verbunden", shamelaNotSet: "kein Server",
+    shamelaNeedCfg: "Bitte zuerst einen Shamela-Server einrichten (Zahnrad-Symbol).",
+    shamelaQueryHint: "Semantische Suche: beschreibe dein Thema in eigenen Worten – es zählt der Sinn, nicht die exakten Wörter.",
+    shamelaSearching: "Suche auf dem Server …",
+    shamelaLoadErr: "Server nicht erreichbar.",
     collectionsTitle: "Sammlungen", collByAuthors: "Autoren",
     collByCategories: "Kategorien", collKindAuthor: "Autor",
     collKindCategory: "Kategorie", collEmpty: "Keine Bücher in dieser Sammlung.",
@@ -865,6 +934,25 @@ const T = {
     searchBtn: "بحث",
     authorLabel: "المؤلف", all: "الكل", semanticLabel: "بحث دلالي",
     bookLabel: "الكتاب", categoryLabel: "التصنيف",
+    srcLocal: "مكتبتي", srcShamela: "الشاملة (عبر الإنترنت)",
+    onlineTag: "أونلاين",
+    shamelaCfgTip: "إعداد خادم الشاملة",
+    shamelaHead: "خادم الشاملة",
+    shamelaIntro: "ابحث في نحو 8600 كتاب من المكتبة الشاملة عبر خادمك الخاص – بحثاً دلالياً دون تخزين الكتب محلياً. يُحفظ الوصول مرة واحدة ويبقى.",
+    shamelaUrlLabel: "عنوان الخادم",
+    shamelaTokenLabel: "رمز الوصول",
+    shamelaSaveBtn: "اتصال وحفظ",
+    shamelaClearBtn: "قطع الاتصال",
+    shamelaCancel: "إغلاق",
+    shamelaTesting: "جارٍ فحص الاتصال …",
+    shamelaOkN: (n)=>`متصل · ${Number(n).toLocaleString("ar")} مقطعاً قابلاً للبحث.`,
+    shamelaOk: "تم الاتصال بنجاح.",
+    shamelaCleared: "تم قطع الاتصال.",
+    shamelaConnected: "متصل", shamelaNotSet: "لا خادم",
+    shamelaNeedCfg: "يرجى إعداد خادم الشاملة أولاً (رمز الترس).",
+    shamelaQueryHint: "بحث دلالي: صِف موضوعك بكلماتك – المعنى هو ما يهم، لا الكلمات الحرفية.",
+    shamelaSearching: "جارٍ البحث في الخادم …",
+    shamelaLoadErr: "تعذّر الوصول إلى الخادم.",
     collectionsTitle: "المجموعات", collByAuthors: "المؤلفون",
     collByCategories: "التصنيفات", collKindAuthor: "المؤلف",
     collKindCategory: "التصنيف", collEmpty: "لا كتب في هذه المجموعة.",
@@ -952,6 +1040,13 @@ function applyLang(l) {
   set("mExcludeLabel", d.excludeLabel); set("rExcludeLabel", d.excludeLabel);
   set("authorLabel", d.authorLabel); set("semanticLabel", d.semanticLabel);
   set("bookLabel", d.bookLabel); set("categoryLabel", d.categoryLabel);
+  set("srcLocalBtn", d.srcLocal); set("srcShamelaBtn", d.srcShamela);
+  set("shamelaHead", d.shamelaHead); set("shamelaIntro", d.shamelaIntro);
+  set("shamelaUrlLabel", d.shamelaUrlLabel); set("shamelaTokenLabel", d.shamelaTokenLabel);
+  set("shamelaSave", d.shamelaSaveBtn); set("shamelaClearBtn", d.shamelaClearBtn);
+  set("shamelaCancel", d.shamelaCancel);
+  const gear = $("#shamelaCfgBtn"); if (gear) gear.title = d.shamelaCfgTip;
+  if (typeof refreshShamelaState === "function") refreshShamelaState();
   set("dzTitle", d.dzTitle); set("dzHint", d.dzHint); set("pickBtn", d.pickBtn);
   set("clearJobsBtn", d.clearDone); set("updateLabel", d.updateAvail);
   set("exportLabel", d.exportLabel); set("importLabel", d.importLabel);
@@ -1017,6 +1112,13 @@ const API = {
   import_library:()=>_post("/api/import_library"),
   upload:file=>fetch("/api/upload",{method:"POST",
     headers:{"X-Filename":encodeURIComponent(file.name)},body:file}).then(r=>r.json()),
+  shamela_status:()=>_get("/api/shamela_status"),
+  shamela_save:(url,token)=>_post("/api/shamela_save",{url,token}),
+  shamela_clear:()=>_post("/api/shamela_clear",{}),
+  shamela_search:b=>_post("/api/shamela_search",b),
+  shamela_page:(book_id,seq,before,after)=>_post("/api/shamela_page",{book_id,seq,before,after}),
+  shamela_categories:()=>_get("/api/shamela_categories"),
+  shamela_authors:(q,limit)=>_post("/api/shamela_authors",{q,limit}),
 };
 const api=()=>API;
 
@@ -1689,7 +1791,10 @@ const READER = { groupsBox:"#rGroups", excludeArea:"#rExcludeArea",
 /* ---------- Hauptsuche ---------- */
 const PAGE=40;
 let mainQuery=null, mainOffset=0, mainLoaded=0;
+// Aktuelle Suchquelle: "local" (eigene Bibliothek) oder "shamela" (Online).
+let searchSource="local";
 async function runSearch(){
+  if(searchSource==="shamela") return runShamelaSearch();
   const { groups, excludes } = collectPanel(MAIN);
   if(!groups.length && !excludes.length){ $("#results").innerHTML=emptyBox(t("start")); $("#count").textContent=""; mainQuery=null; return; }
   mainQuery={groups,excludes}; mainOffset=0; mainLoaded=0;
@@ -1699,10 +1804,67 @@ async function runSearch(){
   showResults(res, false);
 }
 async function loadMoreMain(){
+  if(searchSource==="shamela") return loadMoreShamela();
   if(!mainQuery)return;
   mainOffset+=PAGE;
   const res = await api().search_terms(mainQuery.groups, mainQuery.excludes, authorFilterSel, selectedDoc, mainOffset, PAGE, catFilterSel, bookFilterSel.map(b=>b.id));
   showResults(res, true);
+}
+
+/* ---------- Shamela-Online-Suche ---------- */
+let shQuery=null, shOffset=0, shLoaded=0;
+function shamelaFilters(){
+  const b={};
+  if(catFilterSel.length)b.categories=catFilterSel.slice();
+  if(authorFilterSel.length)b.authors=authorFilterSel.slice();
+  return b;
+}
+async function runShamelaSearch(){
+  const st=await api().shamela_status().catch(()=>null);
+  if(!st||!st.configured){ $("#results").innerHTML=emptyBox(t("shamelaNeedCfg")); $("#count").textContent=""; shQuery=null; return; }
+  const { groups } = collectPanel(MAIN);
+  const q=groups.flat().filter(Boolean).join(" ").trim();
+  if(!q){ $("#results").innerHTML=emptyBox(t("shamelaQueryHint")); $("#count").textContent=""; shQuery=null; return; }
+  shQuery=q; shOffset=0; shLoaded=0;
+  $("#count").textContent=t("shamelaSearching");
+  const res=await api().shamela_search(Object.assign({q,limit:PAGE,offset:0},shamelaFilters()));
+  showShamelaResults(res,false);
+}
+async function loadMoreShamela(){
+  if(!shQuery)return;
+  shOffset+=PAGE;
+  const res=await api().shamela_search(Object.assign({q:shQuery,limit:PAGE,offset:shOffset},shamelaFilters()));
+  showShamelaResults(res,true);
+}
+function showShamelaResults(res,append){
+  const box=$("#results");
+  const old=$("#loadMore"); if(old)old.remove();
+  if(res&&res.error){ box.innerHTML=emptyBox(res.error); $("#count").textContent=""; return; }
+  if(!append){ box.innerHTML=""; shLoaded=0; }
+  const hits=res.hits||[];
+  if(!append && !hits.length){ box.innerHTML=emptyBox(t("empty")); $("#count").textContent=""; return; }
+  for(const h of hits){ box.appendChild(shamelaHitEl(h)); shLoaded++; }
+  $("#count").textContent=shLoaded+" "+t("results")+(res.has_more?"+":"");
+  if(res.has_more){
+    const b=document.createElement("button");b.id="loadMore";b.className="btn sm";
+    b.style.cssText="display:block;margin:16px auto 0;";
+    b.textContent=t("loadMore");
+    b.onclick=()=>{b.disabled=true;b.textContent=t("loading");loadMoreShamela();};
+    box.appendChild(b);
+  }
+}
+function shamelaHitEl(h){
+  const el=document.createElement("div");el.className="hit";
+  const label=shamelaHitLabel(h);
+  el.innerHTML=`
+    <div class="top">
+      <span class="htitle">${esc(h.title||"")}</span>
+      <span class="hauthor">${esc(h.author||"")}</span>
+      <span class="meta"><span class="pageTag">${label?esc(label):""}</span></span>
+    </div>
+    <div class="text" dir="auto">${highlight(h.snippet||"",shamelaTerms(shQuery||""))}</div>`;
+  el.onclick=()=>openShamelaReader(Object.assign({},h,{_query:shQuery||""}));
+  return el;
 }
 function hitEl(h){
   const el=document.createElement("div");el.className="hit";
@@ -1828,6 +1990,9 @@ async function refreshBookmarks(){
 /* ---------- Leser: durchgehender Lesefluss ---------- */
 let rDoc=null,rPage=1,rFirst=1,rLast=1,rWords=[],rPassageText="",rImg=false,rHasImg=false;
 let rTitleTxt="",rLoaded=new Set(),rHits=[],rHitIdx=-1,rFont=1,rReady=false;
+// Remote-Leser (Shamela online): rRemote schaltet die Datenquelle um; rBook ist
+// die book_id, rPageLabels bildet sequence_num -> lesbare Seitenangabe ab.
+let rRemote=false,rBook=null,rPageLabels={};
 let rHideTashkil=false;     // globaler Schalter: Vokalzeichen im Lesetext ausblenden
 // Generationszähler für Reader-Navigation: jeder Sprung (Klick/Taste) erhöht
 // ihn; veraltete, noch laufende Sprünge erkennen das und brechen ab (kein
@@ -1850,6 +2015,7 @@ function passageRe(p){const parts=p.trim().split(/\s+/).map(escRe);if(!parts.len
 const sheetOf=p=>document.getElementById("pg"+p);
 
 async function openReader(docId,passageId,words,terms){
+  rRemote=false;rBook=null;setReaderRemoteUI(false);
   rDoc=docId;rWords=words||[];rImg=false;rPassageText="";rReady=false;
   rLoaded=new Set();rHits=[];rHitIdx=-1;
   // Vollständige Suchanfrage übernehmen (Gruppen + Ausschlüsse). Fehlen
@@ -1900,18 +2066,72 @@ async function openReader(docId,passageId,words,terms){
 }
 function closeReader(){$("#reader").classList.remove("open");hideCite();}
 
+// Blendet leserinterne Steuerelemente aus, die es im Remote-Modus (noch) nicht
+// gibt: Lesezeichen und die Originalseiten-Ansicht (Shamela liefert nur Text).
+function setReaderRemoteUI(remote){
+  const bm=$("#rBookmark"); if(bm)bm.style.display=remote?"none":"";
+  const img=$("#rImgToggle"); if(img)img.style.display=remote?"none":"";
+}
+
+// Leser für ein Online-Buch der Shamela öffnen. hit trägt book_id + seq.
+async function openShamelaReader(hit){
+  rRemote=true;rBook=hit.book_id;rDoc="shx:"+hit.book_id;
+  rImg=false;rHasImg=false;rPassageText="";rReady=false;
+  rLoaded=new Set();rHits=[];rHitIdx=-1;rPageLabels={};
+  setReaderRemoteUI(true);
+  const q=hit._query||"";
+  rWords=shamelaTerms(q);
+  readerState.groups=q?[shamelaTerms(q)]:[[]];
+  readerState.excludes=[];readerState.excludeOpen=false;
+  $("#rExcludeArea").style.display="none";
+  renderPanel(READER);
+  $("#rHitNav").style.display="none";
+  $("#reader").classList.add("open");
+  $("#rTitle").innerHTML=esc(hit.title||"")+`<span class="onlineBadge">${esc(t("onlineTag"))}</span>`;
+  rTitleTxt=hit.title||"";
+  $("#rAuthor").textContent=hit.author||"";
+  // Erste Seite laden, um die Grenzen (first_seq/last_seq) des Buches zu erhalten.
+  const info=await api().shamela_page(hit.book_id,hit.seq,0,0);
+  if(info&&info.error){ showError(info.error); closeReader(); return; }
+  rFirst=info.first_seq||hit.seq;rLast=info.last_seq||hit.seq;
+  buildSheets();
+  applyFont(rFont);
+  updateTashkilBtn();
+  showReaderHint();
+  try{ await gotoPage(hit.seq,false); }catch(e){}
+  // Verwandte Stellen dieses Buches auflisten (Treffer-Navigation), ohne von
+  // der aufgeschlagenen Seite wegzuspringen.
+  if(q){ try{ await runReaderSearch(false,true); }catch(e){} }
+  rReady=true;
+}
+
 function buildSheets(){
   const box=$("#rReading");box.innerHTML="";
   const frag=document.createDocumentFragment();
   for(let p=rFirst;p<=rLast;p++){
     const s=document.createElement("div");
     s.className="pageSheet loading";s.id="pg"+p;s.dataset.page=p;
-    s.innerHTML=`<div class="pageNum">${esc(t("pagePrefix"))} ${p}</div>`
+    // Lokal: Seitenzahl steht fest. Remote: Label kommt erst mit dem Seiteninhalt.
+    const lbl=rRemote?(rPageLabels[p]||"…"):`${esc(t("pagePrefix"))} ${p}`;
+    s.innerHTML=`<div class="pageNum">${lbl}</div>`
       +`<div class="pageText" dir="auto">…</div>`;
     frag.appendChild(s);
   }
   box.appendChild(frag);
-  $("#rPageTotal").textContent=`/ ${rLast}`;
+  $("#rPageTotal").textContent=rRemote?`/ ${rLast-rFirst+1}`:`/ ${rLast}`;
+}
+
+// Seitenlabel eines Blatts nachträglich setzen (Remote: nach dem Laden bekannt)
+function setSheetLabel(seq,label){
+  const s=sheetOf(seq);if(!s)return;
+  const n=s.querySelector(".pageNum");if(n)n.textContent=label||"…";
+}
+// Lesbare Seitenangabe für eine Shamela-Seite: „ج2 ص45" bzw. „ص45".
+function shamelaPageLabel(pg){
+  const num=(pg.page_num!=null&&pg.page_num!=="")?pg.page_num:pg.page_str;
+  if(num==null||num==="")return "…";
+  const part=(pg.part!=null&&String(pg.part).trim()!=="")?String(pg.part).trim():"";
+  return part?`ج${part} ص${num}`:`ص${num}`;
 }
 
 // Aktive Include-Begriffe des Lesers (für wurzelbewusste Server-Markierung)
@@ -1983,8 +2203,20 @@ async function ensurePages(from,to){
   if(!need.length)return;
   const a=need[0],b=need[need.length-1];
   need.forEach(p=>rLoaded.add(p));      // doppelte Anfragen vermeiden
-  const job=api().pages(rDoc,a,b,readerTerms())
-    .then(res=>{for(const pg of (res.pages||[]))fillSheet(pg.page_no,pg.text,pg.spans);})
+  // Remote (Shamela): Seiten per sequence_num vom Server holen. Der Server
+  // liefert /page mit seq=a und after=(b-a), also den ganzen Bereich auf einmal.
+  // Hervorhebung passiert clientseitig anhand der Suchbegriffe (wordSpans).
+  const job=(rRemote
+      ? api().shamela_page(rBook,a,0,b-a).then(res=>{
+          if(res&&res.error){need.forEach(p=>rLoaded.delete(p));return;}
+          for(const pg of (res.pages||[])){
+            if(pg.page_label==null) pg.page_label=shamelaPageLabel(pg);
+            rPageLabels[pg.seq]=pg.page_label;
+            setSheetLabel(pg.seq,pg.page_label);
+            fillSheet(pg.seq,pg.text,null);
+          }})
+      : api().pages(rDoc,a,b,readerTerms())
+          .then(res=>{for(const pg of (res.pages||[]))fillSheet(pg.page_no,pg.text,pg.spans);}))
     .catch(()=>{need.forEach(p=>rLoaded.delete(p));});
   rInflight.add(job);
   try{ await job; } finally{ rInflight.delete(job); pruneFar(); }
@@ -2073,7 +2305,9 @@ function setCurrentPage(n){
   if(n===rPage&&$("#rPageInput").value)return;
   rPage=n;
   const inp=$("#rPageInput");
-  if(document.activeElement!==inp)inp.value=n;
+  // Remote: das Eingabefeld zeigt die fortlaufende Position (1..N), nicht die
+  // interne sequence_num – passend zur Gesamtzahl „/ N".
+  if(document.activeElement!==inp)inp.value=rRemote?(n-rFirst+1):n;
   const span=rLast-rFirst||1;
   $("#rProgressBar").style.width=(((n-rFirst)/span)*100).toFixed(1)+"%";
   $$("#rReading .pageSheet.current").forEach(x=>x.classList.remove("current"));
@@ -2115,11 +2349,37 @@ async function runReaderSearch(autoSelect=true,force=false){
   // Treffer (force) wird trotzdem gelistet, was in diesem Buch steht.
   if(!groups.length && !excludes.length && !force){
     showReaderHint();rHits=[];updateHitNav();return; }
-  const res=await api().search_terms(groups, excludes, null, rDoc, 0, 200);
+  let res;
+  if(rRemote){
+    const q=groups.flat().filter(Boolean).join(" ").trim();
+    if(!q){ showReaderHint();rHits=[];updateHitNav();return; }
+    const r=await api().shamela_search({q,limit:100,book_ids:[rBook]});
+    if(r&&r.error){ showError(r.error); rHits=[];updateHitNav(); return; }
+    res={hits:(r.hits||[]).map(h=>shamelaToReaderHit(h,q))};
+  }else{
+    res=await api().search_terms(groups, excludes, null, rDoc, 0, 200);
+  }
   rHits=res.hits||[];rHitIdx=-1;
   renderReaderHits(res);
   updateHitNav();
   if(autoSelect&&rHits.length)selectHit(0);
+}
+// Shamela-Treffer in das Trefferformat des Lesers übersetzen: die
+// sequence_num wird zur „Seite" (page_from=page_to=seq), die Suchbegriffe
+// dienen als Wortformen für die Hervorhebung.
+function shamelaToReaderHit(h,q){
+  return {title:h.title,author:h.author,snippet:h.snippet||"",
+    matched_words:shamelaTerms(q),page_from:h.seq,page_to:h.seq,
+    page_label:shamelaHitLabel(h),passage_id:null,
+    book_id:h.book_id,seq:h.seq,reliability:"exact"};
+}
+// Zerlegt die Freitext-Anfrage grob in Wörter für die literale Hervorhebung.
+function shamelaTerms(q){return (q||"").split(/\s+/).map(s=>s.trim()).filter(w=>w.length>1);}
+function shamelaHitLabel(h){
+  const num=(h.page_num!=null&&h.page_num!=="")?h.page_num:h.page;
+  if(num==null||num==="")return null;
+  const part=(h.part!=null&&String(h.part).trim()!=="")?String(h.part).trim():"";
+  return part?`ج${part} ص${num}`:`ص${num}`;
 }
 function updateHitNav(){
   const nav=$("#rHitNav");
@@ -2149,18 +2409,22 @@ function renderReaderHits(res){
   if(!res.hits.length){box.innerHTML=`<div class="empty" style="padding:30px 12px">${esc(t("empty"))}</div>`;return;}
   res.hits.forEach((h,i)=>{
     const el=document.createElement("div");el.className="rHit";
-    const pg=h.page_from===h.page_to?`${t("pagePrefix")} ${h.page_from}`:`${t("pagePrefix")} ${h.page_from}–${h.page_to}`;
-    el.innerHTML=`<div class="rp"><span>${pg}</span>`
-      +`<button class="bmBtn" title="${esc(t("bmAdd"))}">${svg("bookmark")}</button></div>`
+    const pg=h.page_label?esc(h.page_label)
+      :(h.page_from===h.page_to?`${t("pagePrefix")} ${h.page_from}`:`${t("pagePrefix")} ${h.page_from}–${h.page_to}`);
+    // Remote: (noch) keine Lesezeichen – Fähnchen weglassen.
+    const bmHtml=rRemote?"":`<button class="bmBtn" title="${esc(t("bmAdd"))}">${svg("bookmark")}</button>`;
+    el.innerHTML=`<div class="rp"><span>${pg}</span>${bmHtml}</div>`
       +`<div class="rtext" dir="auto">${highlight(h.snippet,h.matched_words)}</div>`;
     const bm=el.querySelector(".bmBtn");
-    if(bmKeys.has(bmKey(rDoc,h.page_from,h.passage_id)))bm.classList.add("on");
-    bm.onclick=(e)=>{
-      e.stopPropagation();
-      toggleBookmark(bm,{document_id:rDoc,passage_id:h.passage_id,
-        page_no:h.page_from,snippet:h.snippet,
-        terms:(readerState.groups||[]).flat()});
-    };
+    if(bm){
+      if(bmKeys.has(bmKey(rDoc,h.page_from,h.passage_id)))bm.classList.add("on");
+      bm.onclick=(e)=>{
+        e.stopPropagation();
+        toggleBookmark(bm,{document_id:rDoc,passage_id:h.passage_id,
+          page_no:h.page_from,snippet:h.snippet,
+          terms:(readerState.groups||[]).flat()});
+      };
+    }
     el.onclick=()=>selectHit(i);
     box.appendChild(el);
   });
@@ -2196,7 +2460,11 @@ $("#citeBtn").onclick=async()=>{
   const sel=window.getSelection();const txt=sel?sel.toString().trim():"";
   if(!txt)return hideCite();
   const pg=$("#citeBtn").dataset.page||rPage;
-  const cite=`„${txt}“ (${rTitleTxt}, ${t("pagePrefix")} ${pg})`;
+  // Remote: die lesbare Shamela-Seitenangabe (z. B. „ج2 ص45") zitieren.
+  const pgTxt=rRemote?(rPageLabels[pg]||("ص"+pg)):`${t("pagePrefix")} ${pg}`;
+  const au=($("#rAuthor").textContent||"").trim();
+  const src=rRemote?`${rTitleTxt}${au?"، "+au:""} — الشاملة`:rTitleTxt;
+  const cite=`„${txt}“ (${src}, ${pgTxt})`;
   try{await navigator.clipboard.writeText(cite);showToast(t("citeDone"));}
   catch(e){showError(String(e));}
   hideCite();sel.removeAllRanges();
@@ -2242,7 +2510,9 @@ $("#rHitNext").onclick=()=>selectHit(rHitIdx+1);
 $("#rPageInput").addEventListener("keydown",e=>{
   if(e.key==="Enter"){
     e.preventDefault();              // sonst quittiert macOS mit Fehlton
-    const n=parseInt(e.target.value,10);if(!isNaN(n))gotoPage(n);e.target.blur();}
+    let n=parseInt(e.target.value,10);
+    if(!isNaN(n)){ if(rRemote)n=rFirst+n-1; gotoPage(n); }
+    e.target.blur();}
 });
 document.addEventListener("keydown",e=>{
   if(!$("#reader").classList.contains("open"))return;
@@ -2409,6 +2679,94 @@ $("#delSelBtn").onclick=async()=>{
 };
 $("#importBtn").onclick=async()=>{const r=await api().import_library();if(r&&r.error)return showError(r.error);if(r&&r.cancelled)return;trackJob("Import",t("importDone"));};
 
+/* ---------- Quellen-Umschalter + Shamela-Einstellungen ---------- */
+let _shStatus={configured:false,url:""};
+async function refreshShamelaState(){
+  try{ _shStatus=await api().shamela_status(); }catch(e){ _shStatus={configured:false,url:""}; }
+  const el=$("#shamelaState");
+  if(el){
+    if(searchSource!=="shamela"){ el.textContent=""; el.className="shamelaState"; }
+    else if(_shStatus.configured){ el.textContent="● "+t("shamelaConnected"); el.className="shamelaState ok"; }
+    else { el.textContent="● "+t("shamelaNotSet"); el.className="shamelaState off"; }
+  }
+}
+// Beim Wechsel in den Shamela-Modus die Filterlisten vom Server holen
+async function loadShamelaFilters(){
+  try{ const c=await api().shamela_categories(); if(c&&!c.error)fillCatSel(c.categories||[]); }catch(e){}
+  try{ const a=await api().shamela_authors("",80); if(a&&!a.error)fillAuthorSel((a.authors||[]).slice(0,80)); }catch(e){}
+}
+function applySourceUI(){
+  const shamela=searchSource==="shamela";
+  $$("#srcToggle .srcBtn").forEach(b=>b.classList.toggle("active",b.dataset.src===searchSource));
+  // Buchfilter (lokal) und Semantik-Schalter im Online-Modus verbergen
+  const bookLbl=$("#bookLabel")&&$("#bookLabel").closest("label");
+  if(bookLbl)bookLbl.style.display=shamela?"none":"";
+  const semLbl=$("#semantic")&&$("#semantic").closest("label");
+  if(semLbl)semLbl.style.display=shamela?"none":"";
+  refreshShamelaState();
+}
+async function setSource(src){
+  if(src===searchSource)return;
+  searchSource=src;
+  // Filter zurücksetzen (Quellen haben unterschiedliche Autoren/Kategorien)
+  authorFilterSel=[];catFilterSel=[];bookFilterSel=[];
+  renderAuthorFilter();renderCatFilter();renderBookFilter();
+  applySourceUI();
+  if(src==="shamela"){
+    await refreshShamelaState();
+    if(!_shStatus.configured){ openShamelaCfg(); }
+    else { await loadShamelaFilters(); }
+    $("#results").innerHTML=emptyBox(_shStatus.configured?t("shamelaQueryHint"):t("shamelaNeedCfg"));
+    $("#count").textContent="";
+  }else{
+    refreshCategorySources();refreshAuthorSources();refreshDocs();
+    $("#results").innerHTML=emptyBox(t("start"));
+    $("#count").textContent="";
+  }
+}
+$$("#srcToggle .srcBtn").forEach(b=>b.onclick=()=>setSource(b.dataset.src));
+
+/* Shamela-Einstellungen (URL + Token, einmalig) */
+function openShamelaCfg(){
+  $("#shamelaUrl").value=_shStatus.url||"";
+  $("#shamelaToken").value="";      // Token wird nie zurückgegeben
+  $("#shamelaMsg").textContent="";$("#shamelaMsg").className="shamelaMsg";
+  $("#shamelaClearBtn").style.display=_shStatus.configured?"":"none";
+  $("#shamelaOverlay").classList.add("show");
+  setTimeout(()=>$("#shamelaUrl").focus(),50);
+}
+function closeShamelaCfg(){$("#shamelaOverlay").classList.remove("show");}
+$("#shamelaCfgBtn").onclick=async()=>{ await refreshShamelaState(); openShamelaCfg(); };
+$("#shamelaClose").onclick=closeShamelaCfg;
+$("#shamelaCancel").onclick=closeShamelaCfg;
+$("#shamelaOverlay").onclick=e=>{if(e.target===$("#shamelaOverlay"))closeShamelaCfg();};
+$("#shamelaSave").onclick=async()=>{
+  const url=$("#shamelaUrl").value.trim();
+  const token=$("#shamelaToken").value.trim();
+  const msg=$("#shamelaMsg");
+  msg.className="shamelaMsg";msg.textContent=t("shamelaTesting");
+  const r=await api().shamela_save(url,token);
+  if(r&&r.ok){
+    msg.className="shamelaMsg ok";
+    msg.textContent=(r.points!=null)?t("shamelaOkN")(r.points):t("shamelaOk");
+    await refreshShamelaState();
+    if(searchSource==="shamela"){ await loadShamelaFilters();
+      $("#results").innerHTML=emptyBox(t("shamelaQueryHint")); }
+    setTimeout(closeShamelaCfg,900);
+  }else{
+    msg.className="shamelaMsg err";
+    msg.textContent=(r&&r.error)||t("shamelaLoadErr");
+    await refreshShamelaState();
+  }
+};
+$("#shamelaClearBtn").onclick=async()=>{
+  await api().shamela_clear();
+  _shStatus={configured:false,url:""};
+  $("#shamelaMsg").className="shamelaMsg";$("#shamelaMsg").textContent=t("shamelaCleared");
+  $("#shamelaClearBtn").style.display="none";
+  refreshShamelaState();
+};
+
 /* ---------- Start ---------- */
 $("#brandIcon").innerHTML=svg("logo");
 paintIcons();
@@ -2425,6 +2783,8 @@ paintIcons();
   try{const tk=await api().meta_get("hide_tashkil");rHideTashkil=(tk.value==="1");}catch(e){}
   updateTashkilBtn();
   refreshBmKeys();     // gesetzte Lesezeichen kennen (Symbolzustand)
+  applySourceUI();     // Quellen-Umschalter in Grundstellung
+  refreshShamelaState();
   checkWhatsNew();     // nach einem Update die Änderungen zeigen
 })();
 </script>

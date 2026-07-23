@@ -1,0 +1,8 @@
+# HTTPS-Reverse-Proxy für die Such-API.
+# {$DOMAIN} kommt aus der Umgebung (docker-compose → .env).
+# Caddy besorgt und erneuert das Zertifikat automatisch.
+
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy api:8000
+}

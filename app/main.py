@@ -620,6 +620,135 @@ class Core:
         con.close()
         return {"ok": True, "authors": clean}
 
+    # --- Shamela-Online-Server -------------------------------------------
+    # Zugang (URL + Token) wird EINMALIG in den Einstellungen hinterlegt und
+    # bleibt in der meta-Tabelle gespeichert. Alle Anfragen an den Server
+    # laufen serverseitig hier über urllib – der Token gelangt nie ins
+    # Browser-JS und wird auch nie an die Oberfläche zurückgegeben.
+    def _shamela_conf(self) -> tuple[str, str]:
+        url = self._meta_get("shamela_url", "").strip().rstrip("/")
+        token = self._meta_get("shamela_token", "").strip()
+        return url, token
+
+    def _shamela_request(self, method: str, path: str, body=None,
+                         params=None, timeout: int = 30):
+        """Ruft den Shamela-Server auf und gibt die JSON-Antwort zurück.
+        Wirft bei Fehlern eine Exception mit sprechender Meldung."""
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+        url, token = self._shamela_conf()
+        if not url:
+            raise RuntimeError("Kein Shamela-Server eingerichtet.")
+        full = url + path
+        if params:
+            full += "?" + urllib.parse.urlencode(params)
+        data = None
+        headers = {"X-API-Key": token}
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(full, data=data, headers=headers,
+                                     method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                raise RuntimeError("Token abgelehnt – bitte in den "
+                                   "Einstellungen prüfen.")
+            raise RuntimeError(f"Server-Fehler {e.code}.")
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"Server nicht erreichbar: {e.reason}")
+
+    def shamela_status(self, _body=None):
+        """Ob ein Server hinterlegt ist (URL sichtbar, Token nie)."""
+        url, token = self._shamela_conf()
+        return {"configured": bool(url and token), "url": url}
+
+    def shamela_save(self, body):
+        """Speichert Server-URL + Token dauerhaft und testet die Verbindung."""
+        body = body or {}
+        url = (body.get("url") or "").strip().rstrip("/")
+        token = (body.get("token") or "").strip()
+        if not url:
+            return {"error": "Bitte eine Server-Adresse eingeben."}
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        self.meta_set({"key": "shamela_url", "value": url})
+        self.meta_set({"key": "shamela_token", "value": token})
+        # Testlauf: erst /health (ohne Token – prüft Erreichbarkeit/Bereitschaft),
+        # dann eine winzige echte Suche, die den Token verlangt. Nur so fällt ein
+        # falscher Token sofort auf (sonst meldet /health irreführend "verbunden").
+        try:
+            health = self._shamela_request("GET", "/health", timeout=15)
+            if not health.get("ok"):
+                return {"ok": False,
+                        "error": "Server erreichbar, aber noch nicht bereit "
+                                 "(Import läuft evtl. noch)."}
+            # authentifizierte Mini-Suche – wirft bei falschem Token (401)
+            self._shamela_request("POST", "/search",
+                                  body={"q": "بسم", "limit": 1, "offset": 0},
+                                  timeout=25)
+            return {"ok": True, "points": health.get("points"), "url": url}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def shamela_clear(self, _body=None):
+        """Zugang entfernen (Server-Suche wieder ausschalten)."""
+        self.meta_set({"key": "shamela_url", "value": ""})
+        self.meta_set({"key": "shamela_token", "value": ""})
+        return {"ok": True}
+
+    def shamela_search(self, body):
+        body = body or {}
+        payload = {
+            "q": body.get("q") or "",
+            "limit": max(1, min(int(body.get("limit") or 30), 100)),
+            "offset": max(0, int(body.get("offset") or 0)),
+        }
+        for k in ("categories", "authors", "book_ids", "source"):
+            if body.get(k):
+                payload[k] = body[k]
+        try:
+            return self._shamela_request("POST", "/search", body=payload,
+                                         timeout=45)
+        except Exception as e:
+            return {"error": str(e)}
+
+    def shamela_page(self, body):
+        body = body or {}
+        params = {"book_id": int(body.get("book_id")),
+                  "seq": int(body.get("seq")),
+                  "before": int(body.get("before") or 0),
+                  "after": int(body.get("after") or 0)}
+        try:
+            return self._shamela_request("GET", "/page", params=params,
+                                         timeout=45)
+        except Exception as e:
+            return {"error": str(e)}
+
+    def shamela_categories(self, _body=None):
+        try:
+            return {"categories": self._shamela_request("GET", "/categories",
+                                                        timeout=30)}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def shamela_authors(self, body):
+        body = body or {}
+        params = {}
+        if body.get("q"):
+            params["q"] = body["q"]
+        if body.get("limit"):
+            params["limit"] = int(body["limit"])
+        try:
+            return {"authors": self._shamela_request("GET", "/authors",
+                                                     params=params or None,
+                                                     timeout=30)}
+        except Exception as e:
+            return {"error": str(e)}
+
     def upload(self, filename: str, data: bytes):
         """Per Drag&Drop übertragene Datei speichern und indexieren."""
         safe = os.path.basename(filename) or "datei"
@@ -1166,6 +1295,13 @@ ROUTES = {
     ("POST", "/api/bookmark_delete"): CORE.bookmark_delete,
     ("POST", "/api/bookmark_note"): CORE.bookmark_note,
     ("POST", "/api/document"): CORE.document,
+    ("GET", "/api/shamela_status"): CORE.shamela_status,
+    ("POST", "/api/shamela_save"): CORE.shamela_save,
+    ("POST", "/api/shamela_clear"): CORE.shamela_clear,
+    ("POST", "/api/shamela_search"): CORE.shamela_search,
+    ("POST", "/api/shamela_page"): CORE.shamela_page,
+    ("GET", "/api/shamela_categories"): CORE.shamela_categories,
+    ("POST", "/api/shamela_authors"): CORE.shamela_authors,
 }
 
 

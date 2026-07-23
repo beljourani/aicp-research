@@ -1,0 +1,9 @@
+# Geheimnisse und lokale Daten – niemals committen.
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+shamela-vectors/
+__pycache__/
+*.pyc

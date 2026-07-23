@@ -1,0 +1,79 @@
+# Gesamtes Server-Setup: Vektor-Datenbank (Qdrant) + Such-API + HTTPS (Caddy).
+#
+# Start:   docker compose up -d
+# Import:  docker compose run --rm importer      (einmalig, dauert Stunden)
+# Logs:    docker compose logs -f api
+#
+# Vor dem ersten Start eine .env-Datei anlegen (siehe .env.example).
+
+services:
+  # --- Vektor-Datenbank -----------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    restart: unless-stopped
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    # Kein Port nach außen – nur intern für api/importer erreichbar.
+    expose:
+      - "6333"
+
+  # --- Such-API (serverseitige Einbettung) ----------------------------------
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: shamela
+      META_DB: /data/meta.db
+      API_TOKEN: ${API_TOKEN}          # Pflicht – aus .env
+    volumes:
+      - ./data:/data                   # meta.db (vom Importer erzeugt)
+    expose:
+      - "8000"
+
+  # --- HTTPS-Endpunkt -------------------------------------------------------
+  # Caddy holt automatisch ein Let's-Encrypt-Zertifikat für DOMAIN
+  # und leitet https://DOMAIN → api:8000 weiter.
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  # --- Einmaliger Import (läuft nicht dauerhaft) ----------------------------
+  # Mit `docker compose run --rm importer` starten.
+  importer:
+    build: .
+    depends_on:
+      - qdrant
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      HF_TOKEN: ${HF_TOKEN:-}          # optional, falls Rate-Limit
+    volumes:
+      - ./data:/data                   # meta.db landet hier
+      - hf_cache:/root/.cache/huggingface
+    # Binäre Quantisierung: hält den RAM-Bedarf klein (passt in 16-GB-Server),
+    # die Feinbewertung nutzt die Originalvektoren von der Platte -> praktisch
+    # gleiche Trefferqualität. Für 32-GB-Maschinen kann man auf "int8" wechseln.
+    entrypoint: ["python", "import_shamela.py",
+                 "--qdrant", "http://qdrant:6333",
+                 "--meta", "/data/meta.db",
+                 "--quant", "binary"]
+    profiles: ["import"]               # startet nicht bei `up`
+
+volumes:
+  qdrant_storage:
+  caddy_data:
+  caddy_config:
+  hf_cache:

@@ -128,6 +128,40 @@ Building distributable binaries (rarely needed for code changes — CI does this
 - Small key/value settings (reading position per book, font scale, seen version, cached release notes)
   live in the `meta` table via `/api/meta_get` / `/api/meta_set`.
 
+## Shamela online search (`server/` + app integration)
+
+Optional second search source: the ~8,600 books of *Al-Maktaba Al-Shamela*, searched **semantically**
+on a small self-hosted server, without storing the books locally. The core app stays fully offline;
+Shamela is an opt-in add-on the user connects once.
+
+- **`server/`** is a standalone FastAPI service the user deploys on a VPS (~15–30 €/month). It imports
+  the pre-embedded HF dataset `Maktabati/shamela-vectors` (11.5M chunks, `intfloat/multilingual-e5-base`,
+  768-dim cosine) into **Qdrant** (int8 quantization) plus a small `meta.db` (books/pages index for
+  paging & filter lists). `import_shamela.py` does the one-time load; `api.py` serves `/search`
+  (embeds the query server-side with the `query:` prefix — the app ships no embedding model for this),
+  `/page` (reconstructs a full page from its chunk payloads via char offsets, with neighbour pages for
+  the reader), `/categories`, `/authors`, `/health`. `docker-compose.yml` runs Qdrant + API + Caddy
+  (auto-HTTPS). Deploy guide: `server/SHAMELA-SERVER.md`. **This code cannot be tested in the sandbox**
+  (no 43 GB data, no Qdrant, network-blocked) — verification happens on the user's VPS after deploy.
+- **Token & URL are secrets** — they live only in the app's `meta` table (keys `shamela_url`,
+  `shamela_token`), entered once in Settings (gear next to the source toggle) and persisted. They are
+  **never** baked into the repo and **never** returned to the browser JS: the app talks to the server
+  **server-side** in `main.py` (`_shamela_request` via stdlib `urllib`), so the token stays in the
+  Python process. `/api/shamela_status` reports only `configured` + `url`, never the token.
+- **App endpoints** (`main.py`): `shamela_status` / `shamela_save` (saves + tests `/health`) /
+  `shamela_clear` / `shamela_search` / `shamela_page` / `shamela_categories` / `shamela_authors`.
+- **Frontend**: a source toggle (`searchSource` = `local` | `shamela`) at the top of the search view.
+  In Shamela mode the boolean chips are flattened into one free-text query (semantic search has no
+  boolean/exclude), the local book filter and the semantic checkbox are hidden, and author/category
+  filters are populated from the server. Results open a **remote reader** that reuses the whole reader
+  shell: `rRemote`/`rBook` branch only the data source (`ensurePages` → `shamela_page`) and the page
+  label (Shamela pages are keyed by `sequence_num`; the sheet label shows the real `ج<part> ص<page>`).
+  Everything else (continuous scroll, prune/prefetch, arrow keys, page jump, progress, font, tashkil,
+  in-book search, cite-with-source) works unchanged because it operates on abstract sheet numbers.
+- **Not yet done**: bookmarks for Shamela hits (the `bookmarks` table assumes a local integer
+  `document_id`; a source column + reader branch would be needed). The remote reader hides the bookmark
+  controls for now.
+
 ## Frontend conventions (`app/ui/index.html`)
 
 One file, no build step, no framework. It is long — use the section comments to navigate.
