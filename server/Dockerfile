@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python -c "from sentence_transformers import SentenceTransformer; \
     SentenceTransformer('intfloat/multilingual-e5-base')"
 
-COPY api.py meta_index.py import_shamela.py .
+COPY api.py meta_index.py import_shamela.py build_catalog.py .
 
 EXPOSE 8000
 CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

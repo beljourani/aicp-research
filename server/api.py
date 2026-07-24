@@ -313,29 +313,50 @@ def _reconstruct_page(title: str, author: str | None, page_str: str) -> str:
 @app.get("/categories")
 def categories(x_api_key: str | None = Header(None),
                authorization: str | None = Header(None)):
+    """Kategorien gibt es in diesem Datensatz nicht – das Feld
+    `category_name_ar` kommt darin schlicht nicht vor. Die leere Liste ist
+    also korrekt; die App blendet den Filter daraufhin aus."""
     _auth(x_api_key, authorization)
-    con = _meta()
-    rows = con.execute(
-        "SELECT category_name_ar name, COUNT(*) n FROM books "
-        "WHERE category_name_ar IS NOT NULL AND category_name_ar<>'' "
-        "GROUP BY category_name_ar ORDER BY name").fetchall()
-    con.close()
-    return [{"name": r["name"], "books": r["n"]} for r in rows]
+    return []
 
 
 @app.get("/authors")
 def authors(q: str = "", limit: int = 50,
             x_api_key: str | None = Header(None),
             authorization: str | None = Header(None)):
+    """Autorenliste aus dem Verzeichnis; solange das noch nicht aufgebaut ist,
+    direkt aus Qdrant erhoben (facet)."""
     _auth(x_api_key, authorization)
     con = _meta()
-    if q:
-        rows = con.execute(
-            "SELECT author name, COUNT(*) n FROM books WHERE author LIKE ? "
-            "GROUP BY author ORDER BY n DESC LIMIT ?", (f"%{q}%", limit)).fetchall()
-    else:
-        rows = con.execute(
-            "SELECT author name, COUNT(*) n FROM books WHERE author IS NOT NULL "
-            "GROUP BY author ORDER BY n DESC LIMIT ?", (limit,)).fetchall()
+    mi.ensure_schema(con)
+    rows = mi.find_authors(con, q=q, limit=limit)
     con.close()
-    return [{"name": r["name"], "books": r["n"]} for r in rows]
+    if rows:
+        return [{"name": r["name"], "books": r["books"]} for r in rows]
+    # Rückfallebene: Autoren direkt aus Qdrant (schnell, da Feld indiziert).
+    try:
+        res = _client.facet(collection_name=COLLECTION, key="author",
+                            limit=max(limit, 200), exact=False)
+        out = [{"name": h.value, "books": h.count} for h in res.hits
+               if h.value and (not q or q in str(h.value))]
+        return out[:limit]
+    except Exception:
+        return []
+
+
+@app.get("/books")
+def books(q: str = "", author: str | None = None, limit: int = 50,
+          offset: int = 0,
+          x_api_key: str | None = Header(None),
+          authorization: str | None = Header(None)):
+    """Bücherliste für den Buchfilter (durchsuchbar, seitenweise)."""
+    _auth(x_api_key, authorization)
+    limit = max(1, min(limit, 200))
+    con = _meta()
+    mi.ensure_schema(con)
+    rows = mi.find_books(con, q=q, author=author, limit=limit + 1, offset=offset)
+    ready = mi.catalog_ready(con)
+    con.close()
+    has_more = len(rows) > limit
+    return {"books": rows[:limit], "has_more": has_more,
+            "offset": offset, "limit": limit, "ready": ready}

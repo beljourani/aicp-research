@@ -788,6 +788,21 @@ class Core:
         except Exception as e:
             return {"error": str(e)}
 
+    def shamela_books(self, body):
+        """Bücherliste des Servers für den Buchfilter (durchsuchbar)."""
+        body = body or {}
+        params = {"limit": max(1, min(int(body.get("limit") or 50), 200)),
+                  "offset": max(0, int(body.get("offset") or 0))}
+        if body.get("q"):
+            params["q"] = body["q"]
+        if body.get("author"):
+            params["author"] = body["author"]
+        try:
+            return self._shamela_request("GET", "/books", params=params,
+                                         timeout=30)
+        except Exception as e:
+            return {"error": str(e)}
+
     def shamela_authors(self, body):
         body = body or {}
         params = {}
@@ -1355,6 +1370,7 @@ ROUTES = {
     ("POST", "/api/shamela_search"): CORE.shamela_search,
     ("POST", "/api/shamela_page"): CORE.shamela_page,
     ("GET", "/api/shamela_categories"): CORE.shamela_categories,
+    ("POST", "/api/shamela_books"): CORE.shamela_books,
     ("POST", "/api/shamela_authors"): CORE.shamela_authors,
 }
 

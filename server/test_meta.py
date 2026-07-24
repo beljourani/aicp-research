@@ -20,15 +20,8 @@ import meta_index as mi
 def _mem_con() -> sqlite3.Connection:
     con = sqlite3.connect(":memory:")
     con.row_factory = sqlite3.Row
-    # WAL geht im Speicher nicht – Schema ohne das PRAGMA anlegen.
-    con.executescript("""
-        CREATE TABLE book_index (
-            book_id INTEGER PRIMARY KEY, title TEXT, author TEXT, source TEXT,
-            page_count INTEGER DEFAULT 0, indexed INTEGER DEFAULT 0);
-        CREATE TABLE page_index (
-            book_id INTEGER, seq INTEGER, page_str TEXT,
-            part INTEGER, page_num INTEGER, PRIMARY KEY (book_id, seq));
-    """)
+    # WAL geht im Speicher nicht – daher ohne das PRAGMA anlegen.
+    mi.ensure_schema(con, wal=False)
     return con
 
 
@@ -129,6 +122,56 @@ def test_unbekanntes_buch():
     print("ok  test_unbekanntes_buch")
 
 
+def test_verzeichnis_suche():
+    """Bücher lassen sich nach Titelteil und Autor filtern."""
+    con = _mem_con()
+    mi.add_books(con, [
+        ("صحيح البخاري", "البخاري", 900),
+        ("صحيح مسلم", "مسلم", 800),
+        ("الأدب المفرد", "البخاري", 100),
+    ])
+    alle = mi.find_books(con)
+    assert len(alle) == 3
+    assert alle[0]["title"] == "صحيح البخاري", "nach Umfang sortiert"
+    # Titelteil
+    treffer = mi.find_books(con, q="صحيح")
+    assert len(treffer) == 2, treffer
+    # Autor
+    bukhari = mi.find_books(con, author="البخاري")
+    assert len(bukhari) == 2, bukhari
+    # Kennung stimmt mit der zentralen Ableitung überein
+    assert bukhari[0]["book_id"] == mi.book_id(bukhari[0]["title"], "البخاري")
+    # Seitenweise
+    assert len(mi.find_books(con, limit=2)) == 2
+    assert len(mi.find_books(con, limit=2, offset=2)) == 1
+    print("ok  test_verzeichnis_suche")
+
+
+def test_verzeichnis_status():
+    """Der Aufbauzustand des Verzeichnisses wird gemerkt."""
+    con = _mem_con()
+    assert mi.catalog_ready(con) is False
+    mi.set_catalog_state(con, "laeuft")
+    assert mi.catalog_ready(con) is False
+    mi.set_catalog_state(con, "fertig")
+    assert mi.catalog_ready(con) is True
+    print("ok  test_verzeichnis_status")
+
+
+def test_autorenliste():
+    """Autoren werden nach Buchzahl sortiert und lassen sich filtern."""
+    con = _mem_con()
+    con.executemany("INSERT INTO author_index (name,books,chunks) VALUES (?,?,?)",
+                    [("ابن كثير", 12, 500), ("البخاري", 3, 900),
+                     ("ابن تيمية", 40, 700)])
+    con.commit()
+    alle = mi.find_authors(con)
+    assert [a["name"] for a in alle][0] == "ابن تيمية", alle
+    assert len(mi.find_authors(con, q="ابن")) == 2
+    assert len(mi.find_authors(con, limit=1)) == 1
+    print("ok  test_autorenliste")
+
+
 if __name__ == "__main__":
     test_parse_page()
     test_book_id_stabil()
@@ -137,4 +180,7 @@ if __name__ == "__main__":
     test_index_nur_einmal()
     test_seite_findet_blattnummer()
     test_unbekanntes_buch()
+    test_verzeichnis_suche()
+    test_verzeichnis_status()
+    test_autorenliste()
     print("\nAlle Tests bestanden.")

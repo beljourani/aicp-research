@@ -35,6 +35,18 @@ SCHEMA = """
         PRIMARY KEY (book_id, seq)
     );
     CREATE INDEX IF NOT EXISTS idx_page_str ON page_index(book_id, page_str);
+    -- Verzeichnis aller Bücher/Autoren für die Filterlisten. Wird einmalig
+    -- von build_catalog.py gefüllt (der Datensatz selbst bringt keine Listen mit).
+    CREATE TABLE IF NOT EXISTS catalog (
+        book_id INTEGER PRIMARY KEY, title TEXT, author TEXT,
+        chunks INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_catalog_title ON catalog(title);
+    CREATE INDEX IF NOT EXISTS idx_catalog_author ON catalog(author);
+    CREATE TABLE IF NOT EXISTS author_index (
+        name TEXT PRIMARY KEY, books INTEGER DEFAULT 0, chunks INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS build_state (key TEXT PRIMARY KEY, value TEXT);
 """
 
 
@@ -136,3 +148,60 @@ def seq_for_page(con: sqlite3.Connection, bid: int, page_str: str) -> int | None
     row = con.execute("SELECT seq FROM page_index WHERE book_id=? AND page_str=?",
                       (bid, page_str)).fetchone()
     return row["seq"] if row else None
+
+
+# ------------------------------------------------------------- Verzeichnis ----
+# Der Datensatz bringt keine Bücher-/Autorenlisten mit; sie werden einmalig
+# aus Qdrant erhoben (build_catalog.py) und hier abgefragt.
+
+def catalog_ready(con: sqlite3.Connection) -> bool:
+    """Ob das Bücherverzeichnis fertig aufgebaut ist."""
+    row = con.execute("SELECT value FROM build_state WHERE key='catalog'").fetchone()
+    return bool(row and row["value"] == "fertig")
+
+
+def set_catalog_state(con: sqlite3.Connection, value: str) -> None:
+    con.execute("INSERT INTO build_state (key,value) VALUES ('catalog',?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (value,))
+    con.commit()
+
+
+def add_books(con: sqlite3.Connection, rows: list[tuple]) -> None:
+    """Trägt (title, author, chunks) ins Verzeichnis ein; Kennung wird abgeleitet."""
+    con.executemany(
+        "INSERT INTO catalog (book_id,title,author,chunks) VALUES (?,?,?,?) "
+        "ON CONFLICT(book_id) DO UPDATE SET chunks=excluded.chunks",
+        [(book_id(t, a), t, a, n) for t, a, n in rows])
+    con.commit()
+
+
+def find_books(con: sqlite3.Connection, q: str = "", author: str | None = None,
+               limit: int = 50, offset: int = 0) -> list[dict]:
+    """Bücher im Verzeichnis suchen (Titelteil, optional nach Autor)."""
+    where, args = [], []
+    if q:
+        where.append("title LIKE ?")
+        args.append(f"%{q}%")
+    if author:
+        where.append("author = ?")
+        args.append(author)
+    sql = "SELECT book_id, title, author, chunks FROM catalog"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY chunks DESC, title LIMIT ? OFFSET ?"
+    args += [limit, offset]
+    return [dict(r) for r in con.execute(sql, args).fetchall()]
+
+
+def find_authors(con: sqlite3.Connection, q: str = "",
+                 limit: int = 50) -> list[dict]:
+    """Autorenliste aus dem Verzeichnis (nach Buchzahl absteigend)."""
+    if q:
+        rows = con.execute(
+            "SELECT name, books, chunks FROM author_index WHERE name LIKE ? "
+            "ORDER BY books DESC, name LIMIT ?", (f"%{q}%", limit)).fetchall()
+    else:
+        rows = con.execute(
+            "SELECT name, books, chunks FROM author_index "
+            "ORDER BY books DESC, name LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]
