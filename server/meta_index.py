@@ -175,6 +175,19 @@ def add_books(con: sqlite3.Connection, rows: list[tuple]) -> None:
     con.commit()
 
 
+def book_row(con: sqlite3.Connection, bid: int) -> dict | None:
+    """Titel/Autor zu einer Buchkennung – erst aus den bereits geöffneten
+    Büchern, sonst aus dem Verzeichnis. So lässt sich auch ein Buch öffnen
+    oder filtern, nach dem noch nie gesucht wurde."""
+    row = con.execute("SELECT book_id, title, author FROM book_index "
+                      "WHERE book_id=?", (bid,)).fetchone()
+    if row:
+        return dict(row)
+    row = con.execute("SELECT book_id, title, author FROM catalog "
+                      "WHERE book_id=?", (bid,)).fetchone()
+    return dict(row) if row else None
+
+
 def find_books(con: sqlite3.Connection, q: str = "", author: str | None = None,
                limit: int = 50, offset: int = 0) -> list[dict]:
     """Bücher im Verzeichnis suchen (Titelteil, optional nach Autor)."""

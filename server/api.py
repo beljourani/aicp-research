@@ -137,9 +137,7 @@ def search(req: SearchReq,
         # zurückübersetzen (nötig u. a. für die Suche innerhalb eines Buches).
         con = _meta()
         mi.ensure_schema(con)
-        marks = ",".join("?" * len(req.book_ids))
-        rows = con.execute(f"SELECT title, author FROM book_index WHERE "
-                           f"book_id IN ({marks})", req.book_ids).fetchall()
+        rows = [r for r in (mi.book_row(con, b) for b in req.book_ids) if r]
         con.close()
         if not rows:
             return {"hits": [], "has_more": False,
@@ -220,8 +218,12 @@ def page(book_id: int,
     _auth(x_api_key, authorization)
     con = _meta()
     mi.ensure_schema(con)
-    book = con.execute("SELECT * FROM book_index WHERE book_id=?",
-                       (book_id,)).fetchone()
+    book = mi.book_row(con, book_id)
+    if book:
+        # Aus dem Verzeichnis geöffnete Bücher zuerst vormerken, damit der
+        # Seitenindex daran hängen kann.
+        mi.remember_book(con, book_id, book["title"], book["author"], None)
+        con.commit()
     if not book and title:
         # Rückfallebene: Buch aus den mitgelieferten Angaben anlegen.
         if mi.book_id(title, author) != book_id:

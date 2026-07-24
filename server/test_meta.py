@@ -147,6 +147,23 @@ def test_verzeichnis_suche():
     print("ok  test_verzeichnis_suche")
 
 
+def test_buch_aus_verzeichnis_auffindbar():
+    """Ein Buch, nach dem noch nie gesucht wurde, ist übers Verzeichnis
+    auffindbar – sonst ließe sich der Buchfilter nicht benutzen."""
+    con = _mem_con()
+    mi.add_books(con, [("كتاب الفهرست", "ابن النديم", 42)])
+    bid = mi.book_id("كتاب الفهرست", "ابن النديم")
+    row = mi.book_row(con, bid)
+    assert row and row["title"] == "كتاب الفهرست", row
+    assert row["author"] == "ابن النديم"
+    # Bereits geöffnete Bücher haben Vorrang
+    mi.remember_book(con, 999, "Gemerkt", "Autor", "shamela")
+    con.commit()
+    assert mi.book_row(con, 999)["title"] == "Gemerkt"
+    assert mi.book_row(con, 12345) is None
+    print("ok  test_buch_aus_verzeichnis_auffindbar")
+
+
 def test_verzeichnis_status():
     """Der Aufbauzustand des Verzeichnisses wird gemerkt."""
     con = _mem_con()
@@ -181,6 +198,7 @@ if __name__ == "__main__":
     test_seite_findet_blattnummer()
     test_unbekanntes_buch()
     test_verzeichnis_suche()
+    test_buch_aus_verzeichnis_auffindbar()
     test_verzeichnis_status()
     test_autorenliste()
     print("\nAlle Tests bestanden.")
