@@ -47,6 +47,8 @@ python3 engine/tests/test_engine.py
 python3 engine/tests/test_boolean_search.py
 python3 engine/tests/test_highlight.py
 python3 engine/tests/test_categories.py
+python3 engine/tests/test_authors.py
+python3 engine/tests/test_textlayout.py
 
 # run a single test function: import and call it directly, e.g.
 python3 -c "import sys; sys.path.insert(0,'engine'); sys.path.insert(0,'engine/tests'); from test_engine import test_stemming; test_stemming()"
@@ -77,13 +79,27 @@ Building distributable binaries (rarely needed for code changes — CI does this
   defined in the `ROUTES` dict in `main.py`. This indirection through a real HTTP server (instead of
   pywebview's JS bridge) is deliberate — the bridge was found too fragile.
 
-**Indexing pipeline** (`engine/echo_engine/`): `extract.py` → `chunker.py` → `normalize.py` → `db.py`/`indexer.py`.
+**Indexing pipeline** (`engine/echo_engine/`): `extract.py` → `textlayout.py` → `chunker.py` →
+`normalize.py` → `db.py`/`indexer.py`.
 
 - `extract.py`: file → `list[(page_no, text)]`. PDF via PyMuPDF (page-accurate); DOCX via the
   Word → cloud → LibreOffice cascade described above (DOCX itself has no page concept), with a
   plain-text fallback that is marked unreliable; TXT gets synthetic ~2000-char pages. Scanned PDFs are
   detected (missing or broken text layer) and routed to OCR — Apple Vision on macOS, Tesseract (`ara`)
   otherwise.
+- `textlayout.py`: turns extracted lines into readable paragraphs — the reader shows `pages.text`
+  verbatim (`white-space: pre-wrap`), so *one paragraph = one line, paragraphs separated by a blank
+  line* is a stored-format contract, not a display detail. `paragraphs_from_boxes()` reconstructs the
+  original paragraphs from line geometry (PDF text layer, Apple Vision), `paragraphs_from_groups()`
+  takes Tesseract's own `block_num`/`par_num` from its TSV output, `join_wrapped_lines()` is the
+  text-only fallback used for already-stored pages. It may only ever change whitespace (plus NFKC) —
+  `letter_count()` is the invariant that guards this. Careful with Arabic character ranges here: the
+  old cleanup regex reached past the combining marks into the Arabic-Indic digits and ate the space
+  before every page/verse number.
+- `indexer.LAYOUT_VERSION`: bump this when the paragraph logic changes — `ensure_text_layout_version()`
+  then re-runs the text-only cleanup over stored `pages.text` on next app start. It deliberately leaves
+  `passages`, `passages_fts` and `bookmarks` alone, so search results and bookmarks stay put; only the
+  reader display improves. Books re-read via "Neu einlesen" get the better geometry-based result.
 - `chunker.py`: splits page text into ~700–1100 char passages that never cross a page boundary, so
   every search hit has an exact page range. Fragments under `MIN_LETTERS` real letters are dropped.
 - `normalize.py`: two-tier Arabic text handling — `normalize()` strips tashkil/tatweel and unifies

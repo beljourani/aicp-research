@@ -8,11 +8,18 @@ from pathlib import Path
 from .chunker import chunk_pages
 from .extract import extract
 from .normalize import to_index_forms
+from .textlayout import join_wrapped_lines, letter_count
 
 # Bei Änderungen an Normalisierung/Stemming hochzählen -> der Volltext-
 # index wird beim nächsten App-Start automatisch neu aufgebaut (schnell,
 # ohne die Dokumente neu einzulesen).
 STEM_VERSION = 2
+
+# Bei Änderungen an der Absatz-Aufbereitung hochzählen -> der gespeicherte
+# Seitentext bereits eingelesener Bücher wird beim nächsten App-Start
+# einmalig nachgebessert (ohne die Originaldateien erneut zu lesen, also
+# insbesondere ohne erneutes OCR).
+LAYOUT_VERSION = 1
 
 
 def ensure_index_version(con: sqlite3.Connection) -> bool:
@@ -35,6 +42,39 @@ def ensure_index_version(con: sqlite3.Connection) -> bool:
                 "VALUES ('stem_version', ?)", (str(STEM_VERSION),))
     con.commit()
     return True
+
+
+def ensure_text_layout_version(con: sqlite3.Connection) -> int:
+    """Bessert den gespeicherten Seitentext bereits eingelesener Bücher nach.
+
+    Läuft einmalig (Zustand im meta-Schlüssel 'layout_version'). Es wird
+    ausschließlich Weißraum verändert: überflüssige Leerzeichen und
+    Leerzeilen verschwinden, umgebrochene Zeilen werden wieder zu Absätzen
+    zusammengefügt. Seitenzahlen, Suchindex, Passagen und Lesezeichen
+    bleiben unangetastet.
+
+    Liefert die Zahl der geänderten Seiten.
+    """
+    con.execute("CREATE TABLE IF NOT EXISTS meta "
+                "(key TEXT PRIMARY KEY, value TEXT)")
+    row = con.execute(
+        "SELECT value FROM meta WHERE key='layout_version'").fetchone()
+    if row and row[0] == str(LAYOUT_VERSION):
+        return 0
+    geaendert = 0
+    for pid, alt in con.execute("SELECT id, text FROM pages").fetchall():
+        neu = join_wrapped_lines(alt or "")
+        if neu == (alt or ""):
+            continue
+        # Sicherung: es darf kein Buchstabe verloren gehen oder hinzukommen
+        if letter_count(neu) != letter_count(alt):
+            continue
+        con.execute("UPDATE pages SET text=? WHERE id=?", (neu, pid))
+        geaendert += 1
+    con.execute("INSERT OR REPLACE INTO meta (key, value) "
+                "VALUES ('layout_version', ?)", (str(LAYOUT_VERSION),))
+    con.commit()
+    return geaendert
 
 
 def index_document(con: sqlite3.Connection, path: str | Path,

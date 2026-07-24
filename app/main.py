@@ -58,7 +58,8 @@ def join_authors(names) -> str | None:
 
 from echo_engine import connect, index_document, hybrid_search  # noqa: E402
 from echo_engine import highlight_spans  # noqa: E402
-from echo_engine.indexer import ensure_index_version  # noqa: E402
+from echo_engine.indexer import (ensure_index_version,  # noqa: E402
+                                 ensure_text_layout_version)
 from echo_engine.semantic import Embedder, embed_passages, ensure_vector_schema  # noqa: E402
 
 def _resource_base() -> Path:
@@ -173,6 +174,16 @@ class Core:
             con = self._con()
             if ensure_index_version(con):
                 print("Suchindex an neue Version angepasst.", flush=True)
+            con.close()
+        except Exception:
+            traceback.print_exc()
+        # Seitentext bereits eingelesener Bücher einmalig zu Absätzen
+        # aufbereiten (nur Leerraum, ohne die Originaldateien anzufassen)
+        try:
+            con = self._con()
+            n = ensure_text_layout_version(con)
+            if n:
+                print(f"Seitentext aufbereitet: {n} Seiten.", flush=True)
             con.close()
         except Exception:
             traceback.print_exc()

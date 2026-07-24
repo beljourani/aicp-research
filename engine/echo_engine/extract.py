@@ -15,29 +15,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import fitz  # PyMuPDF
 
-# Leerzeichen vor arabischen Vokalzeichen (kaputte PDF-Textschicht)
-_SPACE_BEFORE_MARK = re.compile(r"[ \t]+(?=[ً-ٰ])")
-
-# Obergrenze für eine plausible Buchseite (gemessen: echte Seiten liegen
-# bei 1000–4000 Zeichen). Darüber sind Words Umbrüche unvollständig.
-MAX_CHARS_PER_PAGE = 5000
-
-
-def _clean_pdf_text(text: str) -> str:
-    """Repariert typische Artefakte arabischer PDF-Textschichten.
-
-    - NFKC: arabische Präsentationsformen (Ligaturen) -> normale Buchstaben
-    - Leerzeichen, die zwischen Buchstabe und Vokalzeichen geraten sind
-    """
-    text = unicodedata.normalize("NFKC", text)
-    text = _SPACE_BEFORE_MARK.sub("", text)
-    return text
+from .textlayout import (clean_text, join_wrapped_lines,
+                         paragraphs_from_boxes, paragraphs_from_groups)
 
 
 @dataclass
@@ -97,6 +81,39 @@ def _text_layer_broken(pages: list[tuple[int, str]]) -> bool:
     return indizien >= 1
 
 
+def _pdf_page_lines(page) -> list[tuple]:
+    """Zeilen einer PDF-Seite mit Position: (text, x0, y0, x1, y1).
+
+    Grundlage für die Absatzerkennung – ohne die Positionen wäre nicht
+    erkennbar, ob ein Zeilenumbruch ein Absatzende oder nur ein Umbruch
+    innerhalb des Absatzes ist.
+    """
+    lines: list[tuple] = []
+    d = page.get_text("dict", sort=True)
+    for block in d.get("blocks", []):
+        if block.get("type") != 0:      # 1 = Bild
+            continue
+        for line in block.get("lines", []):
+            text = "".join(s.get("text", "") for s in line.get("spans", []))
+            if not text.strip():
+                continue
+            x0, y0, x1, y1 = line.get("bbox", (0.0, 0.0, 0.0, 0.0))
+            lines.append((text, x0, y0, x1, y1))
+    return lines
+
+
+def _pdf_page_text(page) -> str:
+    """Seitentext als Absätze. Fällt bei Problemen auf den Rohtext zurück."""
+    try:
+        text = paragraphs_from_boxes(_pdf_page_lines(page))
+        if text:
+            return text
+    except Exception:
+        import traceback
+        traceback.print_exc()
+    return clean_text(page.get_text("text", sort=True))
+
+
 def extract_pdf(path: Path, force_ocr: bool = False) -> ExtractResult:
     res = ExtractResult()
     res.reliability = "sicher"      # PDF = feste, gedruckte Seiten
@@ -104,7 +121,7 @@ def extract_pdf(path: Path, force_ocr: bool = False) -> ExtractResult:
     with fitz.open(path) as doc:
         empty_pages = 0
         for i, page in enumerate(doc, start=1):
-            text = _clean_pdf_text(page.get_text("text", sort=True).strip())
+            text = _pdf_page_text(page)
             if not text:
                 empty_pages += 1
             res.pages.append((i, text))
@@ -118,7 +135,9 @@ def extract_pdf(path: Path, force_ocr: bool = False) -> ExtractResult:
         res.needs_ocr = True
         ocr_pages = _try_ocr(path)
         if ocr_pages is not None:
-            res.pages = ocr_pages
+            # Sicherheitsnetz: hier läuft jedes OCR-Ergebnis noch einmal durch
+            # dieselbe Zeichen-/Leerraum-Bereinigung wie die Textschicht.
+            res.pages = [(no, clean_text(t)) for no, t in ocr_pages]
             res.needs_ocr = False
             res.warnings.append("Text per OCR (Texterkennung) erfasst.")
         else:
@@ -318,8 +337,10 @@ def extract_docx(path: Path, progress=None) -> ExtractResult:
     # Allerletzte Notlösung: reiner Text, Seiten nur geschätzt.
     import docx  # python-docx
     d = docx.Document(str(path))
-    full = "\n".join(par.text for par in d.paragraphs)
-    res = _paginate_plain(full)
+    # Word kennt die Absätze exakt – deshalb hier Leerzeile statt Umbruch und
+    # kein Zusammenfassen von Zeilen (das würde nur raten).
+    full = "\n\n".join(par.text for par in d.paragraphs)
+    res = _paginate_plain(full, join=False)
     res.real_page_numbers = False
     res.reliability = "ungefähr"
     res.warnings.append(
@@ -334,11 +355,20 @@ def extract_txt(path: Path) -> ExtractResult:
     return res
 
 
-def _paginate_plain(text: str, chars_per_page: int = 2000) -> ExtractResult:
+def _paginate_plain(text: str, chars_per_page: int = 2000,
+                    join: bool = True) -> ExtractResult:
+    """Künstliche Seiten aus reinem Text.
+
+    Geschnitten wird weiterhin am Rohtext, damit sich die Seitengrenzen
+    gegenüber früher nicht verschieben; erst danach wird der Text jeder
+    Seite aufbereitet.
+    """
     res = ExtractResult()
     pos, page_no = 0, 1
     while pos < len(text):
-        res.pages.append((page_no, text[pos:pos + chars_per_page]))
+        seite = text[pos:pos + chars_per_page]
+        res.pages.append(
+            (page_no, join_wrapped_lines(seite) if join else clean_text(seite)))
         pos += chars_per_page
         page_no += 1
     if not res.pages:
@@ -398,16 +428,56 @@ def _ocr_pdf_vision(pdf_path: Path) -> list[tuple[int, str]]:
                 pass
             handler.performRequests_error_([req], None)
             obs = list(req.results() or [])
-            # Von oben nach unten sortieren (Vision: Ursprung unten links)
-            obs.sort(key=lambda o: -o.boundingBox().origin.y)
-            lines = []
+            # Vision liefert normierte Boxen mit Ursprung UNTEN links. Für die
+            # Absatzerkennung werden sie auf Bildpunkte mit Ursprung OBEN
+            # links umgerechnet – erst dann sind waagerechte und senkrechte
+            # Abstände miteinander vergleichbar.
+            lines: list[tuple] = []
             for o in obs:
                 cands = o.topCandidates_(1)
-                if cands and len(cands):
-                    lines.append(str(cands[0].string()))
-            pages.append((i, "\n".join(lines)))
+                if not (cands and len(cands)):
+                    continue
+                box = o.boundingBox()
+                bx, by = box.origin.x, box.origin.y
+                bw, bh = box.size.width, box.size.height
+                lines.append((str(cands[0].string()),
+                              bx * pix.width, (1.0 - by - bh) * pix.height,
+                              (bx + bw) * pix.width, (1.0 - by) * pix.height))
+            pages.append((i, paragraphs_from_boxes(lines)))
             print(f"OCR Seite {i}/{len(doc)}", flush=True)
     return pages
+
+
+def _tesseract_tsv_to_text(tsv: str) -> str:
+    """Baut aus Tesseracts TSV-Ausgabe Absätze.
+
+    Tesseract erkennt die Absätze selbst und gibt sie in den Spalten
+    block_num/par_num aus – genauer als jede Heuristik auf dem fertigen
+    Text. Spalten: level, page, block, par, line, word, left, top, width,
+    height, conf, text.
+    """
+    gruppen: dict[tuple[int, int], dict[int, list[str]]] = {}
+    reihenfolge: list[tuple[int, int]] = []
+    for row in tsv.splitlines()[1:]:
+        f = row.split("\t")
+        if len(f) < 12 or f[0] != "5":       # 5 = Ebene "Wort"
+            continue
+        try:
+            conf = float(f[10])
+            block, par, line = int(f[2]), int(f[3]), int(f[4])
+        except ValueError:
+            continue
+        wort = f[11].strip()
+        if not wort or conf < 0:
+            continue
+        key = (block, par)
+        if key not in gruppen:
+            gruppen[key] = {}
+            reihenfolge.append(key)
+        gruppen[key].setdefault(line, []).append(wort)
+    absaetze = [[" ".join(gruppen[k][ln]) for ln in sorted(gruppen[k])]
+                for k in reihenfolge]
+    return paragraphs_from_groups(absaetze)
 
 
 def _ocr_pdf_tesseract(pdf_path: Path) -> list[tuple[int, str]]:
@@ -419,14 +489,38 @@ def _ocr_pdf_tesseract(pdf_path: Path) -> list[tuple[int, str]]:
     if tessdata.exists():
         env["TESSDATA_PREFIX"] = str(tessdata.parent)
     pages: list[tuple[int, str]] = []
+    # Ob diese Tesseract-Installation die TSV-Ausgabe beherrscht, wird an der
+    # ersten Seite entschieden – sonst liefe die (teure) Erkennung doppelt.
+    tsv_moeglich = True
     with fitz.open(pdf_path) as doc:
         for i, page in enumerate(doc, start=1):
             pix = page.get_pixmap(dpi=300)
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
                 pix.save(f.name)
-                out = subprocess.run(
-                    [cmd, f.name, "stdout", "-l", "ara+deu+eng"],
-                    capture_output=True, text=True, timeout=120, env=env)
-            pages.append((i, out.stdout.strip()))
+                text = None
+                # Bevorzugt TSV: enthält die Absätze der OCR-Engine selbst
+                if tsv_moeglich:
+                    try:
+                        out = subprocess.run(
+                            [cmd, f.name, "stdout", "-l", "ara+deu+eng",
+                             "tsv"], capture_output=True, text=True,
+                            timeout=120, env=env)
+                        if out.returncode == 0:
+                            text = _tesseract_tsv_to_text(out.stdout)
+                        else:
+                            tsv_moeglich = False
+                    except subprocess.TimeoutExpired:
+                        raise
+                    except Exception:
+                        tsv_moeglich = False
+                        import traceback
+                        traceback.print_exc()
+                if text is None:
+                    # Rückfall: reiner Text, Absätze über die Zeilenlängen
+                    out = subprocess.run(
+                        [cmd, f.name, "stdout", "-l", "ara+deu+eng"],
+                        capture_output=True, text=True, timeout=120, env=env)
+                    text = join_wrapped_lines(out.stdout)
+            pages.append((i, text))
             print(f"OCR Seite {i}/{len(doc)}", flush=True)
     return pages
