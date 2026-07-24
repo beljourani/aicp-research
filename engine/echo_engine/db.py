@@ -94,20 +94,46 @@ CREATE TABLE IF NOT EXISTS document_authors (
 -- Titel + Seite + Textausschnitt, falls sich die internen IDs ändern.
 CREATE TABLE IF NOT EXISTS bookmarks (
     id INTEGER PRIMARY KEY,
-    document_id INTEGER,        -- bester bekannter Stand
-    passage_id INTEGER,         -- bester bekannter Stand
+    document_id INTEGER,        -- bester bekannter Stand (nur lokale Bücher)
+    passage_id INTEGER,         -- bester bekannter Stand (nur lokale Bücher)
     doc_title TEXT NOT NULL,    -- zum Wiederfinden nach Neu-Scan
     page_no INTEGER NOT NULL,
     snippet TEXT NOT NULL,      -- Textausschnitt der Fundstelle
     note TEXT DEFAULT '',       -- eigene Notiz
     terms TEXT DEFAULT '',      -- Suchbegriffe (JSON) für die Hervorhebung
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    -- Online-Bücher (Shamela): dort gibt es keine lokale document_id.
+    source TEXT DEFAULT 'local',  -- 'local' | 'shamela'
+    book_key INTEGER,             -- Buchkennung des Servers
+    page_str TEXT,                -- Seitenkennung, z. B. "V01P441"
+    page_label TEXT,              -- angezeigte Druckseite, z. B. "ج1 ص441"
+    doc_author TEXT               -- Autor (Online-Treffer haben keine Dokumentzeile)
 );
 """
+
+# Spalten, die es in älteren Bibliotheken noch nicht gibt. CREATE TABLE IF NOT
+# EXISTS lässt bestehende Tabellen unverändert, daher werden sie hier ergänzt.
+_BOOKMARK_NEU = [
+    ("source", "TEXT DEFAULT 'local'"),
+    ("book_key", "INTEGER"),
+    ("page_str", "TEXT"),
+    ("page_label", "TEXT"),
+    ("doc_author", "TEXT"),
+]
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    """Fehlende Spalten nachrüsten – ohne Datenverlust, ohne Neuaufbau."""
+    have = {r[1] for r in con.execute("PRAGMA table_info(bookmarks)")}
+    for name, ddl in _BOOKMARK_NEU:
+        if name not in have:
+            con.execute(f"ALTER TABLE bookmarks ADD COLUMN {name} {ddl}")
+    con.commit()
 
 
 def connect(path: str | Path = ":memory:") -> sqlite3.Connection:
     con = sqlite3.connect(str(path), timeout=60)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    _migrate(con)
     return con

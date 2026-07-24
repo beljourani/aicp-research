@@ -49,6 +49,10 @@ python3 engine/tests/test_highlight.py
 python3 engine/tests/test_categories.py
 python3 engine/tests/test_authors.py
 python3 engine/tests/test_textlayout.py
+python3 engine/tests/test_bookmarks.py
+
+# Shamela-Server: reine Datenlogik (läuft ohne Qdrant/Netz)
+python3 server/test_meta.py
 
 # run a single test function: import and call it directly, e.g.
 python3 -c "import sys; sys.path.insert(0,'engine'); sys.path.insert(0,'engine/tests'); from test_engine import test_stemming; test_stemming()"

@@ -1119,6 +1119,7 @@ const API = {
   shamela_clear:()=>_post("/api/shamela_clear",{}),
   shamela_search:b=>_post("/api/shamela_search",b),
   shamela_page:(o)=>_post("/api/shamela_page",o),
+  shamela_books:(o)=>_post("/api/shamela_books",o),
   shamela_categories:()=>_get("/api/shamela_categories"),
   shamela_authors:(q,limit)=>_post("/api/shamela_authors",{q,limit}),
 };
@@ -1819,6 +1820,7 @@ function shamelaFilters(){
   const b={};
   if(catFilterSel.length)b.categories=catFilterSel.slice();
   if(authorFilterSel.length)b.authors=authorFilterSel.slice();
+  if(bookFilterSel.length)b.book_ids=bookFilterSel.map(x=>x.id);
   return b;
 }
 async function runShamelaSearch(){
@@ -1907,16 +1909,23 @@ function normQuery(q){
    und ein zweiter Klick das Lesezeichen wieder entfernt. */
 let bmKeys=new Set();
 function bmKey(doc,page,pid){ return doc+"|"+page+"|"+(pid||""); }
+// Online-Lesezeichen werden über Buch- und Seitenkennung erkannt, nicht über
+// lokale IDs (die es dort nicht gibt).
+function bmKeyOf(b){
+  return (b&&(b.source==="shamela"))
+    ? "shx|"+b.book_id+"|"+(b.page_str||"")
+    : bmKey(b.document_id,b.page_no,b.passage_id);
+}
 async function refreshBmKeys(){
   try{ const l=await api().bookmarks();
-    bmKeys=new Set((l||[]).map(b=>bmKey(b.document_id,b.page_no,b.passage_id))); }
+    bmKeys=new Set((l||[]).map(bmKeyOf)); }
   catch(e){}
 }
 // Einheitliches Umschalten für alle Lesezeichen-Knöpfe
 async function toggleBookmark(btn,data){
   const r=await api().bookmark_toggle(data);
   if(r&&r.error){ showError(r.error); return; }
-  const k=bmKey(data.document_id,data.page_no,data.passage_id);
+  const k=bmKeyOf(data);
   if(r.saved){ bmKeys.add(k); } else { bmKeys.delete(k); }
   if(btn)btn.classList.toggle("on",!!r.saved);
   showToast(r.saved?t("bmSaved"):t("bmRemoved"));
@@ -1961,9 +1970,13 @@ async function refreshBookmarks(){
     for(const b of groups[title]){
       const it=document.createElement("div");
       it.className="bmItem"+(b.missing?" missing":"");
+      // Online-Lesezeichen zeigen die echte Druckseite (ج.. ص..) plus Merkmal.
+      const seite=(b.source==="shamela")
+        ? (b.page_label||("ص"+b.page_no))+' <span class="onlineBadge">'+esc(t("onlineTag"))+'</span>'
+        : esc(t("pagePrefix"))+" "+b.page_no+(b.missing?" · "+esc(t("bmMissing")):"");
       it.innerHTML=`
         <div class="bmMain">
-          <div class="bmPage">${esc(t("pagePrefix"))} ${b.page_no}${b.missing?" · "+esc(t("bmMissing")):""}</div>
+          <div class="bmPage">${seite}</div>
           <div class="bmText" dir="auto">${esc(b.snippet||"")}</div>
         </div>
         <button class="iconBtn danger" title="${esc(t("bmDelete"))}">${svg("trash")}</button>`;
@@ -1975,6 +1988,12 @@ async function refreshBookmarks(){
       it.querySelector(".bmMain").appendChild(note);
       it.querySelector(".bmMain").onclick=(e)=>{
         if(e.target===note)return;
+        if(b.source==="shamela"){
+          // Online-Buch im Remote-Leser aufschlagen (Seitenkennung gemerkt).
+          return openShamelaReader({book_id:b.book_id,page:b.page_str,
+            title:b.title,author:b.author,
+            _query:(b.terms||[]).join(" ")});
+        }
         if(b.missing)return showError(t("bmMissing"));
         openReader(b.document_id,b.passage_id,b.terms||[],b.terms||[]);
       };
@@ -1994,7 +2013,9 @@ let rDoc=null,rPage=1,rFirst=1,rLast=1,rWords=[],rPassageText="",rImg=false,rHas
 let rTitleTxt="",rAuthorTxt="",rLoaded=new Set(),rHits=[],rHitIdx=-1,rFont=1,rReady=false;
 // Remote-Leser (Shamela online): rRemote schaltet die Datenquelle um; rBook ist
 // die book_id, rPageLabels bildet sequence_num -> lesbare Seitenangabe ab.
-let rRemote=false,rBook=null,rPageLabels={};
+// rPageStrs merkt zusätzlich die Seitenkennung ("V01P441") je Blatt – nötig,
+// um ein Online-Lesezeichen später wieder exakt aufzuschlagen.
+let rRemote=false,rBook=null,rPageLabels={},rPageStrs={};
 let rHideTashkil=false;     // globaler Schalter: Vokalzeichen im Lesetext ausblenden
 // Generationszähler für Reader-Navigation: jeder Sprung (Klick/Taste) erhöht
 // ihn; veraltete, noch laufende Sprünge erkennen das und brechen ab (kein
@@ -2071,7 +2092,8 @@ function closeReader(){$("#reader").classList.remove("open");hideCite();}
 // Blendet leserinterne Steuerelemente aus, die es im Remote-Modus (noch) nicht
 // gibt: Lesezeichen und die Originalseiten-Ansicht (Shamela liefert nur Text).
 function setReaderRemoteUI(remote){
-  const bm=$("#rBookmark"); if(bm)bm.style.display=remote?"none":"";
+  // Lesezeichen gibt es jetzt auch für Online-Bücher; nur die Bildansicht
+  // bleibt aus (Originalseiten liegen nicht auf diesem Rechner).
   const img=$("#rImgToggle"); if(img)img.style.display=remote?"none":"";
 }
 
@@ -2085,7 +2107,7 @@ async function openShamelaReader(hit){
   }
   rRemote=true;rBook=hit.book_id;rDoc="shx:"+hit.book_id;
   rImg=false;rHasImg=false;rPassageText="";rReady=false;
-  rLoaded=new Set();rHits=[];rHitIdx=-1;rPageLabels={};
+  rLoaded=new Set();rHits=[];rHitIdx=-1;rPageLabels={};rPageStrs={};
   setReaderRemoteUI(true);
   const q=hit._query||"";
   rWords=shamelaTerms(q);
@@ -2227,9 +2249,11 @@ async function ensurePages(from,to){
           for(const pg of (res.pages||[])){
             if(pg.page_label==null) pg.page_label=shamelaPageLabel(pg);
             rPageLabels[pg.seq]=pg.page_label;
+            rPageStrs[pg.seq]=pg.page_str||"";
             setSheetLabel(pg.seq,pg.page_label);
             fillSheet(pg.seq,pg.text,null);
-          }})
+          }
+          updateBookmarkBtn();})
       : api().pages(rDoc,a,b,readerTerms())
           .then(res=>{for(const pg of (res.pages||[]))fillSheet(pg.page_no,pg.text,pg.spans);}))
     .catch(()=>{need.forEach(p=>rLoaded.delete(p));});
@@ -2508,12 +2532,20 @@ function readerBmData(){
   const h=(rHitIdx>=0&&rHits[rHitIdx]&&rHits[rHitIdx].page_from===rPage)?rHits[rHitIdx]:null;
   const snip=(rPassageText||(s?s.querySelector(".pageText").textContent:"")||"")
     .trim().slice(0,300);
-  return {document_id:rDoc,passage_id:h?h.passage_id:null,page_no:rPage,
-          snippet:snip,terms:(readerState.groups||[]).flat()};
+  const terms=(readerState.groups||[]).flat();
+  if(rRemote){
+    // Online-Buch: Buch- und Seitenkennung merken; page_str kommt aus der
+    // geladenen Seite, damit die Stelle später exakt wieder aufgeht.
+    return {source:"shamela",book_id:rBook,seq:rPage,
+            page_str:(rPageStrs&&rPageStrs[rPage])||"",
+            page_label:(rPageLabels&&rPageLabels[rPage])||"",
+            title:rTitleTxt,author:rAuthorTxt,snippet:snip,terms:terms};
+  }
+  return {source:"local",document_id:rDoc,passage_id:h?h.passage_id:null,
+          page_no:rPage,snippet:snip,terms:terms};
 }
 function updateBookmarkBtn(){
-  const d=readerBmData();
-  $("#rBookmark").classList.toggle("on",bmKeys.has(bmKey(d.document_id,d.page_no,d.passage_id)));
+  $("#rBookmark").classList.toggle("on",bmKeys.has(bmKeyOf(readerBmData())));
 }
 $("#rBookmark").onclick=async()=>{
   await toggleBookmark($("#rBookmark"),readerBmData());
@@ -2627,6 +2659,23 @@ attachCombo($("#bookSel"),
   v=>addBookFilter(v),
   {clearOnBlur:true,
    onBackspace:()=>{ if(bookFilterSel.length)removeBookFilter(bookFilterSel[bookFilterSel.length-1].id); }});
+// Im Online-Modus kommen die Buchvorschläge vom Server: beim Tippen wird
+// nachgeladen (entprellt) und die Vorschlagsliste danach neu aufgebaut.
+let _bookQueryTimer=null,_bookQueryBusy=false;
+$("#bookSel").addEventListener("input",()=>{
+  if(searchSource!=="shamela"||_bookQueryBusy)return;
+  clearTimeout(_bookQueryTimer);
+  const q=($("#bookSel").value||"").trim();
+  _bookQueryTimer=setTimeout(async()=>{
+    try{
+      await loadShamelaBooks(q);
+      // Liste neu zeichnen lassen, ohne erneut nachzuladen.
+      _bookQueryBusy=true;
+      $("#bookSel").dispatchEvent(new Event("input"));
+    }catch(e){}
+    finally{ _bookQueryBusy=false; }
+  },250);
+});
 attachCombo($("#catSel"),
   ()=>catOptions.filter(c=>!catFilterSel.includes(c)),
   v=>addCatFilter(v),
@@ -2705,19 +2754,39 @@ async function refreshShamelaState(){
     else { el.textContent="● "+t("shamelaNotSet"); el.className="shamelaState off"; }
   }
 }
-// Beim Wechsel in den Shamela-Modus die Filterlisten vom Server holen
+// Beim Wechsel in den Shamela-Modus die Filterlisten vom Server holen.
+// Kategorien gibt es in diesem Datensatz nicht – kommt eine leere Liste,
+// bleibt der Kategoriefilter ausgeblendet (siehe applySourceUI).
+let shHasCats=false;
 async function loadShamelaFilters(){
-  try{ const c=await api().shamela_categories(); if(c&&!c.error)fillCatSel(c.categories||[]); }catch(e){}
+  try{ const c=await api().shamela_categories();
+       const list=(c&&!c.error)?(c.categories||[]):[];
+       shHasCats=list.length>0; fillCatSel(list); }catch(e){ shHasCats=false; }
   try{ const a=await api().shamela_authors("",80); if(a&&!a.error)fillAuthorSel((a.authors||[]).slice(0,80)); }catch(e){}
+  try{ await loadShamelaBooks(""); }catch(e){}
+  applySourceUI();
+}
+// Bücherliste des Servers in den Buchfilter laden (Titel -> Kennung).
+async function loadShamelaBooks(q){
+  const r=await api().shamela_books({q:q||"",limit:200});
+  if(!r||r.error)return;
+  const seen=new Set(bookFilterSel.map(b=>b.id));
+  const liste=(r.books||[]).map(b=>({id:b.book_id,title:b.title,author:b.author}));
+  // Bereits gewählte behalten, damit ihre Titel auflösbar bleiben.
+  allDocs=bookFilterSel.filter(b=>seen.has(b.id))
+    .concat(liste.filter(b=>!seen.has(b.id)));
 }
 function applySourceUI(){
   const shamela=searchSource==="shamela";
   $$("#srcToggle .srcBtn").forEach(b=>b.classList.toggle("active",b.dataset.src===searchSource));
-  // Buchfilter (lokal) und Semantik-Schalter im Online-Modus verbergen
-  const bookLbl=$("#bookLabel")&&$("#bookLabel").closest("label");
-  if(bookLbl)bookLbl.style.display=shamela?"none":"";
+  // Buchfilter gibt es jetzt in beiden Modi; im Online-Modus kommen die
+  // Vorschläge vom Server. Der Semantik-Schalter bleibt online verborgen
+  // (dort wird ohnehin immer semantisch gesucht).
   const semLbl=$("#semantic")&&$("#semantic").closest("label");
   if(semLbl)semLbl.style.display=shamela?"none":"";
+  // Kategoriefilter nur zeigen, wenn die Quelle wirklich Kategorien liefert.
+  const catLbl=$("#catSel")&&$("#catSel").closest("label");
+  if(catLbl)catLbl.style.display=(shamela&&!shHasCats)?"none":"";
   refreshShamelaState();
 }
 async function setSource(src){

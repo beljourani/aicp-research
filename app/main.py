@@ -1065,6 +1065,33 @@ class Core:
     def bookmark_add(self, body):
         body = body or {}
         con = self._con()
+        terms = json.dumps(body.get("terms") or [], ensure_ascii=False)
+        if (body.get("source") or "local") == "shamela":
+            # Online-Buch: es gibt keine lokale Dokumentzeile. Gemerkt werden
+            # Buch- und Seitenkennung zum Aufschlagen sowie Titel/Autor/Label
+            # zum Wiederfinden in der Liste.
+            try:
+                book_key = int(body.get("book_id"))
+            except (TypeError, ValueError):
+                con.close()
+                return {"error": "Diesem Online-Treffer fehlt die Buchkennung."}
+            page_str = (body.get("page_str") or "").strip()
+            if not page_str:
+                con.close()
+                return {"error": "Diesem Online-Treffer fehlt die Seitenangabe."}
+            con.execute(
+                "INSERT INTO bookmarks (document_id, passage_id, doc_title, "
+                "page_no, snippet, note, terms, source, book_key, page_str, "
+                "page_label, doc_author) "
+                "VALUES (NULL,NULL,?,?,?,?,?,'shamela',?,?,?,?)",
+                ((body.get("title") or "")[:400],
+                 int(body.get("seq") or 1), (body.get("snippet") or "")[:400],
+                 (body.get("note") or "")[:2000], terms,
+                 book_key, page_str, (body.get("page_label") or "")[:80],
+                 (body.get("author") or "")[:400]))
+            con.commit()
+            con.close()
+            return {"ok": True}
         doc = con.execute("SELECT id, title FROM documents WHERE id=?",
                           (body.get("document_id"),)).fetchone()
         if not doc:
@@ -1072,11 +1099,10 @@ class Core:
             return {"error": "Dokument nicht gefunden"}
         con.execute(
             "INSERT INTO bookmarks (document_id, passage_id, doc_title, "
-            "page_no, snippet, note, terms) VALUES (?,?,?,?,?,?,?)",
+            "page_no, snippet, note, terms, source) VALUES (?,?,?,?,?,?,?,'local')",
             (doc["id"], body.get("passage_id"), doc["title"],
              int(body.get("page_no") or 1), (body.get("snippet") or "")[:400],
-             (body.get("note") or "")[:2000],
-             json.dumps(body.get("terms") or [], ensure_ascii=False)))
+             (body.get("note") or "")[:2000], terms))
         con.commit()
         con.close()
         return {"ok": True}
@@ -1092,6 +1118,20 @@ class Core:
         except Exception:
             page = 1
         con = self._con()
+        if (body.get("source") or "local") == "shamela":
+            # Online-Buch: dieselbe Stelle = gleiche Buch- und Seitenkennung.
+            row = con.execute("SELECT id FROM bookmarks WHERE source='shamela' "
+                              "AND book_key=? AND page_str=?",
+                              (body.get("book_id"),
+                               (body.get("page_str") or "").strip())).fetchone()
+            if row:
+                con.execute("DELETE FROM bookmarks WHERE id=?", (row["id"],))
+                con.commit()
+                con.close()
+                return {"ok": True, "saved": False}
+            con.close()
+            res = self.bookmark_add(body)
+            return res if res.get("error") else {"ok": True, "saved": True}
         if pid:
             row = con.execute("SELECT id FROM bookmarks WHERE document_id=? "
                               "AND passage_id=?", (doc_id, pid)).fetchone()
@@ -1116,6 +1156,22 @@ class Core:
         con = self._con()
         out = []
         for b in con.execute("SELECT * FROM bookmarks ORDER BY id DESC"):
+            if (b["source"] or "local") == "shamela":
+                # Online-Buch: nichts zu reparieren, es gibt keine lokalen IDs.
+                try:
+                    terms = json.loads(b["terms"] or "[]")
+                except Exception:
+                    terms = []
+                out.append({"id": b["id"], "source": "shamela",
+                            "document_id": None, "passage_id": None,
+                            "book_id": b["book_key"], "page_str": b["page_str"],
+                            "page_label": b["page_label"] or "",
+                            "doc_title": b["doc_title"], "title": b["doc_title"],
+                            "author": b["doc_author"] or "",
+                            "page_no": b["page_no"], "snippet": b["snippet"],
+                            "note": b["note"] or "", "terms": terms,
+                            "missing": False})
+                continue
             doc = con.execute("SELECT id, title FROM documents WHERE id=?",
                               (b["document_id"],)).fetchone()
             if not doc:      # Buch wurde neu eingelesen -> über Titel suchen
@@ -1145,7 +1201,7 @@ class Core:
                 terms = json.loads(b["terms"] or "[]")
             except Exception:
                 terms = []
-            out.append({"id": b["id"], "document_id": did,
+            out.append({"id": b["id"], "source": "local", "document_id": did,
                         "passage_id": pid, "doc_title": b["doc_title"],
                         "title": (doc["title"] if doc else b["doc_title"]),
                         "page_no": b["page_no"], "snippet": b["snippet"],
