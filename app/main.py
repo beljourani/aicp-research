@@ -292,6 +292,25 @@ class Core:
                 "configured": "/" in self.update_repo()
                 and not self.update_repo().startswith("DEIN-")}
 
+    def focus(self, _body=None):
+        """Holt das vorhandene Fenster nach vorne. Wird von einer zweiten,
+        gerade gestarteten Instanz aufgerufen (siehe main()), damit statt
+        eines neuen Fensters das bereits offene erscheint."""
+        w = getattr(self, "window", None)
+        if w is not None:
+            # restore(): aus dem minimierten Zustand holen; das kurze
+            # An/Aus von on_top zwingt das Fenster verlässlich in den
+            # Vordergrund (plattformübergreifend der zuverlässigste Weg).
+            for schritt in (lambda: w.restore(),
+                            lambda: w.show(),
+                            lambda: setattr(w, "on_top", True),
+                            lambda: setattr(w, "on_top", False)):
+                try:
+                    schritt()
+                except Exception:
+                    pass
+        return {"ok": True}
+
     def set_update_repo(self, body):
         repo = (body or {}).get("repo", "").strip()
         con = self._con()
@@ -1268,6 +1287,7 @@ ROUTES = {
     ("GET", "/api/status"): CORE.status,
     ("POST", "/api/clear_jobs"): CORE.clear_jobs,
     ("GET", "/api/version"): CORE.version,
+    ("GET", "/api/focus"): CORE.focus,
     ("POST", "/api/check_update"): CORE.check_update,
     ("POST", "/api/whats_new"): CORE.whats_new,
     ("POST", "/api/whats_new_ack"): CORE.whats_new_ack,
@@ -1398,12 +1418,76 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": str(e)}, 500)
 
 
+# Offenes Handle der Instanz-Sperre. Muss über die gesamte Laufzeit am
+# Leben bleiben, sonst gibt das Betriebssystem die Sperre wieder frei.
+_INSTANCE_LOCK = None
+
+
+def _acquire_single_instance(lock_path: Path):
+    """Sperrt eine Datei exklusiv, damit die App nur einmal läuft.
+
+    Liefert das offene Datei-Handle bei Erfolg, sonst None (dann läuft
+    bereits eine Instanz). Die Sperre wird vom Betriebssystem automatisch
+    freigegeben, wenn der Prozess endet – auch bei einem Absturz, sodass
+    die App danach wieder normal startet (keine hängenbleibende Sperre).
+    """
+    try:
+        f = open(lock_path, "a+")
+    except Exception:
+        return None                 # ohne Sperrdatei lieber trotzdem starten
+    try:
+        if os.name == "nt":
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
+def _focus_running_instance(port_path: Path) -> None:
+    """Bittet die bereits laufende Instanz, ihr Fenster nach vorne zu holen.
+
+    Reiner Zusatzkomfort – schlägt es fehl (z.B. veraltete Portdatei nach
+    einem Absturz), wird die zweite Instanz trotzdem beendet.
+    """
+    try:
+        port = int(port_path.read_text(encoding="utf-8").strip())
+    except Exception:
+        return
+    try:
+        import urllib.request
+        urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/focus", timeout=2).read()
+    except Exception:
+        pass
+
+
 def main():
+    global _INSTANCE_LOCK
+    d = data_dir()
+    _INSTANCE_LOCK = _acquire_single_instance(d / "single_instance.lock")
+    if _INSTANCE_LOCK is None:
+        # Es läuft bereits eine Instanz -> deren Fenster nach vorne holen
+        # und hier ohne zweites Fenster beenden.
+        _focus_running_instance(d / "instance.port")
+        return
+
     # Freien Port auf localhost finden
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     s.close()
+
+    port_file = d / "instance.port"
+    try:
+        port_file.write_text(str(port), encoding="utf-8")
+    except Exception:
+        port_file = None
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -1411,8 +1495,15 @@ def main():
     CORE.window = webview.create_window(
         "AICP Research", f"http://127.0.0.1:{port}/",
         width=1200, height=800, min_size=(900, 600))
-    webview.start()
-    server.shutdown()
+    try:
+        webview.start()
+    finally:
+        server.shutdown()
+        if port_file is not None:
+            try:
+                port_file.unlink()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
