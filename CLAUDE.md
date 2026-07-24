@@ -159,6 +159,22 @@ Shamela is an opt-in add-on the user connects once.
   the reader), `/categories`, `/authors`, `/health`. `docker-compose.yml` runs Qdrant + API + Caddy
   (auto-HTTPS). Deploy guide: `server/SHAMELA-SERVER.md`. **This code cannot be tested in the sandbox**
   (no 43 GB data, no Qdrant, network-blocked) — verification happens on the user's VPS after deploy.
+- **What the dataset actually contains** (measured on the live server, 2026-07-25): each chunk payload
+  has only `title`, `author`, `death_year`, `page`, `char_start`, `char_end`, `chunk_no`, `source`,
+  `text`, `text_norm`. There is **no `book_id`, `page_id`, `sequence_num`, `part`, `page_num` or
+  `category_name_ar`** — `import_shamela.py`'s `PAYLOAD_FIELDS` list those, but they never exist, so
+  `upsert_meta` skipped every row (`if bid is None: continue`) and left `meta.db` empty. Consequently:
+  - Book identity is derived, not given: `meta_index.book_id(title, author)` — a stable 48-bit hash.
+    Two genuinely different books sharing title *and* author would merge; no such case seen so far.
+  - Reading order comes from the `page` string (`V01P441` = part 1, page 441; also `P032`, `43:1`
+    for Quran, `المقدمة_P005`). `meta_index.parse_page()` decodes it; `page_sort_key()` orders it.
+  - `seq` is an **internal** sheet number (dense 1..N per book) built lazily on first open by scrolling
+    Qdrant filtered by title+author (~3 s per book) and cached in `meta.db` (`book_index`/`page_index`).
+    The **displayed** page label stays the real printed page (`part`/`page_num`) — decoded from the
+    source, never re-numbered. `/search` therefore returns `seq: null`; the reader opens via `page`.
+  - `meta_index.py` holds this logic free of FastAPI/Qdrant so `server/test_meta.py` can run anywhere.
+  - Still broken by the same root cause: `/categories` returns nothing (no category field in the data
+    at all) and `/authors` reads the empty `books` table.
 - **Token & URL are secrets** — they live only in the app's `meta` table (keys `shamela_url`,
   `shamela_token`), entered once in Settings (gear next to the source toggle) and persisted. They are
   **never** baked into the repo and **never** returned to the browser JS: the app talks to the server
@@ -171,7 +187,9 @@ Shamela is an opt-in add-on the user connects once.
   boolean/exclude), the local book filter and the semantic checkbox are hidden, and author/category
   filters are populated from the server. Results open a **remote reader** that reuses the whole reader
   shell: `rRemote`/`rBook` branch only the data source (`ensurePages` → `shamela_page`) and the page
-  label (Shamela pages are keyed by `sequence_num`; the sheet label shows the real `ج<part> ص<page>`).
+  label (Shamela sheets are keyed by the internal `seq` described above; the sheet label shows the real
+  `ج<part> ص<page>`). The first open passes `page` (the source's page string) instead of `seq`, since
+  `seq` only exists once the server has built that book's page index.
   Everything else (continuous scroll, prune/prefetch, arrow keys, page jump, progress, font, tashkil,
   in-book search, cite-with-source) works unchanged because it operates on abstract sheet numbers.
 - **Not yet done**: bookmarks for Shamela hits (the `bookmarks` table assumes a local integer

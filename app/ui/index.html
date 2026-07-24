@@ -837,6 +837,7 @@ const T = {
     bookLabel: "Buch", categoryLabel: "Kategorie",
     srcLocal: "Meine Bibliothek", srcShamela: "Shamela (online)",
     onlineTag: "online",
+    shOpenFail: "Dieses Buch lässt sich nicht öffnen – dem Treffer fehlt die Seitenangabe.",
     shamelaCfgTip: "Shamela-Server einrichten",
     shamelaHead: "Shamela-Server",
     shamelaIntro: "Durchsuche die ~8.600 Bücher der Al-Maktaba Al-Shamela über deinen eigenen Server – semantisch, ohne die Bücher lokal zu speichern. Der Zugang wird einmalig gespeichert und bleibt bestehen.",
@@ -936,6 +937,7 @@ const T = {
     bookLabel: "الكتاب", categoryLabel: "التصنيف",
     srcLocal: "مكتبتي", srcShamela: "الشاملة (عبر الإنترنت)",
     onlineTag: "أونلاين",
+    shOpenFail: "تعذر فتح هذا الكتاب – النتيجة لا تتضمن رقم الصفحة.",
     shamelaCfgTip: "إعداد خادم الشاملة",
     shamelaHead: "خادم الشاملة",
     shamelaIntro: "ابحث في نحو 8600 كتاب من المكتبة الشاملة عبر خادمك الخاص – بحثاً دلالياً دون تخزين الكتب محلياً. يُحفظ الوصول مرة واحدة ويبقى.",
@@ -1116,7 +1118,7 @@ const API = {
   shamela_save:(url,token)=>_post("/api/shamela_save",{url,token}),
   shamela_clear:()=>_post("/api/shamela_clear",{}),
   shamela_search:b=>_post("/api/shamela_search",b),
-  shamela_page:(book_id,seq,before,after)=>_post("/api/shamela_page",{book_id,seq,before,after}),
+  shamela_page:(o)=>_post("/api/shamela_page",o),
   shamela_categories:()=>_get("/api/shamela_categories"),
   shamela_authors:(q,limit)=>_post("/api/shamela_authors",{q,limit}),
 };
@@ -1989,7 +1991,7 @@ async function refreshBookmarks(){
 
 /* ---------- Leser: durchgehender Lesefluss ---------- */
 let rDoc=null,rPage=1,rFirst=1,rLast=1,rWords=[],rPassageText="",rImg=false,rHasImg=false;
-let rTitleTxt="",rLoaded=new Set(),rHits=[],rHitIdx=-1,rFont=1,rReady=false;
+let rTitleTxt="",rAuthorTxt="",rLoaded=new Set(),rHits=[],rHitIdx=-1,rFont=1,rReady=false;
 // Remote-Leser (Shamela online): rRemote schaltet die Datenquelle um; rBook ist
 // die book_id, rPageLabels bildet sequence_num -> lesbare Seitenangabe ab.
 let rRemote=false,rBook=null,rPageLabels={};
@@ -2073,8 +2075,14 @@ function setReaderRemoteUI(remote){
   const img=$("#rImgToggle"); if(img)img.style.display=remote?"none":"";
 }
 
-// Leser für ein Online-Buch der Shamela öffnen. hit trägt book_id + seq.
+// Leser für ein Online-Buch der Shamela öffnen. hit trägt book_id + page
+// (die Seitenkennung, z. B. "V01P441"); die interne Blattnummer bestimmt der
+// Server beim Öffnen. Fehlt eine der beiden Angaben, lässt sich das Buch nicht
+// aufschlagen – dann eine verständliche Meldung statt eines Absturzes.
 async function openShamelaReader(hit){
+  if(!hit||hit.book_id==null||(hit.seq==null&&!hit.page)){
+    showError(t("shOpenFail"));return;
+  }
   rRemote=true;rBook=hit.book_id;rDoc="shx:"+hit.book_id;
   rImg=false;rHasImg=false;rPassageText="";rReady=false;
   rLoaded=new Set();rHits=[];rHitIdx=-1;rPageLabels={};
@@ -2089,16 +2097,22 @@ async function openShamelaReader(hit){
   $("#reader").classList.add("open");
   $("#rTitle").innerHTML=esc(hit.title||"")+`<span class="onlineBadge">${esc(t("onlineTag"))}</span>`;
   rTitleTxt=hit.title||"";
+  rAuthorTxt=hit.author||"";
   $("#rAuthor").textContent=hit.author||"";
-  // Erste Seite laden, um die Grenzen (first_seq/last_seq) des Buches zu erhalten.
-  const info=await api().shamela_page(hit.book_id,hit.seq,0,0);
-  if(info&&info.error){ showError(info.error); closeReader(); return; }
-  rFirst=info.first_seq||hit.seq;rLast=info.last_seq||hit.seq;
+  // Erste Seite laden: liefert die Grenzen (first_seq/last_seq) des Buches und
+  // die Blattnummer der gesuchten Seite. Beim ersten Öffnen eines Buches baut
+  // der Server dessen Seitenverzeichnis auf – das darf etwas dauern.
+  const info=await api().shamela_page({book_id:hit.book_id,seq:hit.seq,
+      page:hit.page,title:hit.title,author:hit.author,before:0,after:0});
+  if(!info||info.error){ showError((info&&info.error)||t("shOpenFail"));
+    closeReader(); return; }
+  const openSeq=info.seq||hit.seq||info.first_seq||1;
+  rFirst=info.first_seq||1;rLast=info.last_seq||openSeq;
   buildSheets();
   applyFont(rFont);
   updateTashkilBtn();
   showReaderHint();
-  try{ await gotoPage(hit.seq,false); }catch(e){}
+  try{ await gotoPage(openSeq,false); }catch(e){}
   // Verwandte Stellen dieses Buches auflisten (Treffer-Navigation), ohne von
   // der aufgeschlagenen Seite wegzuspringen.
   if(q){ try{ await runReaderSearch(false,true); }catch(e){} }
@@ -2207,7 +2221,8 @@ async function ensurePages(from,to){
   // liefert /page mit seq=a und after=(b-a), also den ganzen Bereich auf einmal.
   // Hervorhebung passiert clientseitig anhand der Suchbegriffe (wordSpans).
   const job=(rRemote
-      ? api().shamela_page(rBook,a,0,b-a).then(res=>{
+      ? api().shamela_page({book_id:rBook,seq:a,before:0,after:b-a,
+                            title:rTitleTxt,author:rAuthorTxt}).then(res=>{
           if(res&&res.error){need.forEach(p=>rLoaded.delete(p));return;}
           for(const pg of (res.pages||[])){
             if(pg.page_label==null) pg.page_label=shamelaPageLabel(pg);

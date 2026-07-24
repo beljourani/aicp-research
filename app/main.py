@@ -747,14 +747,37 @@ class Core:
             return {"error": str(e)}
 
     def shamela_page(self, body):
+        """Seite eines Online-Buches holen.
+
+        Aufgeschlagen wird entweder über die interne Blattnummer `seq` oder –
+        beim ersten Öffnen aus der Trefferliste – über die Seitenkennung
+        `page` (z. B. "V01P441"). Fehlt beides oder ist die Buchkennung leer,
+        gibt es eine verständliche Meldung statt eines Absturzes.
+        """
         body = body or {}
-        params = {"book_id": int(body.get("book_id")),
-                  "seq": int(body.get("seq")),
+        try:
+            book_id = int(body.get("book_id"))
+        except (TypeError, ValueError):
+            return {"error": "Dieser Treffer hat keine Buchkennung – das Buch "
+                             "lässt sich nicht öffnen."}
+        params = {"book_id": book_id,
                   "before": int(body.get("before") or 0),
                   "after": int(body.get("after") or 0)}
         try:
+            params["seq"] = int(body.get("seq"))
+        except (TypeError, ValueError):
+            page = (body.get("page") or "").strip()
+            if not page:
+                return {"error": "Zu diesem Treffer fehlt die Seitenangabe – "
+                                 "das Buch lässt sich nicht öffnen."}
+            params["page"] = page
+        # Titel/Autor als Rückfallebene, falls der Server das Buch noch nicht kennt.
+        for k in ("title", "author"):
+            if body.get(k):
+                params[k] = body[k]
+        try:
             return self._shamela_request("GET", "/page", params=params,
-                                         timeout=45)
+                                         timeout=60)
         except Exception as e:
             return {"error": str(e)}
 
