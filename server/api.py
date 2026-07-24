@@ -88,6 +88,28 @@ def _ensure_book_index(con, book_id: int) -> int:
     return mi.ensure_book_index(con, book_id, fetch=_fetch_page_strings)
 
 
+def _auth(x_api_key: str | None, authorization: str | None) -> None:
+    if not API_TOKEN:
+        raise HTTPException(500, "Server ohne API_TOKEN gestartet.")
+    token = x_api_key
+    if not token and authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:]
+    if token != API_TOKEN:
+        raise HTTPException(401, "Ungültiger oder fehlender Token.")
+
+
+# ---------------------------------------------------------------- Modelle ----
+class SearchReq(BaseModel):
+    q: str
+    limit: int = 30
+    offset: int = 0
+    categories: list[str] | None = None
+    authors: list[str] | None = None
+    book_ids: list[int] | None = None
+    source: str | None = None            # "shamela" | "quran"
+
+
+# ---------------------------------------------------------------- Routen -----
 @app.get("/health")
 def health():
     try:
