@@ -144,31 +144,80 @@ def _fts_suche(con, q: str, limit: int, authors=None, book_ids=None):
         if not docs:
             return []
 
-    inner = ("SELECT rowid AS rid, bm25(passages_fts,2.0,1.0) AS score "
-             "FROM passages_fts WHERE passages_fts MATCH ?")
-    params = [match_expr]
-    if docs is not None:
-        marks = ",".join("?" * len(docs))
-        inner += (f" AND rowid IN (SELECT id FROM passages "
-                  f"WHERE document_id IN ({marks}))")
-        params += docs
-    inner += " ORDER BY score LIMIT ?"
-    params.append(limit)
+    if docs is None:
+        rohe = _fts_roh(con, match_expr, limit)
+    else:
+        # Buchfilter: NICHT global suchen und danach filtern. Ein häufiges
+        # Wort trifft Millionen Abschnitte; die Prüfung gegen die Buchliste
+        # läuft dann über alle (gemessen: über 150 s).
+        # Stattdessen je Buch der rowid-Bereich seiner Abschnitte: FTS5 hält
+        # seine Trefferlisten nach rowid sortiert und überspringt damit den
+        # größten Teil des Index (gemessen: 0,6–1,0 s).
+        rohe = []
+        for bid in docs[:MAX_FILTER_BUECHER]:
+            g = con.execute("SELECT MIN(id) lo, MAX(id) hi FROM passages "
+                            "WHERE document_id=?", (bid,)).fetchone()
+            if not g or g["lo"] is None:
+                continue
+            rohe += _fts_roh(con, match_expr, limit, bereich=(g["lo"], g["hi"]),
+                             buch=bid)
+        # bm25-Werte sind über die Bücher hinweg vergleichbar (gleiche
+        # Anfrage, gleicher Index) – die Reihenfolge bleibt damit dieselbe.
+        rohe.sort(key=lambda r: r["score"])
+        rohe = rohe[:limit]
 
-    sql = (f"SELECT p.id, p.document_id, p.page_from, p.page_to, p.text, "
-           f"d.title, d.author, s.score FROM ({inner}) s "
-           f"JOIN passages p ON p.id = s.rid "
-           f"JOIN documents d ON d.id = p.document_id ORDER BY s.score")
+    if not rohe:
+        return []
+    ids = [r["rid"] for r in rohe]
+    punkte = {r["rid"]: r["score"] for r in rohe}
+    marks = ",".join("?" * len(ids))
     treffer = []
-    for row in con.execute(sql, params):
+    zeilen = {r["id"]: r for r in con.execute(
+        f"SELECT p.id, p.document_id, p.page_from, p.page_to, p.text, "
+        f"d.title, d.author FROM passages p JOIN documents d ON d.id=p.document_id "
+        f"WHERE p.id IN ({marks})", ids)}
+    for pid in ids:                      # Reihenfolge aus der Bewertung halten
+        row = zeilen.get(pid)
+        if not row:
+            continue
         matched = _matched_words(row["text"], set(stem_tokens))
         treffer.append({
             "passage_id": row["id"], "document_id": row["document_id"],
             "title": row["title"], "author": row["author"],
             "snippet": _make_snippet(row["text"], matched),
-            "score": row["score"],
+            "score": punkte[pid],
         })
     return treffer
+
+
+MAX_FILTER_BUECHER = 25     # so viele Bücher je Suche einzeln abfragen
+
+
+def _fts_roh(con, match_expr: str, limit: int, bereich=None, buch=None):
+    """Bewertete Trefferliste aus dem Volltextindex (nur rowid + Punktzahl).
+
+    `bereich` schränkt auf einen rowid-Abschnitt ein – das ist der einzige
+    Weg, FTS5 dazu zu bringen, große Teile des Index zu überspringen.
+    Da die Abschnitte eines Buches nicht lückenlos beieinanderliegen, wird
+    anschließend noch auf das Buch selbst gefiltert.
+    """
+    sql = ("SELECT rowid AS rid, bm25(passages_fts,2.0,1.0) AS score "
+           "FROM passages_fts WHERE passages_fts MATCH ?")
+    params = [match_expr]
+    if bereich:
+        sql += " AND rowid BETWEEN ? AND ?"
+        params += [bereich[0], bereich[1]]
+    sql += " ORDER BY score LIMIT ?"
+    params.append(limit * 4 if bereich else limit)
+    rohe = [{"rid": r["rid"], "score": r["score"]}
+            for r in con.execute(sql, params)]
+    if buch is not None and rohe:
+        marks = ",".join("?" * len(rohe))
+        eigene = {r[0] for r in con.execute(
+            f"SELECT id FROM passages WHERE document_id=? AND id IN ({marks})",
+            [buch] + [r["rid"] for r in rohe])}
+        rohe = [r for r in rohe if r["rid"] in eigene][:limit]
+    return rohe
 
 
 def _hit_aus_fts(con, h) -> dict:

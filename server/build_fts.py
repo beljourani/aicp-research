@@ -68,6 +68,9 @@ def zusatz_schema(con: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS fts_state (
             autor TEXT PRIMARY KEY, chunks INTEGER, fertig INTEGER DEFAULT 0
         );
+        -- Ohne diesen Index kostet jeder Buchfilter einen vollen Durchlauf
+        -- über 11,5 Mio. Zeilen (gemessen: ~15 s Grundkost je Suche).
+        CREATE INDEX IF NOT EXISTS idx_pass_doc ON passages(document_id);
     """)
     con.commit()
 
