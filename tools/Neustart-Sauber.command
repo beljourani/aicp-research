@@ -14,5 +14,9 @@ rm -f "$DB" "$DB-wal" "$DB-shm"
 echo "    erledigt"
 
 echo "==> AICP Research startet neu …"
-PY=$(command -v python3.14 || command -v python3.13 || command -v python3.12 || command -v python3)
+if [ -x ".venv/bin/python" ]; then
+  PY=".venv/bin/python"
+else
+  PY=$(command -v python3.14 || command -v python3.13 || command -v python3.12 || command -v python3)
+fi
 exec "$PY" app/main.py

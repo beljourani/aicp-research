@@ -9,5 +9,9 @@ pkill -f soffice 2>/dev/null
 sleep 2
 
 echo "==> AICP Research startet neu (Bibliothek bleibt erhalten) …"
-PY=$(command -v python3.14 || command -v python3.13 || command -v python3.12 || command -v python3)
+if [ -x ".venv/bin/python" ]; then
+  PY=".venv/bin/python"
+else
+  PY=$(command -v python3.14 || command -v python3.13 || command -v python3.12 || command -v python3)
+fi
 exec "$PY" app/main.py
