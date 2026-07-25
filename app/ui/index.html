@@ -2676,6 +2676,21 @@ $("#bookSel").addEventListener("input",()=>{
     finally{ _bookQueryBusy=false; }
   },250);
 });
+// Autorenvorschläge im Online-Modus genauso entprellt vom Server nachladen.
+let _authorQueryTimer=null,_authorQueryBusy=false;
+$("#authorSel").addEventListener("input",()=>{
+  if(searchSource!=="shamela"||_authorQueryBusy)return;
+  clearTimeout(_authorQueryTimer);
+  const q=($("#authorSel").value||"").trim();
+  _authorQueryTimer=setTimeout(async()=>{
+    try{
+      await loadShamelaAuthors(q);
+      _authorQueryBusy=true;
+      $("#authorSel").dispatchEvent(new Event("input"));
+    }catch(e){}
+    finally{ _authorQueryBusy=false; }
+  },250);
+});
 attachCombo($("#catSel"),
   ()=>catOptions.filter(c=>!catFilterSel.includes(c)),
   v=>addCatFilter(v),
@@ -2762,7 +2777,7 @@ async function loadShamelaFilters(){
   try{ const c=await api().shamela_categories();
        const list=(c&&!c.error)?(c.categories||[]):[];
        shHasCats=list.length>0; fillCatSel(list); }catch(e){ shHasCats=false; }
-  try{ const a=await api().shamela_authors("",80); if(a&&!a.error)fillAuthorSel((a.authors||[]).slice(0,80)); }catch(e){}
+  try{ await loadShamelaAuthors(""); }catch(e){}
   try{ await loadShamelaBooks(""); }catch(e){}
   applySourceUI();
 }
@@ -2775,6 +2790,14 @@ async function loadShamelaBooks(q){
   // Bereits gewählte behalten, damit ihre Titel auflösbar bleiben.
   allDocs=bookFilterSel.filter(b=>seen.has(b.id))
     .concat(liste.filter(b=>!seen.has(b.id)));
+}
+// Autorenliste des Servers in den Autorenfilter laden (durchsuchbar). Der
+// Server durchsucht ALLE ~3.000 Autoren per Teilstring; ohne diesen Aufruf
+// würde nur eine feste Anfangsliste lokal gefiltert.
+async function loadShamelaAuthors(q){
+  const a=await api().shamela_authors(q||"",200);
+  if(!a||a.error)return;
+  fillAuthorSel(a.authors||[]);
 }
 function applySourceUI(){
   const shamela=searchSource==="shamela";
