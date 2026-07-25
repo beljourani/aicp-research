@@ -40,10 +40,9 @@ from qdrant_client import QdrantClient
 from qdrant_client import models as qm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, "/engine")                       # Engine im Container
 import meta_index as mi                                            # noqa: E402
-from echo_engine.db import connect as engine_connect                # noqa: E402
-from echo_engine.normalize import to_index_forms                    # noqa: E402
+# Nur die benötigten Teile der Engine – ohne PyMuPDF/OCR/Einbettung.
+from engine_light import connect as engine_connect, to_index_forms  # noqa: E402
 
 COLLECTION = os.environ.get("QDRANT_COLLECTION", "shamela")
 # Felder, die für Index und Trefferanzeige gebraucht werden.
