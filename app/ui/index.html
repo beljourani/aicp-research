@@ -2436,8 +2436,9 @@ async function runReaderSearch(autoSelect=true,force=false){
   }else{
     res=await api().search_terms(groups, excludes, null, rDoc, 0, 200);
   }
-  rHits=res.hits||[];rHitIdx=-1;
-  renderReaderHits(res);
+  // Trefferliste in Buchreihenfolge statt nach Ähnlichkeit/Relevanz.
+  rHits=sortHitsByPage(res.hits||[]);rHitIdx=-1;
+  renderReaderHits({hits:rHits});
   updateHitNav();
   if(autoSelect&&rHits.length)selectHit(0);
 }
@@ -2452,7 +2453,30 @@ function shamelaToReaderHit(h,q){
     matched_words:shamelaTerms(q),page_from:h.seq,page_to:h.seq,
     page_label:shamelaHitLabel(h),passage_id:null,
     book_id:h.book_id,seq:h.seq,page:h.page,page_str:h.page,
+    part:h.part,page_num:h.page_num,
     reliability:"exact"};
+}
+// Sortierschlüssel eines Treffers für die Reihenfolge im Buch. Online steht
+// die Druckseite in part/page_num (aus der Seitenkennung "V01P441"), offline
+// ist es schlicht page_from. Zahlen fehlen -> ans Ende, aber stabil.
+function hitPageKey(h){
+  const pg=h.page_str||h.page;
+  if(pg){                       // Online: nach Band + Druckseite
+    const part=parseInt(h.part,10), num=parseInt(h.page_num,10);
+    if(Number.isFinite(num))return [0,Number.isFinite(part)?part:0,num,""];
+    return [1,0,0,String(pg)];  // unbekanntes Format: ans Ende, aber stabil
+  }
+  if(Number.isFinite(h.page_from))return [0,0,h.page_from,""];   // Offline
+  return [1,0,0,""];
+}
+function sortHitsByPage(hits){
+  // Reihenfolge im Buch statt nach Ähnlichkeit/Relevanz – so liest sich die
+  // Trefferliste wie das Buch selbst (380, 381 …).
+  return hits.slice().sort((a,b)=>{
+    const x=hitPageKey(a),y=hitPageKey(b);
+    for(let i=0;i<3;i++){ if(x[i]!==y[i])return x[i]-y[i]; }
+    return x[3]<y[3]?-1:(x[3]>y[3]?1:0);
+  });
 }
 // Zerlegt die Freitext-Anfrage grob in Wörter für die literale Hervorhebung.
 function shamelaTerms(q){return (q||"").split(/\s+/).map(s=>s.trim()).filter(w=>w.length>1);}
