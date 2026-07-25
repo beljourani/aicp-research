@@ -10,6 +10,12 @@ services:
   # --- Vektor-Datenbank -----------------------------------------------------
   qdrant:
     image: qdrant/qdrant:v1.12.4
+    # Viele offene Dateien: Qdrant legt je Segment mehrere an. Ohne das
+    # höhere Limit bricht es bei dieser Sammlungsgröße ab.
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
     restart: unless-stopped
     volumes:
       - qdrant_storage:/qdrant/storage
@@ -68,13 +74,13 @@ services:
     volumes:
       - ./data:/data                   # meta.db landet hier
       - hf_cache:/root/.cache/huggingface
-    # Binäre Quantisierung: hält den RAM-Bedarf klein (passt in 16-GB-Server),
-    # die Feinbewertung nutzt die Originalvektoren von der Platte -> praktisch
-    # gleiche Trefferqualität. Für 32-GB-Maschinen kann man auf "int8" wechseln.
+    # int8-Quantisierung: bessere Trefferqualität als binär, die
+    # Feinbewertung nutzt die Originalvektoren von der Platte. So läuft
+    # der Server mit 24 GB RAM (gemessen: ~15 GB belegt).
     entrypoint: ["python", "import_shamela.py",
                  "--qdrant", "http://qdrant:6333",
                  "--meta", "/data/meta.db",
-                 "--quant", "binary"]
+                 "--quant", "int8"]
     profiles: ["import"]               # startet nicht bei `up`
 
   # --- Einmaliger Aufbau des Wort-/Wurzel-Index ----------------------------
