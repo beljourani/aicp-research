@@ -1,130 +1,74 @@
-# Shamela: Phase A (Leser) + Machbarkeitsprüfung Wortsuche — Stand 25.07.2026
+# Shamela: Online-Suche auf Wort/Wurzel umgestellt — Stand 25.07.2026
 
-Kein Versions-Tag gesetzt. Alle Tests grün vor jedem Commit, JS-Syntax nach jeder
-Frontend-Änderung geprüft.
-
----
-
-## A1 — Trefferliste im Leser nach Seite sortiert (erledigt, live verifiziert)
-
-Die Treffer kamen online nach Ähnlichkeit (Qdrant-Score), offline nach Relevanz. Jetzt stehen sie
-in Buchreihenfolge: online nach Band + Druckseite, offline nach Seite.
-
-**Live geprüft** (zwei Bücher, je 40 Treffer): Die Liste steigt lückenlos nach Band+Seite, kein
-Treffer geht verloren, und der aufgeschlagene Treffer bleibt auffindbar — die Auswahl ist
-identitätsbasiert geblieben (er stand danach z. B. auf Index 37 statt 0 und war trotzdem korrekt
-markiert). Unbekannte Seitenformate wandern stabil ans Ende; gleiche Seiten behalten ihre
-Reihenfolge. Angezeigte Druckseiten unverändert.
-
-## A2 — Leser virtualisieren: **gestoppt**, stattdessen die belegte Ursache behoben
-
-**Ich habe die vermutete Ursache gemessen statt angenommen — sie trägt nicht.** Gemessen in
-**WKWebView**, also der Engine, in der die App wirklich läuft, mit einem Buch von 8.765 Seiten:
-
-| | Messwert |
-|---|---|
-| Aufbau aller 8.765 Blätter | **15 ms** (einmalig) |
-| DOM-Knoten | 26.295 |
-| Arbeit je Scroll-Schritt | **1,37 ms** — Budget für flüssige 60 Bilder/s sind 16,7 ms |
-
-Die Knotenzahl allein verursacht in der echten Engine also **kein** Ruckeln. Der einzige Teil, der
-mit der Buchgröße wuchs, war der Scroll-Handler: Er lief bei jedem Scrollen über **alle** Blätter,
-um die oberste sichtbare Seite zu finden (1,35–1,50 ms, in Chrome bis 6 ms).
-
-**Das habe ich behoben** (committet): Die Blätter stehen in Seitenreihenfolge, ihre Unterkanten
-steigen monoton — eine binäre Suche genügt. Ergebnis: **1,35 ms → unter der Messgrenze**. Die neue
-Funktion wurde direkt aus `index.html` extrahiert und gegen die alte Logik geprüft: an
-**301 Scrollpositionen exakt dieselbe Seite** (zusätzlich 201 Positionen in Chrome). Layout,
-Scrollposition, `gotoPage`, Seitensprung, Prefetch, Labels, Lesezeichen und Marker sind unberührt.
-
-**Die vollständige Virtualisierung habe ich bewusst NICHT gebaut**, aus drei Gründen:
-1. Die Messung stützt den erwarteten Gewinn nicht — 1,37 ms sind bereits weit unter dem Budget.
-2. Platzhalter brauchen geschätzte Seitenhöhen. Die Seiten sind sehr unterschiedlich lang; jede
-   Fehlschätzung verschiebt Scrollposition und Scrollbalken. Genau das würde `gotoPage`,
-   `scrollIntoView` und den Seitensprung treffen — die Dinge, die laut Auftrag unbedingt erhalten
-   bleiben müssen.
-3. Ich kann Scrollverhalten hier nicht sehen, nur messen. Ein halbfertiger Umbau der
-   empfindlichsten Stelle wäre schlechter als keiner (CLAUDE.md: „run the app and look").
-
-**Was ich von dir bräuchte:** Was genau ruckelt — das Scrollen, das Öffnen eines Buches, oder der
-Sprung zu einer Seite? Und bei welchem Buch? Mit dieser Angabe finde ich die echte Ursache; die
-bisherige Vermutung (zu viele DOM-Knoten) ist messbar widerlegt.
+**Fertig und live verifiziert.** Die Online-Suche arbeitet jetzt wie die Offline-Suche: nach Wort
+und Wurzel, mit ODER, Ausschluss und Phrase. Die semantische Suche bleibt als zuschaltbare
+Ergänzung erhalten und ist standardmäßig an. Kein Versions-Tag gesetzt.
 
 ---
 
-# B0 — Machbarkeit: Online-Suche auf Wort/Wurzel umstellen
-
-**Nichts gebaut, nichts gestartet.** Nur gemessen. Alle Zahlen vom laufenden VPS.
-
-## Ausgangslage auf dem Server
+## Der Index
 
 | | |
 |---|---|
-| Freier Speicher | **172 GB** von 290 GB (41 % belegt) |
-| Arbeitsspeicher | 23 GB gesamt, 15 GB von Qdrant belegt, ~8 GB frei |
-| Kerne | 8 |
-| Abschnitte (Punkte) | **11.488.400** |
+| Abschnitte | **11.488.400 von 11.488.400 (100 %)** |
+| Bücher | 8.698 |
+| Größe | 29,8 GB (Volltextindex + Textausschnitte für die Trefferanzeige) |
+| Dauer | 409 min erster Lauf + 54 min Nachlauf |
+| Freier Platz danach | 128 GB von 290 GB |
+| Neu eingebettet | **nichts** – die Vektoren in Qdrant blieben unberührt |
 
-## Wichtigster Befund: `text_norm` ist vorhanden — aber **nicht unsere Normalisierung**
+Zwei Autoren fielen im ersten Lauf aus („Server disconnected", zusammen 55.254 Abschnitte). Der
+zweite Lauf erkannte „3.177 Autoren bereits im Index, zu tun: 2" und holte genau diese nach —
+ohne etwas doppelt zu schreiben. Der Index ist damit vollständig.
 
-Entgegen der Annahme im Auftrag tragen **alle** Abschnitte (400/400 in der Stichprobe) ein Feld
-`text_norm`. Es ist aber **eine andere Normalisierung als unsere**:
+## Live verifiziert (durch die App, gegen den echten Server)
 
-| | unsere `normalize()` | deren `text_norm` |
-|---|---|---|
-| Zeilenumbrüche | bleiben erhalten | zu Leerzeichen |
-| arabische Ziffern | `١` → `1` | bleiben `١` |
-| Hamza-Formen | `ئ` → `ي` | bleibt `ئ` |
-
-Da Index und Anfrage **identisch** normalisieren müssen (sonst findet die Suche nichts — CLAUDE.md),
-ist `text_norm` **nicht direkt verwendbar**. Der Normalisierungsschritt lässt sich also **nicht**
-sparen; wir müssen unsere `to_index_forms()` über das Rohfeld `text` laufen lassen. Das ist kein
-Hindernis, nur kein Zeitgewinn.
-
-## Aufwand (gemessen, nicht geschätzt)
-
-An **50.000 echten, verschiedenen** Abschnitten vom Server gemessen und hochgerechnet:
-
-| Schritt | Wert |
+| Prüfung | Ergebnis |
 |---|---|
-| Lesen aus Qdrant | 982 Abschnitte/s → **3,2 h** einkernig (der Löwenanteil; durch Aufteilen parallelisierbar) |
-| Aufbereiten (`to_index_forms`) | 4.035/s → 0,8 h einkernig, **0,1 h auf 8 Kernen** |
-| FTS5 schreiben | 12.330/s → **0,3 h** |
-| **Gesamt realistisch** | **~3,5–4 h** am Stück, mit Aufteilung auf mehrere Leser ~1,5 h |
-| **Indexgröße** | **~10,7 GB** (932 Byte/Abschnitt; der Wert sinkt mit dem Umfang weiter, ist also eine Obergrenze) |
-| Suchgeschwindigkeit | 0,5–3,6 ms je Anfrage im 50.000er-Testindex |
+| Wortsuche findet die Wurzel im Text | ✓ 3 Anfragen, je 5/5 Treffer enthalten die Wurzel |
+| `semantic=false` → reine Wortsuche | ✓ 20 Treffer |
+| `semantic=true` → Zusammenführung | ✓ 9 zusätzliche Stellen gegenüber reiner Wortsuche |
+| Ausschluss (`-wort`) | ✓ wirkt nachweislich |
+| ODER (`\|`) | ✓ liefert die Vereinigung |
+| Phrasensuche (`"…"`) | ✓ 10 von 10 Treffern enthalten die Wortfolge **wörtlich** |
+| Trefferform unverändert | ✓ alle Felder da, `seq` bleibt null |
+| Buch öffnen | ✓ Druckseite passt zur Kennung (ج2 ص1034 ← V02P1034) |
+| Autoren- und Buchfilter | ✓ beide wirken |
+| Offline-Suche unberührt | ✓ unverändert nutzbar |
 
-Speicher ist damit **kein Problem**: 10,7 GB von 172 GB freien.
+**Antwortzeiten:** 1,2 s (reine Wortsuche) bis 3,4 s (mit Semantik) für übliche Anfragen.
 
-## Empfehlung
+## Zwei Befunde, die den Plan korrigiert haben
 
-**Machbar, und ich würde es empfehlen** — mit einer wichtigen Einschränkung, die eine
-Produktentscheidung ist, keine technische.
+**`nltk` fehlte im Server-Container.** Ohne den ISRI-Stemmer hätte der Server anders gestemmt als
+deine App — gemessen 7 von 10 Wörtern (`يكتبون` → `يكتب` statt `كتب`). Der Index wäre unbrauchbar
+gewesen. Aufgefallen *vor* dem Lauf, sonst wären 7 Stunden umsonst gewesen.
 
-Dafür spricht: Der Aufwand ist überschaubar (eine Nacht, kein Neu-Einbetten, keine 43 GB erneut),
-der Platzbedarf unkritisch, die Suche wird spürbar schneller als die heutige Vektorsuche, und die
-Online-Suche verhielte sich endlich wie die Offline-Suche — Wort und Wurzel, mit Boolean, Ausschluss
-und Phrasensuche, die es online heute gar nicht gibt.
+**Die Engine-Abfrage skaliert nicht auf 11,5 Mio. Abschnitte.** Sie verbindet den Volltextindex mit
+den Passagen- und Buchtabellen, *bevor* sortiert wird. Lokal (86.000 Passagen) ist das folgenlos;
+online werden dadurch Hunderttausende Volltexte aus einer 30-GB-Datei gelesen — gemessen 14 bis 27
+Sekunden je Anfrage. Der Server rankt jetzt zuerst im Index und verbindet nur die besten Zeilen:
+**14,0 s → 0,7 s** bzw. **27,4 s → 2,5 s**. Geparst, gestemmt, gefiltert und bewertet wird
+weiterhin mit derselben Engine-Logik, die Reihenfolge bleibt also dieselbe. **Die gemeinsame Engine
+wurde nicht angefasst** — die Offline-Suche ist unverändert.
 
-**Die Einschränkung:** Eine reine Wortsuche findet **anderes** als die heutige semantische Suche.
-Heute findet „الصبر على البلاء" auch Stellen, die den Gedanken *sinngemäß* ausdrücken, ohne die
-Wörter zu enthalten. Nach der Umstellung fielen solche Treffer weg. Umgekehrt findet die Wortsuche
-zuverlässig jede Stelle, wo das Wort (oder seine Wurzel) *wirklich steht* — was für Zitate und
-Belege meist das ist, was man will.
+## Morgens von dir zu prüfen (committet, Technik verifiziert)
 
-**Mein Vorschlag:** beides behalten, wie es die Offline-Suche schon tut (`hybrid_search` verbindet
-dort FTS und Semantik). Der Vektorindex bleibt ohnehin liegen — man verliert nichts, und du könntest
-je Suche entscheiden. Das kostet keinen zusätzlichen Aufbau, nur etwas mehr Arbeit an `/search`.
+1. **Der Semantik-Schalter ist im Online-Modus jetzt sichtbar** und standardmäßig an. Zu prüfen: Ob
+   er dort sinnvoll platziert wirkt und ob sich das Umschalten spürbar auf die Treffer auswirkt.
+2. **Trefferqualität im Alltag.** Die Wortsuche findet zuverlässig, wo ein Wort *wirklich steht* —
+   für Zitate meist das Gewünschte. Ob die Mischung mit der Semantik für dich stimmt, lässt sich
+   nur beim echten Arbeiten beurteilen.
+3. **Buch- und Autorenfilter** in Verbindung mit der neuen Suche.
 
-## Bitte um Freigabe
+## Offen / Einschränkungen
 
-Ich habe **nichts gestartet**. Für B1 bräuchte ich von dir:
-
-1. **Freigabe** für den ~4-stündigen Indexaufbau auf dem VPS.
-2. Entscheidung: **Wortsuche ersetzt** die semantische Suche — oder **beide nebeneinander**
-   (meine Empfehlung).
-
-## Offen / bewusst nicht gemacht
-
-- Volle Virtualisierung des Lesers — siehe A2 oben, wartet auf deine Angabe, was genau ruckelt.
-- B1 (der eigentliche Umbau) — nicht begonnen, wartet auf Freigabe.
+- **Sehr häufige Wörter sind langsam.** `قال` braucht rund 18 Sekunden: Es trifft Millionen von
+  Abschnitten, und die Rangfolge muss über alle berechnet werden. Übliche Anfragen liegen bei 1–3
+  Sekunden. Falls dich das stört, ließe sich das entschärfen (z. B. Ergebnis-Zwischenspeicher oder
+  eine Obergrenze für die Kandidatenmenge) — das ist ein eigener Schritt.
+- **1.163 doppelte Abschnittskennungen** im ersten Lauf (0,01 %). Sie sind im Volltextindex
+  enthalten und auffindbar; nur bei der Zusammenführung mit der semantischen Liste können sie nicht
+  eindeutig zugeordnet werden. Im zweiten Lauf traten keine auf.
+- **Die A2-Leser-Performance** (Ruckeln bei großen Büchern) läuft wie besprochen getrennt weiter —
+  hier nicht angefasst.
