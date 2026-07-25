@@ -19,7 +19,9 @@ services:
 
   # --- Such-API (serverseitige Einbettung) ----------------------------------
   api:
-    build: .
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
     restart: unless-stopped
     depends_on:
       - qdrant
@@ -27,6 +29,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION: shamela
       META_DB: /data/meta.db
+      FTS_DB: /data/fts.db
       API_TOKEN: ${API_TOKEN}          # Pflicht – aus .env
     volumes:
       - ./data:/data                   # meta.db (vom Importer erzeugt)
@@ -54,7 +57,9 @@ services:
   # --- Einmaliger Import (läuft nicht dauerhaft) ----------------------------
   # Mit `docker compose run --rm importer` starten.
   importer:
-    build: .
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
     depends_on:
       - qdrant
     environment:
@@ -71,6 +76,24 @@ services:
                  "--meta", "/data/meta.db",
                  "--quant", "binary"]
     profiles: ["import"]               # startet nicht bei `up`
+
+  # --- Einmaliger Aufbau des Wort-/Wurzel-Index ----------------------------
+  # Mit `docker compose run --rm fts-builder` starten. Wiederaufsetzbar:
+  # ein Abbruch verliert nur den gerade laufenden Autor.
+  fts-builder:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    depends_on:
+      - qdrant
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: shamela
+      FTS_DB: /data/fts.db
+    volumes:
+      - ./data:/data
+    entrypoint: ["python", "build_fts.py"]
+    profiles: ["build"]
 
 volumes:
   qdrant_storage:

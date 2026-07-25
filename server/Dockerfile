@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libgomp1 curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements.txt .
+COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Einbettungsmodell schon beim Bau herunterladen, damit der erste Start
@@ -14,7 +14,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python -c "from sentence_transformers import SentenceTransformer; \
     SentenceTransformer('intfloat/multilingual-e5-base')"
 
-COPY api.py meta_index.py import_shamela.py build_catalog.py .
+# Die Such-Engine der App wird unveraendert wiederverwendet: dieselbe
+# Normalisierung und Wurzelbildung wie offline – sonst faende die
+# Online-Suche andere Wortformen.
+COPY engine/echo_engine /engine/echo_engine
+COPY server/api.py server/meta_index.py server/import_shamela.py \
+     server/build_catalog.py server/build_fts.py .
+ENV PYTHONPATH=/engine
 
 EXPOSE 8000
 CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
