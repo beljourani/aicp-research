@@ -107,24 +107,88 @@ def _fts_verfuegbar() -> bool:
     return os.path.exists(FTS_DB)
 
 
+def _fts_suche(con, q: str, limit: int, authors=None, book_ids=None):
+    """Wort-/Wurzelsuche über den Server-Index – zweistufig.
+
+    Die Engine-Abfrage verbindet passages_fts mit passages und documents,
+    BEVOR sortiert wird. Lokal ist das egal (86.000 Passagen), hier nicht:
+    ein häufiges Wort trifft Hunderttausende Abschnitte, deren Volltexte dann
+    alle aus einer 30-GB-Datei gelesen werden (gemessen: 14–27 s).
+
+    Deshalb wird erst IM FTS gerankt (dort steht nur der Index) und nur die
+    besten Zeilen werden verbunden – gemessen 0,7–2,5 s. Geparst, gestemmt
+    und bewertet wird mit derselben Engine-Logik wie offline, die Reihenfolge
+    ist also dieselbe.
+    """
+    from echo_engine.search import (parse_query, _group_expr, _matched_words,
+                                    _make_snippet)
+    groups = parse_query(q or "")
+    exprs = [e for e in (_group_expr(g) for g in groups) if e]
+    if not exprs:
+        return []
+    match_expr = " OR ".join(f"({e})" for e in exprs)
+    stem_tokens = [s for g in groups for _, s in g.include]
+    stem_tokens += [el.stem(w) for g in groups for p in g.phrases
+                    for w in p.split()]
+
+    # Filter auf Bücher zurückführen (documents ist klein, ~8.700 Zeilen).
+    docs = None
+    if book_ids:
+        docs = [int(b) for b in book_ids]
+    elif authors:
+        namen = authors if isinstance(authors, (list, tuple)) else [authors]
+        bed = " OR ".join("author LIKE ?" for _ in namen)
+        docs = [r["id"] for r in con.execute(
+            f"SELECT id FROM documents WHERE {bed}",
+            [f"%{n}%" for n in namen]).fetchall()]
+        if not docs:
+            return []
+
+    inner = ("SELECT rowid AS rid, bm25(passages_fts,2.0,1.0) AS score "
+             "FROM passages_fts WHERE passages_fts MATCH ?")
+    params = [match_expr]
+    if docs is not None:
+        marks = ",".join("?" * len(docs))
+        inner += (f" AND rowid IN (SELECT id FROM passages "
+                  f"WHERE document_id IN ({marks}))")
+        params += docs
+    inner += " ORDER BY score LIMIT ?"
+    params.append(limit)
+
+    sql = (f"SELECT p.id, p.document_id, p.page_from, p.page_to, p.text, "
+           f"d.title, d.author, s.score FROM ({inner}) s "
+           f"JOIN passages p ON p.id = s.rid "
+           f"JOIN documents d ON d.id = p.document_id ORDER BY s.score")
+    treffer = []
+    for row in con.execute(sql, params):
+        matched = _matched_words(row["text"], set(stem_tokens))
+        treffer.append({
+            "passage_id": row["id"], "document_id": row["document_id"],
+            "title": row["title"], "author": row["author"],
+            "snippet": _make_snippet(row["text"], matched),
+            "score": row["score"],
+        })
+    return treffer
+
+
 def _hit_aus_fts(con, h) -> dict:
     """Engine-Treffer in die Trefferform der App übersetzen. Die Form bleibt
     unverändert – Leser, Sortierung und Lesezeichen hängen daran."""
     m = con.execute("SELECT book_id, page_str, part, page_num FROM chunk_meta "
-                    "WHERE passage_id=?", (h.passage_id,)).fetchone()
+                    "WHERE passage_id=?", (h["passage_id"],)).fetchone()
     return {
-        "score": h.score,
-        "book_id": (m["book_id"] if m else h.document_id),
+        "score": h["score"],
+        "book_id": (m["book_id"] if m else h["document_id"]),
         "page_id": None,
         "seq": None,                       # wird beim Öffnen aufgelöst
-        "title": h.title,
-        "author": h.author,
+        "title": h["title"],
+        "author": h["author"],
         "category": None,
         "page": (m["page_str"] if m else None),
         "page_num": (m["page_num"] if m else None),
         "part": (m["part"] if m else None),
         "source": "shamela",
-        "snippet": h.snippet,
+        "snippet": h["snippet"],
     }
 
 
@@ -241,9 +305,9 @@ def search(req: SearchReq,
     if _fts_verfuegbar() and (req.q or "").strip():
         try:
             fts_con = _fts()
-            fts_hits = el.search(fts_con, req.q, limit=spanne * 3,
-                                 author=req.authors or None,
-                                 document_id=req.book_ids or None)
+            fts_hits = _fts_suche(fts_con, req.q, limit=spanne * 3,
+                                  authors=req.authors or None,
+                                  book_ids=req.book_ids or None)
         except Exception:
             fts_hits = []
 
@@ -267,7 +331,7 @@ def search(req: SearchReq,
     treffer: dict = {}
 
     for rang, h in enumerate(fts_hits):
-        schluessel = ("p", h.passage_id)
+        schluessel = ("p", h["passage_id"])
         punkte[schluessel] = punkte.get(schluessel, 0) + 1 / (RRF_K + rang)
         treffer[schluessel] = _hit_aus_fts(fts_con, h) if fts_con else None
 
