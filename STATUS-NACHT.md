@@ -72,3 +72,45 @@ wurde nicht angefasst** — die Offline-Suche ist unverändert.
   eindeutig zugeordnet werden. Im zweiten Lauf traten keine auf.
 - **Die A2-Leser-Performance** (Ruckeln bei großen Büchern) läuft wie besprochen getrennt weiter —
   hier nicht angefasst.
+
+---
+
+## Nachtrag 26.07. — Buchgefilterte Suche war zu langsam (behoben, live gemessen)
+
+**Problem:** Mit Buchfilter suchte die Wortsuche global im Volltextindex und prüfte erst danach
+jeden Treffer gegen die Buchliste. Bei einem häufigen Wort trifft das Millionen Abschnitte.
+
+**Behoben:** Je gewähltem Buch wird jetzt der `rowid`-Bereich seiner Abschnitte bestimmt und die
+Suche darauf eingegrenzt. FTS5 hält seine Trefferlisten nach `rowid` sortiert und überspringt so
+den größten Teil des Index. Da die Abschnitte eines Buches nicht lückenlos beieinanderliegen
+(gemessen: Streuung bis 38-fach), wird anschließend auf das Buch selbst nachgefiltert.
+
+| Anfrage (mit Buchfilter) | vorher | nachher |
+|---|---|---|
+| `الله` | **> 150 s (Timeout)** | **1,16 s** |
+| `الفرق` | 14,8 s | **0,31 s** |
+| `الصبر` | – | 0,13 s |
+| Leser-Suche im Buch (limit 100, mit Semantik) | – | 0,62 s |
+| drei Bücher gleichzeitig | – | 3,55 s |
+
+Treffer und Reihenfolge sind **identisch** zur alten Abfrage (direkt gegeneinander geprüft:
+0,09 s gegenüber 12,52 s, gleiche Trefferliste in gleicher Ordnung).
+
+**Der im Auftrag vorgeschlagene Weg wurde gemessen und verworfen.** Von der Kandidatenmenge zu
+treiben (per `JOIN` bzw. `CROSS JOIN`) macht es deutlich *langsamer*: `الله` im Buch brauchte damit
+799 s (JOIN) bzw. 319 s (CROSS JOIN) gegenüber 150 s vorher. Grund: `bm25()` lässt sich nur im
+Rahmen einer MATCH-Abfrage berechnen, weshalb SQLite die Volltextabfrage je Kandidatenzeile erneut
+ausführt. Der Ausführungsplan bestätigte außerdem, dass der einfache `JOIN` die Reihenfolge gar
+nicht umdreht.
+
+**Der Index auf `passages(document_id)` existierte auf der Live-Datenbank bereits** (bei der
+Optimierung am 25.07. angelegt). Er ist jetzt zusätzlich im Builder-Schema hinterlegt, damit ein
+Neuaufbau ihn mitbringt.
+
+**Noch offen (wie besprochen ein eigener Schritt):** Ein sehr häufiges Wort **ohne** Buchfilter
+bleibt langsam (`الفرق` 2,3 s, `الله` ~18 s), weil die Rangfolge über alle Treffer berechnet wird.
+
+**Am Rande gemessen:** Die erste semantische Suche nach einem Server-Neustart dauert rund 18
+Sekunden – dann lädt der Dienst das Einbettungsmodell. Danach liegt dieselbe Anfrage bei unter
+einer Sekunde. Das ist kein Fehler, aber gut zu wissen, falls dir die App direkt nach einem
+Neustart einmal träge vorkommt.
