@@ -1821,6 +1821,10 @@ function shamelaFilters(){
   if(catFilterSel.length)b.categories=catFilterSel.slice();
   if(authorFilterSel.length)b.authors=authorFilterSel.slice();
   if(bookFilterSel.length)b.book_ids=bookFilterSel.map(x=>x.id);
+  // Grundlage ist die Wort-/Wurzelsuche; der Schalter nimmt die semantische
+  // Suche dazu (wie offline). Standard: an.
+  const sem=$("#semantic");
+  b.semantic=sem?!!sem.checked:true;
   return b;
 }
 async function runShamelaSearch(){
@@ -2443,7 +2447,9 @@ async function runReaderSearch(autoSelect=true,force=false){
   if(rRemote){
     const q=groups.flat().filter(Boolean).join(" ").trim();
     if(!q){ showReaderHint();rHits=[];updateHitNav();return; }
-    const r=await api().shamela_search({q,limit:100,book_ids:[rBook]});
+    const sem=$("#semantic");
+    const r=await api().shamela_search({q,limit:100,book_ids:[rBook],
+      semantic:sem?!!sem.checked:true});
     if(r&&r.error){ showError(r.error); rHits=[];updateHitNav(); return; }
     res={hits:(r.hits||[]).map(h=>shamelaToReaderHit(h,q))};
   }else{
@@ -2906,11 +2912,11 @@ async function loadShamelaAuthors(q){
 function applySourceUI(){
   const shamela=searchSource==="shamela";
   $$("#srcToggle .srcBtn").forEach(b=>b.classList.toggle("active",b.dataset.src===searchSource));
-  // Buchfilter gibt es jetzt in beiden Modi; im Online-Modus kommen die
-  // Vorschläge vom Server. Der Semantik-Schalter bleibt online verborgen
-  // (dort wird ohnehin immer semantisch gesucht).
+  // Buch- und Semantik-Schalter gibt es jetzt in beiden Modi: Online sucht
+  // seit der Umstellung nach Wort und Wurzel wie offline, die Semantik kommt
+  // als Ergänzung dazu (standardmäßig an).
   const semLbl=$("#semantic")&&$("#semantic").closest("label");
-  if(semLbl)semLbl.style.display=shamela?"none":"";
+  if(semLbl)semLbl.style.display="";
   // Kategoriefilter nur zeigen, wenn die Quelle wirklich Kategorien liefert.
   const catLbl=$("#catSel")&&$("#catSel").closest("label");
   if(catLbl)catLbl.style.display=(shamela&&!shHasCats)?"none":"";

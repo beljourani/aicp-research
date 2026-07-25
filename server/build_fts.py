@@ -159,14 +159,16 @@ class Schreiber:
                 con.executemany(
                     "INSERT INTO passages_fts (rowid,norm,stems) VALUES (?,?,?)",
                     fts)
-                # Doppelte Kennungen dürfen den Lauf nicht abbrechen.
-                for m in meta:
-                    try:
-                        con.execute("INSERT INTO chunk_meta (passage_id,book_id,"
-                                    "page_str,part,page_num,chunk_no) "
-                                    "VALUES (?,?,?,?,?,?)", m)
-                    except sqlite3.IntegrityError:
-                        self.doppelt += 1
+                # Doppelte Kennungen überspringen – aber in EINEM Aufruf.
+                # Zeilenweises Einfügen war der Flaschenhals: 60.000
+                # Einzelaufrufe je Autor, während die Leser-Threads um die
+                # GIL konkurrieren.
+                vorher = con.total_changes
+                con.executemany(
+                    "INSERT OR IGNORE INTO chunk_meta (passage_id,book_id,"
+                    "page_str,part,page_num,chunk_no) VALUES (?,?,?,?,?,?)",
+                    meta)
+                self.doppelt += len(meta) - (con.total_changes - vorher)
                 n += len(block)
             con.execute("INSERT OR REPLACE INTO fts_state (autor,chunks,fertig) "
                         "VALUES (?,?,1)", (autor, n))
@@ -182,7 +184,7 @@ def main() -> None:
     ap.add_argument("--qdrant", default=os.environ.get("QDRANT_URL",
                                                        "http://qdrant:6333"))
     ap.add_argument("--out", default=os.environ.get("FTS_DB", "/data/fts.db"))
-    ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--workers", type=int, default=3)
     args = ap.parse_args()
 
     client = QdrantClient(url=args.qdrant, timeout=1200)
@@ -244,6 +246,7 @@ def main() -> None:
         t.start()
 
     offen_klein = len(klein)
+    getan = 0
     fehler = 0
     while offen_klein > 0:
         eintrag = ergebnisse.get()
@@ -256,7 +259,8 @@ def main() -> None:
         a, bloecke = eintrag
         erledigt += schreiber.schreibe(a, bloecke)
         offen_klein -= 1
-        if offen_klein % 100 == 0 or offen_klein == 0:
+        getan += 1
+        if getan % 25 == 0 or offen_klein == 0:
             fortschritt()
 
     # --- große Autoren: einzeln streamen --------------------------------

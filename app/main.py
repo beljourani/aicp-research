@@ -740,6 +740,10 @@ class Core:
         for k in ("categories", "authors", "book_ids", "source"):
             if body.get(k):
                 payload[k] = body[k]
+        # Semantik zusätzlich zur Wort-/Wurzelsuche (Schalter wie offline).
+        # Fehlt die Angabe, bleibt es beim Standard des Servers (an).
+        if body.get("semantic") is not None:
+            payload["semantic"] = bool(body["semantic"])
         try:
             return self._shamela_request("POST", "/search", body=payload,
                                          timeout=45)
