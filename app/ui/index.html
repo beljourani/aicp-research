@@ -2335,7 +2335,12 @@ function firstHitTarget(from,to){
 
 async function gotoPage(n,smooth=true,hit=false,gen,toPage){
   if(gen==null)gen=++rNavGen;          // eigenständiger Nav-Einstieg = neueste Nav
-  n=Math.min(rLast,Math.max(rFirst,n|0));
+  // Ohne gültige Blattnummer nicht blättern. Früher wurde daraus über n|0
+  // stillschweigend 0 und damit die erste Seite – ein Sprung ans Buchanfang,
+  // der wie ein Fehler beim Weiterklicken aussah.
+  const ziel=(typeof n==="number")?Math.trunc(n):parseInt(n,10);
+  if(!Number.isFinite(ziel)){ return; }
+  n=Math.min(rLast,Math.max(rFirst,ziel));
   // Prune um die Zielseite zentrieren, damit die frisch geladene Umgebung nicht
   // sofort wieder geleert wird (sonst Sprung auf ein leeres Sheet).
   rCenter=n;
@@ -2427,10 +2432,14 @@ async function runReaderSearch(autoSelect=true,force=false){
 // sequence_num wird zur „Seite" (page_from=page_to=seq), die Suchbegriffe
 // dienen als Wortformen für die Hervorhebung.
 function shamelaToReaderHit(h,q){
+  // Online-Treffer tragen keine Blattnummer (der Server liefert seq:null) –
+  // die Seitenkennung `page` wird deshalb mitgeführt und beim Anklicken in
+  // eine Blattnummer aufgelöst (siehe selectHit).
   return {title:h.title,author:h.author,snippet:h.snippet||"",
     matched_words:shamelaTerms(q),page_from:h.seq,page_to:h.seq,
     page_label:shamelaHitLabel(h),passage_id:null,
-    book_id:h.book_id,seq:h.seq,reliability:"exact"};
+    book_id:h.book_id,seq:h.seq,page:h.page,page_str:h.page,
+    reliability:"exact"};
 }
 // Zerlegt die Freitext-Anfrage grob in Wörter für die literale Hervorhebung.
 function shamelaTerms(q){return (q||"").split(/\s+/).map(s=>s.trim()).filter(w=>w.length>1);}
@@ -2445,6 +2454,23 @@ function updateHitNav(){
   nav.style.display=rHits.length?"inline-flex":"none";
   $("#rHitCount").textContent=rHits.length?`${rHitIdx+1} / ${rHits.length}`:"";
 }
+// Blattnummer eines Online-Treffers besorgen. Der Suchdienst kennt sie nicht;
+// sie steht im Seitenverzeichnis des Buches, das /page mitliefert. Einmal
+// aufgelöst, bleibt sie am Treffer hängen.
+async function ensureRemoteSeq(h){
+  if(Number.isInteger(h.seq))return h.seq;
+  const pg=h.page_str||h.page;
+  if(!pg)return null;
+  try{
+    const info=await api().shamela_page({book_id:h.book_id||rBook,page:pg,
+      title:rTitleTxt,author:rAuthorTxt,before:0,after:0});
+    if(info&&!info.error&&Number.isInteger(info.seq)){
+      h.seq=info.seq;h.page_from=info.seq;h.page_to=info.seq;
+      return info.seq;
+    }
+  }catch(e){}
+  return null;
+}
 async function selectHit(i){
   if(!rHits.length)return;
   const gen=++rNavGen;                   // dieser Klick ist jetzt der neueste
@@ -2455,6 +2481,11 @@ async function selectHit(i){
   if(act)act.scrollIntoView({block:"nearest"});
   rWords=h.matched_words||[];rPassageText="";
   if(h.passage_id){const p=await api().passage(h.passage_id);if(!p.error)rPassageText=p.text||"";}
+  if(rRemote&&!Number.isInteger(h.page_from)){
+    const s=await ensureRemoteSeq(h);
+    if(gen!==rNavGen)return;
+    if(!Number.isInteger(s)){ showError(t("shOpenFail")); return; }
+  }
   if(gen!==rNavGen)return;                // ein neuerer Klick hat übernommen
   // Ganze Passagenspanne neu rendern lassen (die Flexion kann auf page_to
   // liegen), damit dort tatsächlich markiert wird.
