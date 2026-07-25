@@ -73,9 +73,22 @@ class _Filter:
         self.must, self.should, self.must_not = must, should, must_not
 
 
+class _MatchAny:
+    def __init__(self, any=None):
+        self.any = any
+
+
+class _SearchParams:
+    def __init__(self, **k):
+        self.k = k
+
+
 fake_models.FieldCondition = _Cond
 fake_models.MatchValue = _Match
+fake_models.MatchAny = _MatchAny
 fake_models.Filter = _Filter
+fake_models.SearchParams = _SearchParams
+fake_models.QuantizationSearchParams = _SearchParams
 fake_qc.QdrantClient = FakeClient
 fake_qc.models = fake_models
 sys.modules["qdrant_client"] = fake_qc

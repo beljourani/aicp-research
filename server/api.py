@@ -25,6 +25,8 @@ from qdrant_client import QdrantClient
 from qdrant_client import models as qm
 
 import meta_index as mi
+# Wort-/Wurzelsuche mit derselben Engine wie offline (ohne PyMuPDF/OCR).
+import engine_light as el
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 COLLECTION = os.environ.get("QDRANT_COLLECTION", "shamela")
@@ -88,6 +90,105 @@ def _ensure_book_index(con, book_id: int) -> int:
     return mi.ensure_book_index(con, book_id, fetch=_fetch_page_strings)
 
 
+# ---------------------------------------------- Wort-/Wurzelsuche (FTS) ------
+FTS_DB = os.environ.get("FTS_DB", "/data/fts.db")
+RRF_K = 60          # wie offline in echo_engine.search.hybrid_search
+
+
+def _fts():
+    """Verbindung zum Wort-/Wurzel-Index (nur lesend)."""
+    con = sqlite3.connect(f"file:{FTS_DB}?mode=ro", uri=True, timeout=30,
+                          check_same_thread=False)
+    con.row_factory = sqlite3.Row
+    return con
+
+
+def _fts_verfuegbar() -> bool:
+    return os.path.exists(FTS_DB)
+
+
+def _hit_aus_fts(con, h) -> dict:
+    """Engine-Treffer in die Trefferform der App übersetzen. Die Form bleibt
+    unverändert – Leser, Sortierung und Lesezeichen hängen daran."""
+    m = con.execute("SELECT book_id, page_str, part, page_num FROM chunk_meta "
+                    "WHERE passage_id=?", (h.passage_id,)).fetchone()
+    return {
+        "score": h.score,
+        "book_id": (m["book_id"] if m else h.document_id),
+        "page_id": None,
+        "seq": None,                       # wird beim Öffnen aufgelöst
+        "title": h.title,
+        "author": h.author,
+        "category": None,
+        "page": (m["page_str"] if m else None),
+        "page_num": (m["page_num"] if m else None),
+        "part": (m["part"] if m else None),
+        "source": "shamela",
+        "snippet": h.snippet,
+    }
+
+
+def _qdrant_filter(req: SearchReq):
+    """Baut den Filter für die semantische Suche.
+
+    Zweiter Rückgabewert sagt, ob die semantische Suche überhaupt sinnvoll
+    ist: Buchkennungen sind aus Titel+Autor abgeleitet und stehen NICHT im
+    Qdrant-Payload – lässt sich ein gewähltes Buch nicht zurückübersetzen,
+    liefert die Vektorsuche nichts Sinnvolles. Die Wortsuche läuft trotzdem.
+    """
+    must = []
+    if req.categories:
+        must.append(qm.FieldCondition(key="category_name_ar",
+                                      match=qm.MatchAny(any=req.categories)))
+    if req.authors:
+        must.append(qm.FieldCondition(key="author",
+                                      match=qm.MatchAny(any=req.authors)))
+    if req.source:
+        must.append(qm.FieldCondition(key="source",
+                                      match=qm.MatchValue(value=req.source)))
+    if req.book_ids:
+        rows = []
+        con = _meta()
+        mi.ensure_schema(con)
+        rows = [r for r in (mi.book_row(con, b) for b in req.book_ids) if r]
+        con.close()
+        if not rows and _fts_verfuegbar():
+            # Ersatzweise aus dem Wortindex auflösen (kennt alle Bücher).
+            try:
+                f = _fts()
+                marks = ",".join("?" * len(req.book_ids))
+                rows = [dict(r) for r in f.execute(
+                    f"SELECT id AS book_id, title, author FROM documents "
+                    f"WHERE id IN ({marks})", req.book_ids).fetchall()]
+                f.close()
+            except Exception:
+                rows = []
+        if not rows:
+            return (qm.Filter(must=must) if must else None), False
+        alts = []
+        for r in rows:
+            sub = [qm.FieldCondition(key="title",
+                                     match=qm.MatchValue(value=r["title"]))]
+            if r["author"]:
+                sub.append(qm.FieldCondition(
+                    key="author", match=qm.MatchValue(value=r["author"])))
+            alts.append(qm.Filter(must=sub))
+        must.append(qm.Filter(should=alts) if len(alts) > 1 else alts[0])
+    return (qm.Filter(must=must) if must else None), True
+
+
+def _vektor_rangliste(req: SearchReq, qfilter, anzahl: int):
+    """Rangliste der semantischen Suche (unverändert wie bisher)."""
+    res = _client.query_points(
+        collection_name=COLLECTION, query=_embed(req.q), query_filter=qfilter,
+        limit=anzahl, offset=0, with_payload=True,
+        search_params=qm.SearchParams(
+            quantization=qm.QuantizationSearchParams(rescore=True,
+                                                     oversampling=2.0)),
+    ).points
+    return res
+
+
 def _auth(x_api_key: str | None, authorization: str | None) -> None:
     if not API_TOKEN:
         raise HTTPException(500, "Server ohne API_TOKEN gestartet.")
@@ -107,6 +208,8 @@ class SearchReq(BaseModel):
     authors: list[str] | None = None
     book_ids: list[int] | None = None
     source: str | None = None            # "shamela" | "quran"
+    # Semantik zusätzlich zur Wort-/Wurzelsuche (wie der Schalter offline).
+    semantic: bool = True
 
 
 # ---------------------------------------------------------------- Routen -----
@@ -124,80 +227,93 @@ def search(req: SearchReq,
            x_api_key: str | None = Header(None),
            authorization: str | None = Header(None)):
     _auth(x_api_key, authorization)
-    must = []
-    if req.categories:
-        must.append(qm.FieldCondition(key="category_name_ar",
-                                      match=qm.MatchAny(any=req.categories)))
-    if req.authors:
-        must.append(qm.FieldCondition(key="author",
-                                      match=qm.MatchAny(any=req.authors)))
-    if req.book_ids:
-        # Buchkennungen sind aus Titel+Autor abgeleitet und stehen NICHT im
-        # Qdrant-Payload – daher über die gemerkte Zuordnung in Titel/Autor
-        # zurückübersetzen (nötig u. a. für die Suche innerhalb eines Buches).
-        con = _meta()
-        mi.ensure_schema(con)
-        rows = [r for r in (mi.book_row(con, b) for b in req.book_ids) if r]
-        con.close()
-        if not rows:
-            return {"hits": [], "has_more": False,
-                    "offset": req.offset, "limit": req.limit}
-        alts = []
-        for r in rows:
-            sub = [qm.FieldCondition(key="title",
-                                     match=qm.MatchValue(value=r["title"]))]
-            if r["author"]:
-                sub.append(qm.FieldCondition(key="author",
-                                             match=qm.MatchValue(value=r["author"])))
-            alts.append(qm.Filter(must=sub))
-        must.append(qm.Filter(should=alts) if len(alts) > 1 else alts[0])
-    if req.source:
-        must.append(qm.FieldCondition(key="source",
-                                      match=qm.MatchValue(value=req.source)))
-    qfilter = qm.Filter(must=must) if must else None
+    # Filter für die semantische Seite. Die Wortsuche filtert selbst über ihre
+    # eigenen Tabellen und braucht dafür weder meta.db noch Qdrant.
+    qfilter, semantik_moeglich = _qdrant_filter(req)
 
-    # Ein Treffer mehr holen, um "es gibt weitere" zu erkennen.
-    res = _client.query_points(
-        collection_name=COLLECTION,
-        query=_embed(req.q),
-        query_filter=qfilter,
-        limit=req.limit + 1,
-        offset=req.offset,
-        with_payload=True,
-        search_params=qm.SearchParams(
-            quantization=qm.QuantizationSearchParams(rescore=True, oversampling=2.0)),
-    ).points
+    spanne = req.offset + req.limit
+    # Boolesche Anfragen (ODER / Ausschluss / Phrase) laufen rein über die
+    # Wortsuche – genau wie offline; die Semantik kann Ausschlüsse nicht
+    # berücksichtigen.
+    nur_wort = (not req.semantic) or el.is_boolean_query(req.q or "")
 
-    has_more = len(res) > req.limit
-    res = res[:req.limit]
-    hits = []
+    fts_hits, fts_con = [], None
+    if _fts_verfuegbar() and (req.q or "").strip():
+        try:
+            fts_con = _fts()
+            fts_hits = el.search(fts_con, req.q, limit=spanne * 3,
+                                 author=req.authors or None,
+                                 document_id=req.book_ids or None)
+        except Exception:
+            fts_hits = []
+
+    # Ohne Wortindex (oder ohne Treffer bei reiner Wortsuche) bleibt es bei
+    # der bisherigen semantischen Suche – der Dienst fällt nie ganz aus.
+    if fts_con is None and nur_wort and _fts_verfuegbar():
+        nur_wort = False
+
+    if nur_wort and fts_con is not None:
+        gesamt = fts_hits
+        hits = [_hit_aus_fts(fts_con, h) for h in gesamt[req.offset:spanne]]
+        has_more = len(gesamt) > spanne
+        fts_con.close()
+        return {"hits": hits, "has_more": has_more,
+                "offset": req.offset, "limit": req.limit}
+
+    # --- Zusammenführung von Wort- und Vektorsuche (RRF, wie offline) -----
+    vec = (_vektor_rangliste(req, qfilter, spanne * 3 + 1)
+           if semantik_moeglich else [])
+    punkte: dict = {}
+    treffer: dict = {}
+
+    for rang, h in enumerate(fts_hits):
+        schluessel = ("p", h.passage_id)
+        punkte[schluessel] = punkte.get(schluessel, 0) + 1 / (RRF_K + rang)
+        treffer[schluessel] = _hit_aus_fts(fts_con, h) if fts_con else None
+
     con = _meta()
     mi.ensure_schema(con)
-    for p in res:
+    for rang, p in enumerate(vec):
         pl = p.payload or {}
         title, author = pl.get("title"), pl.get("author")
         bid = mi.book_id(title, author)
         mi.remember_book(con, bid, title, author, pl.get("source"))
         page_str = pl.get("page")
-        part, page_num = mi.parse_page(page_str)
-        hits.append({
-            "score": p.score,
-            "book_id": bid,
-            "page_id": pl.get("page_id"),
-            # seq wird erst beim Öffnen bestimmt (Seitenindex des Buches);
-            # aufgeschlagen wird über `page`.
-            "seq": None,
-            "title": title,
-            "author": author,
-            "category": pl.get("category_name_ar"),
-            "page": page_str,
-            "page_num": page_num,
-            "part": part,
-            "source": pl.get("source"),
-            "snippet": pl.get("text"),
-        })
+        # Dieselbe Stelle kann in beiden Listen stehen – über
+        # (Buch, Seite, Abschnittsnummer) wird sie zusammengeführt.
+        schluessel = None
+        if fts_con is not None:
+            m = fts_con.execute(
+                "SELECT passage_id FROM chunk_meta WHERE book_id=? AND "
+                "page_str=? AND chunk_no=?",
+                (bid, page_str, pl.get("chunk_no"))).fetchone()
+            if m:
+                schluessel = ("p", m["passage_id"])
+        if schluessel is None:
+            schluessel = ("v", bid, page_str, pl.get("chunk_no"))
+        punkte[schluessel] = punkte.get(schluessel, 0) + 1 / (RRF_K + rang)
+        if treffer.get(schluessel) is None:
+            part, page_num = mi.parse_page(page_str)
+            treffer[schluessel] = {
+                "score": 0.0, "book_id": bid, "page_id": None, "seq": None,
+                "title": title, "author": author,
+                "category": pl.get("category_name_ar"),
+                "page": page_str, "page_num": page_num, "part": part,
+                "source": pl.get("source"), "snippet": pl.get("text"),
+            }
     con.commit()
     con.close()
+
+    rang_liste = sorted((k for k in treffer if treffer[k] is not None),
+                        key=lambda k: -punkte.get(k, 0))
+    hits = []
+    for k in rang_liste[req.offset:spanne]:
+        h = treffer[k]
+        h["score"] = punkte.get(k, 0)
+        hits.append(h)
+    has_more = len(rang_liste) > spanne
+    if fts_con is not None:
+        fts_con.close()
     return {"hits": hits, "has_more": has_more,
             "offset": req.offset, "limit": req.limit}
 
