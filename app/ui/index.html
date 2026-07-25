@@ -2158,7 +2158,16 @@ async function openShamelaReader(hit){
   // Verwandte Stellen dieses Buches auflisten (Treffer-Navigation), ohne von
   // der aufgeschlagenen Seite wegzuspringen.
   if(q){ try{ await runReaderSearch(false,true); }catch(e){} }
+  // Den aufgeschlagenen Treffer in der Liste hervorheben – wie lokal, wo
+  // openReader dafür selectHit ruft. Gesucht wird über die Seitenkennung
+  // (die Blattnummer kennen die Treffer anfangs nicht).
+  if(rHits.length){
+    let i=rHits.findIndex(x=>(x.page_str||x.page)&&(x.page_str||x.page)===hit.page);
+    if(i<0&&Number.isInteger(openSeq))i=rHits.findIndex(x=>x.seq===openSeq);
+    if(i>=0){ try{ await selectHit(i); }catch(e){} }
+  }
   rReady=true;
+  updateBookmarkBtn();
 }
 
 function buildSheets(){
