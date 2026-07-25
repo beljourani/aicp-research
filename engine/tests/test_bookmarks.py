@@ -100,9 +100,35 @@ def test_beide_quellen_nebeneinander():
     print("ok  test_beide_quellen_nebeneinander")
 
 
+def test_payload_aus_trefferliste():
+    """Der Payload, den ein Online-Treffer mitgibt, muss vollständig
+    ankommen – sonst lässt sich die Stelle später nicht wieder aufschlagen."""
+    con = db.connect(":memory:")
+    # genau die Felder, die shamelaBmData() in der Oberfläche liefert
+    con.execute("INSERT INTO bookmarks (doc_title,page_no,snippet,source,"
+                "book_key,page_str,page_label,doc_author,terms) "
+                "VALUES (?,?,?,'shamela',?,?,?,?,?)",
+                ("مقتطفات من السيرة", 479, "الصبر عند البلاء",
+                 252567242013657, "V23P005", "ج23 ص5", "عمر عبد الكافي",
+                 '["الصبر"]'))
+    con.commit()
+    b = con.execute("SELECT * FROM bookmarks WHERE source='shamela'").fetchone()
+    # Online-Identität = Buchkennung + Seitenkennung
+    gleiche = con.execute("SELECT id FROM bookmarks WHERE source='shamela' AND "
+                          "book_key=? AND page_str=?",
+                          (252567242013657, "V23P005")).fetchone()
+    assert gleiche is not None, "Stelle muss über book_key+page_str auffindbar sein"
+    assert b["page_label"] == "ج23 ص5", "Druckseite muss erhalten bleiben"
+    assert b["doc_author"] == "عمر عبد الكافي"
+    assert b["document_id"] is None and b["passage_id"] is None
+    con.close()
+    print("ok  test_payload_aus_trefferliste")
+
+
 if __name__ == "__main__":
     test_neue_spalten_vorhanden()
     test_migration_alte_bibliothek()
     test_migration_ist_wiederholbar()
     test_beide_quellen_nebeneinander()
+    test_payload_aus_trefferliste()
     print("\nAlle Tests bestanden.")

@@ -1857,6 +1857,13 @@ function showShamelaResults(res,append){
     box.appendChild(b);
   }
 }
+// Lesezeichen-Daten eines Online-Treffers. Die Identität eines Online-
+// Lesezeichens ist book_id + page_str (siehe bmKeyOf), nicht eine lokale ID.
+function shamelaBmData(h){
+  return {source:"shamela",book_id:h.book_id,seq:h.seq,page_str:h.page,
+          page_label:shamelaHitLabel(h),title:h.title,author:h.author,
+          snippet:h.snippet,terms:shamelaTerms(shQuery||"")};
+}
 function shamelaHitEl(h){
   const el=document.createElement("div");el.className="hit";
   const label=shamelaHitLabel(h);
@@ -1864,9 +1871,17 @@ function shamelaHitEl(h){
     <div class="top">
       <span class="htitle">${esc(h.title||"")}</span>
       <span class="hauthor">${esc(h.author||"")}</span>
-      <span class="meta"><span class="pageTag">${label?esc(label):""}</span></span>
+      <span class="meta"><span class="pageTag">${label?esc(label):""}</span>
+        <button class="bmBtn" title="${esc(t("bmAdd"))}">${svg("bookmark")}</button></span>
     </div>
     <div class="text" dir="auto">${highlight(h.snippet||"",shamelaTerms(shQuery||""))}</div>`;
+  const bm=el.querySelector(".bmBtn");
+  bm.dataset.bmkey=bmKeyOf(shamelaBmData(h));   // für den Abgleich mit dem Leser
+  if(bmKeys.has(bm.dataset.bmkey))bm.classList.add("on");
+  bm.onclick=(e)=>{
+    e.stopPropagation();
+    toggleBookmark(bm,shamelaBmData(h));
+  };
   el.onclick=()=>openShamelaReader(Object.assign({},h,{_query:shQuery||""}));
   return el;
 }
@@ -1928,6 +1943,11 @@ async function toggleBookmark(btn,data){
   const k=bmKeyOf(data);
   if(r.saved){ bmKeys.add(k); } else { bmKeys.delete(k); }
   if(btn)btn.classList.toggle("on",!!r.saved);
+  // Dieselbe Stelle kann zugleich in der Trefferliste stehen – dort das
+  // Symbol mitziehen, damit Liste und Leser nicht auseinanderlaufen.
+  $$(".bmBtn[data-bmkey]").forEach(b=>{
+    if(b!==btn&&b.dataset.bmkey===k)b.classList.toggle("on",!!r.saved);
+  });
   showToast(r.saved?t("bmSaved"):t("bmRemoved"));
 }
 // Fällt die Liste leer aus, dienen die tatsächlich gefundenen Wortformen
@@ -2545,7 +2565,10 @@ function readerBmData(){
           page_no:rPage,snippet:snip,terms:terms};
 }
 function updateBookmarkBtn(){
-  $("#rBookmark").classList.toggle("on",bmKeys.has(bmKeyOf(readerBmData())));
+  const k=bmKeyOf(readerBmData());
+  const b=$("#rBookmark");
+  b.dataset.bmkey=k;                 // für den Abgleich mit der Trefferliste
+  b.classList.toggle("on",bmKeys.has(k));
 }
 $("#rBookmark").onclick=async()=>{
   await toggleBookmark($("#rBookmark"),readerBmData());
