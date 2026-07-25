@@ -753,6 +753,12 @@ class Core:
         beim ersten Öffnen aus der Trefferliste – über die Seitenkennung
         `page` (z. B. "V01P441"). Fehlt beides oder ist die Buchkennung leer,
         gibt es eine verständliche Meldung statt eines Absturzes.
+
+        Werden `terms` mitgegeben, bekommt jede Seite zusätzlich `spans` –
+        die Fundstellen, wurzelbewusst gegen den wirklich angezeigten Text
+        berechnet (derselbe Weg wie bei lokalen Büchern). Ohne das griffe im
+        Browser nur ein wörtlicher Vergleich, der an Vokalzeichen und
+        Beugungen scheitert.
         """
         body = body or {}
         try:
@@ -776,10 +782,18 @@ class Core:
             if body.get(k):
                 params[k] = body[k]
         try:
-            return self._shamela_request("GET", "/page", params=params,
-                                         timeout=60)
+            res = self._shamela_request("GET", "/page", params=params,
+                                        timeout=60)
         except Exception as e:
             return {"error": str(e)}
+        terms = [t for t in (body.get("terms") or []) if t]
+        if terms:
+            for pg in (res.get("pages") or []):
+                try:
+                    pg["spans"] = highlight_spans(pg.get("text") or "", terms)
+                except Exception:
+                    pg["spans"] = None      # lieber ohne Marker als ohne Seite
+        return res
 
     def shamela_categories(self, _body=None):
         try:

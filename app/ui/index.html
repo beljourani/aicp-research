@@ -2145,7 +2145,8 @@ async function openShamelaReader(hit){
   // die Blattnummer der gesuchten Seite. Beim ersten Öffnen eines Buches baut
   // der Server dessen Seitenverzeichnis auf – das darf etwas dauern.
   const info=await api().shamela_page({book_id:hit.book_id,seq:hit.seq,
-      page:hit.page,title:hit.title,author:hit.author,before:0,after:0});
+      page:hit.page,title:hit.title,author:hit.author,before:0,after:0,
+      terms:readerTerms()});
   if(!info||info.error){ showError((info&&info.error)||t("shOpenFail"));
     closeReader(); return; }
   const openSeq=info.seq||hit.seq||info.first_seq||1;
@@ -2270,17 +2271,20 @@ async function ensurePages(from,to){
   need.forEach(p=>rLoaded.add(p));      // doppelte Anfragen vermeiden
   // Remote (Shamela): Seiten per sequence_num vom Server holen. Der Server
   // liefert /page mit seq=a und after=(b-a), also den ganzen Bereich auf einmal.
-  // Hervorhebung passiert clientseitig anhand der Suchbegriffe (wordSpans).
+  // Die Marker rechnet die App aus (wurzelbewusst, wie bei lokalen Büchern) –
+  // dafür gehen die Suchbegriffe mit; sonst griffe nur ein wörtlicher
+  // Vergleich, der Vokalzeichen und Beugungen verfehlt.
   const job=(rRemote
       ? api().shamela_page({book_id:rBook,seq:a,before:0,after:b-a,
-                            title:rTitleTxt,author:rAuthorTxt}).then(res=>{
+                            title:rTitleTxt,author:rAuthorTxt,
+                            terms:readerTerms()}).then(res=>{
           if(res&&res.error){need.forEach(p=>rLoaded.delete(p));return;}
           for(const pg of (res.pages||[])){
             if(pg.page_label==null) pg.page_label=shamelaPageLabel(pg);
             rPageLabels[pg.seq]=pg.page_label;
             rPageStrs[pg.seq]=pg.page_str||"";
             setSheetLabel(pg.seq,pg.page_label);
-            fillSheet(pg.seq,pg.text,null);
+            fillSheet(pg.seq,pg.text,pg.spans||null);
           }
           updateBookmarkBtn();})
       : api().pages(rDoc,a,b,readerTerms())
