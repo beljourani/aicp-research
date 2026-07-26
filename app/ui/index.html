@@ -41,7 +41,10 @@
     --shadow: 0 1px 2px rgba(20,30,25,.04), 0 8px 24px rgba(20,30,25,.06);
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
             "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-    --arab: "Scheherazade New", "Noto Naskh Arabic", "Amiri", var(--sans);
+    /* Oberflächen-Schrift (Menü, Titel, Trefferliste): kompakt & gut lesbar. */
+    --arab: "Noto Naskh Arabic", "Amiri", var(--sans);
+    /* Lese-Schrift NUR für den Dokumenttext im Leser (im Panel wählbar). */
+    --rArab: "Scheherazade New", "Noto Naskh Arabic", "Amiri", var(--sans);
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -447,7 +450,7 @@
     padding: 2px 12px; font-size: 11.5px; color: var(--muted); font-weight: 600; }
   .pageSheet .pageText { white-space: pre-wrap; word-break: break-word;
     line-height: 2.2; font-size: calc(16.5px * var(--rfont));
-    font-family: var(--arab); color: var(--ink);
+    font-family: var(--rArab); color: var(--ink);
     -webkit-user-select: text; user-select: text; cursor: text; }
   /* Leere „…"-Blätter nutzen eine feste Schrift statt var(--arab). So bricht
      ein Schrift-/Fett-Wechsel nur die wenigen GELADENEN Blätter neu um (nicht
@@ -498,8 +501,8 @@
   .typoBold.on { border-color: var(--accent); background: var(--accent-weak);
     color: var(--accent); }
   /* „kräftiger": Inhaltstext fett (Leserseiten + Trefferausschnitte) */
-  .arBold .pageSheet:not(.loading) .pageText, .arBold .hit .text,
-  .arBold .rHit .rtext { font-weight: 700; }
+  /* „kräftiger" wirkt nur auf den Lese-Dokumenttext, nicht auf die Oberfläche. */
+  .arBold .pageSheet:not(.loading) .pageText { font-weight: 700; }
   #rHitNav { display: inline-flex; align-items: center; gap: 4px; }
   #rHitCount { font-size: 12.5px; color: var(--muted); min-width: 62px;
     text-align: center; }
@@ -923,6 +926,7 @@ const T = {
     addGroup: "＋ ODER-Gruppe", toggleExclude: "Ausschluss",
     excludeLabel: "darf nicht vorkommen", excludePlaceholder: "Wort, dann Enter",
     results: "Treffer", empty: "Keine Treffer.", loadMore: "Weitere Treffer laden", loading: "lädt …",
+    searching: "Sucht …",
     start: "Gib einen Suchbegriff ein.",
     confirmDelete: "Wirklich löschen? – ",
     promptTitle: "Titel:", promptAuthor: "Autor:",
@@ -1024,6 +1028,7 @@ const T = {
     addGroup: "＋ مجموعة أو", toggleExclude: "استبعاد",
     excludeLabel: "يجب ألا يرد", excludePlaceholder: "كلمة ثم Enter",
     results: "نتيجة", empty: "لا نتائج.", loadMore: "تحميل المزيد", loading: "جارٍ التحميل …",
+    searching: "جارٍ البحث …",
     start: "اكتب كلمة للبحث.",
     confirmDelete: "حذف؟ – ",
     promptTitle: "العنوان:", promptAuthor: "المؤلف:",
@@ -1122,6 +1127,17 @@ function applyLang(l) {
 }
 function emptyBox(msg) {
   return `<div class="empty">${svg("search")}<div>${esc(msg)}</div></div>`;
+}
+// Sichtbarer Ladehinweis in der Trefferfläche, solange gesucht wird.
+function searchingBox() {
+  return `<div class="empty"><span class="spin" style="width:22px;height:22px">`
+    +`</span><div>${esc(t("searching"))}</div></div>`;
+}
+// Ladehinweis im Leser, solange das Buch/die Seiten vom Server kommen.
+function readerLoadingBox() {
+  return `<div class="empty" style="padding:64px 16px">`
+    +`<span class="spin" style="width:26px;height:26px"></span>`
+    +`<div>${esc(t("loading"))}</div></div>`;
 }
 
 /* ---------- API ---------- */
@@ -1859,6 +1875,7 @@ async function runSearch(){
   mainQuery={groups,excludes}; mainOffset=0; mainLoaded=0;
   lastSearchTerms=groups.flat();     // für Lesezeichen-Hervorhebung
   lastSearchQuery={groups:groups.map(g=>g.slice()),excludes:excludes.slice()};
+  $("#results").innerHTML=searchingBox(); $("#count").textContent=t("searching");
   const res = await api().search_terms(groups, excludes, authorFilterSel, selectedDoc, 0, PAGE, catFilterSel, bookFilterSel.map(b=>b.id));
   showResults(res, false);
 }
@@ -1890,7 +1907,7 @@ async function runShamelaSearch(){
   const q=groups.flat().filter(Boolean).join(" ").trim();
   if(!q){ $("#results").innerHTML=emptyBox(t("shamelaQueryHint")); $("#count").textContent=""; shQuery=null; return; }
   shQuery=q; shOffset=0; shLoaded=0;
-  $("#count").textContent=t("shamelaSearching");
+  $("#results").innerHTML=searchingBox(); $("#count").textContent=t("shamelaSearching");
   const res=await api().shamela_search(Object.assign({q,limit:PAGE,offset:0},shamelaFilters()));
   showShamelaResults(res,false);
 }
@@ -2167,7 +2184,7 @@ function makeSheet(p){
   s.className="pageSheet loading";s.id="pg"+p;s.dataset.page=p;
   const lbl=rRemote?(rPageLabels[p]||"…"):`${esc(t("pagePrefix"))} ${p}`;
   s.innerHTML=`<div class="pageNum">${lbl}</div>`
-    +`<div class="pageText" dir="auto">…</div>`;
+    +`<div class="pageText" dir="auto"><span class="spin" style="display:block;margin:8px auto"></span></div>`;
   s.style.minHeight=Math.max(40,pageH(p)-GAP)+"px";
   return s;
 }
@@ -2271,6 +2288,7 @@ async function openReader(docId,passageId,words,terms){
   const doSearch=!!(q.groups.length||q.excludes.length||passageId);
   $("#rHitNav").style.display="none";
   $("#reader").classList.add("open");
+  $("#rReading").innerHTML=readerLoadingBox();   // sichtbar: Buch wird geladen
   const meta=await api().document(docId);
   rTitleTxt=meta.title||"";
   $("#rTitle").textContent=rTitleTxt;
@@ -2337,6 +2355,7 @@ async function openShamelaReader(hit){
   rTitleTxt=hit.title||"";
   rAuthorTxt=hit.author||"";
   $("#rAuthor").textContent=hit.author||"";
+  $("#rReading").innerHTML=readerLoadingBox();   // sichtbar: Buch wird geladen
   // Erste Seite laden: liefert die Grenzen (first_seq/last_seq) des Buches und
   // die Blattnummer der gesuchten Seite. Beim ersten Öffnen eines Buches baut
   // der Server dessen Seitenverzeichnis auf – das darf etwas dauern.
@@ -2790,8 +2809,10 @@ function applyFont(f){
 const AR_FONTS=["Scheherazade New","Noto Naskh Arabic","Amiri","Noto Sans Arabic"];
 let rFontFamily="Scheherazade New", rBold=false;
 function applyArabFont(){
+  // NUR die Lese-Schrift des Dokuments setzen (--rArab), nicht --arab der
+  // Oberfläche – sonst würde Menü/Titel/Trefferliste die Leseschrift bekommen.
   const stack='"'+rFontFamily+'", "Noto Naskh Arabic", "Amiri", var(--sans)';
-  document.documentElement.style.setProperty("--arab",stack);
+  document.documentElement.style.setProperty("--rArab",stack);
   syncTypoPanel();
 }
 function applyBold(){
