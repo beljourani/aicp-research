@@ -114,3 +114,57 @@ bleibt langsam (`الفرق` 2,3 s, `الله` ~18 s), weil die Rangfolge über 
 Sekunden – dann lädt der Dienst das Einbettungsmodell. Danach liegt dieselbe Anfrage bei unter
 einer Sekunde. Das ist kein Fehler, aber gut zu wissen, falls dir die App direkt nach einem
 Neustart einmal träge vorkommt.
+
+---
+
+## Nachtrag 26.07. (2) — Semantik sortiert nur noch um; Marker ganzwörtig
+
+Beides galt für **online und offline gleichermaßen**, beides ist live verifiziert.
+
+### Fix A — die Semantik fügt keine Treffer mehr hinzu
+
+Bisher brachte die Bedeutungssuche eigene Stellen in die Liste. Dadurch standen dort Treffer, die
+die gesuchten Wörter gar nicht enthalten, und dieselbe Stelle konnte doppelt erscheinen. Jetzt gilt:
+**Die Wort-Treffer sind die einzige Ergebnismenge, die Semantik ändert nur deren Reihenfolge.**
+
+- offline: `hybrid_search` nimmt Vektor-Treffer nicht mehr neu auf
+- online: Vektor-Treffer werden über `chunk_meta` auf ihre Passage abgebildet und nur gewichtet,
+  wenn sie schon Wort-Treffer sind
+
+**Live geprüft** mit „الجهات الست لا" (Wurzeln `جهت`, `الس`, `لا`):
+
+| | Ergebnis |
+|---|---|
+| offline: Passagen mit **allen** drei Wurzeln | **20 von 20** |
+| online: Seiten mit **allen** drei Wurzeln | **6 von 6** |
+| mit/ohne Semantik dieselbe TrefferMENGE | ✓ online und offline |
+| Doppelungen | keine |
+
+### Fix B — Markierung wurzelbewusst und ganzwörtig
+
+Der Browser verglich die Ausschnitte wörtlich. Das markierte kurze Wörter auch **mitten in
+anderen** („لا" in „الكلام") und verfehlte umgekehrt Beugungen und vokalisierte Formen. Die
+Markierungen berechnet jetzt die App mit `highlight_spans` — dieselbe Logik wie im Leser, für beide
+Quellen.
+
+Live geprüft: online werden jetzt auch `الْجِهَاتِ`, `السِّتِّ` und `بالجهات` markiert; alle
+Markierungen liegen an Wortgrenzen. Test ergänzt, dass „لا" nicht in „الكلام" markiert wird.
+
+**Zusätzlich zum Auftrag:** Die Trefferliste **im Leser** hatte denselben Fehler und war nicht
+genannt — sie ist jetzt ebenfalls umgestellt, sonst wären dort weiterhin falsche Marker erschienen.
+
+### Antwortzeiten (unverändert)
+
+| | ohne Semantik | mit Semantik |
+|---|---|---|
+| online, gesamt | 1,27 s | 2,22 s |
+| online, im Buch | 0,92 s | 1,02 s |
+| offline | 0,05 s | 0,25 s |
+
+### Hinweis zur Messung
+
+Eine erste Prüfung schien fehlzuschlagen („0 von 6 Treffern mit allen Begriffen"). Das war ein
+Fehler meiner Prüfung, nicht des Produkts: Ich hatte den Text mit `split()` zerlegt, wodurch
+Satzzeichen am Wort kleben (`الست،`) und anders gestemmt werden als im Index. Mit der Zerlegung der
+Engine (`tokenize`) stimmt es vollständig.
+
