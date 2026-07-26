@@ -258,6 +258,7 @@ def _search_groups(con: sqlite3.Connection, groups: list[QueryGroup],
     such_terme = [n for g in groups for n, _s in g.include]
     such_terme += [w for g in groups for p in g.phrases for w in p.split()]
     formen = match_forms(such_terme)
+    je_begriff = match_forms_je_begriff(such_terme)
 
     sql = """
         SELECT p.id, p.document_id, p.page_from, p.page_to, p.text,
@@ -286,7 +287,8 @@ def _search_groups(con: sqlite3.Connection, groups: list[QueryGroup],
             passage_id=row["id"], document_id=row["document_id"],
             title=row["title"], author=row["author"],
             page_from=row["page_from"], page_to=row["page_to"],
-            snippet=_make_snippet(row["text"], matched, formen=formen),
+            snippet=_make_snippet(row["text"], matched, formen=formen,
+                                  je_begriff=je_begriff),
             score=row["score"], matched_words=matched,
             reliability=row["reliability"] or "sicher"))
     return hits
@@ -446,8 +448,59 @@ def highlight_spans(text: str, terms) -> list[tuple[int, int]]:
     return [(s, e) for s, e, _ in _match_spans(text, formen)]
 
 
+def match_forms_je_begriff(terms) -> list[tuple[set[str], set[str]]]:
+    """Formen getrennt NACH BEGRIFF – damit der Ausschnitt zu jedem gesuchten
+    Wort eine Fundstelle zeigen kann."""
+    raus = []
+    for term in (terms or []):
+        norms: set[str] = set()
+        stems: set[str] = set()
+        for tok in tokenize(term or ""):
+            stems.add(stem(tok))
+            norms.update(_norm_variants(tok))
+        if norms or stems:
+            raus.append((norms, stems))
+    return raus
+
+
+def _mehrteiliger_ausschnitt(text: str, je_begriff, width: int) -> str | None:
+    """Ausschnitt aus mehreren Bruchstücken – zu JEDEM Suchbegriff eines.
+
+    Ein einziges Fenster kann Begriffe, die in der Passage weit auseinander
+    liegen, gar nicht zusammen zeigen; dann sieht ein vollständiger Treffer
+    aus, als enthalte er nur einen der Begriffe. Deshalb wird je Begriff eine
+    Fundstelle gezeigt, verbunden durch „…".
+    """
+    if len(je_begriff) < 2:
+        return None
+    stellen = []
+    for norms, stems in je_begriff:
+        treffer = _match_spans(text, (norms, stems))
+        if treffer:
+            stellen.append(treffer[0])          # erste Fundstelle je Begriff
+    if len(stellen) < 2:
+        return None
+    # Fenster um jede Fundstelle, überlappende zusammenfassen
+    halb = max(40, width // (2 * len(stellen)))
+    fenster = sorted((max(0, a - halb), min(len(text), b + halb))
+                     for a, b, _w in stellen)
+    zusammen = [list(fenster[0])]
+    for a, b in fenster[1:]:
+        if a <= zusammen[-1][1] + 12:           # nahe beieinander -> verbinden
+            zusammen[-1][1] = max(zusammen[-1][1], b)
+        else:
+            zusammen.append([a, b])
+    teile = [text[a:b].strip() for a, b in zusammen]
+    aus = " … ".join(t for t in teile if t)
+    if zusammen[0][0] > 0:
+        aus = "…" + aus
+    if zusammen[-1][1] < len(text):
+        aus = aus + "…"
+    return aus
+
+
 def _make_snippet(text: str, matched: list[str], width: int = 240,
-                  formen=None) -> str:
+                  formen=None, je_begriff=None) -> str:
     """Schneidet einen Ausschnitt aus, in dem möglichst VIELE der gesuchten
     Begriffe stehen.
 
@@ -457,6 +510,10 @@ def _make_snippet(text: str, matched: list[str], width: int = 240,
     """
     if not text:
         return ""
+    if je_begriff:
+        mehrteilig = _mehrteiliger_ausschnitt(text, je_begriff, width)
+        if mehrteilig:
+            return mehrteilig
     if formen is not None:
         stellen = _match_spans(text, formen)
     elif matched:

@@ -121,7 +121,8 @@ def _fts_suche(con, q: str, limit: int, authors=None, book_ids=None):
     ist also dieselbe.
     """
     from echo_engine.search import (parse_query, _group_expr, _matched_words,
-                                    _make_snippet, match_forms)
+                                    _make_snippet, match_forms,
+                                    match_forms_je_begriff)
     groups = parse_query(q or "")
     exprs = [e for e in (_group_expr(g) for g in groups) if e]
     if not exprs:
@@ -133,6 +134,7 @@ def _fts_suche(con, q: str, limit: int, authors=None, book_ids=None):
     such_terme = [n for g in groups for n, _s in g.include]
     such_terme += [w for g in groups for p in g.phrases for w in p.split()]
     formen = match_forms(such_terme)
+    je_begriff = match_forms_je_begriff(such_terme)
 
     # Filter auf Bücher zurückführen (documents ist klein, ~8.700 Zeilen).
     docs = None
@@ -187,7 +189,8 @@ def _fts_suche(con, q: str, limit: int, authors=None, book_ids=None):
         treffer.append({
             "passage_id": row["id"], "document_id": row["document_id"],
             "title": row["title"], "author": row["author"],
-            "snippet": _make_snippet(row["text"], matched, formen=formen),
+            "snippet": _make_snippet(row["text"], matched, formen=formen,
+                                     je_begriff=je_begriff),
             "score": punkte[pid],
         })
     return treffer
