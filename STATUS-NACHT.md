@@ -240,3 +240,28 @@ Alle 11 Testdateien grün. Neu in `test_boolean_search.py` und `server/test_sear
 Prüfungen gegen den **Passagentext** (UND vollständig, ODER, Ausschluss mit real vorkommendem Wort,
 Artikel-Form wird markiert, Funktionswörter werden nicht erweitert).
 
+## Nachtrag 26.07. (5) — der eigentliche Punkt: der sichtbare Ausschnitt
+
+Der Nutzer hatte recht, und mein voriger Bericht war unvollständig: Bewiesen war die Korrektheit
+des **Index**, nicht die der **Anzeige**. Gemessen:
+
+| | Passage (Index) | sichtbarer Ausschnitt |
+|---|---|---|
+| „جهات ست لا" | 30/30 | 20/30 (66 %) |
+| „الله علي قال" | 30/30 | 16/30 (53 %) |
+| „الحسن ابن الدين" | 30/30 | 14/30 (46 %) |
+| „محمد عبد الله كان" | 30/30 | **11/30 (36 %)** |
+| **gesamt** | **150/150** | **90/150 (60 %)** |
+
+Ursache: Ein einzelnes 240-Zeichen-Fenster kann Begriffe, die in der Passage weit auseinander
+liegen, gar nicht zusammen zeigen. Ein vollständiger Treffer sah dadurch aus, als enthalte er nur
+einen der Begriffe.
+
+**Behoben:** Der Ausschnitt besteht jetzt aus mehreren Bruchstücken – je eines um die erste
+Fundstelle jedes Suchbegriffs, verbunden durch „…"; überlappende werden zusammengefasst. Bei einem
+einzelnen Suchbegriff bleibt alles wie bisher.
+
+**Nachgemessen: 150/150 online (100 %) und 120/120 offline (100 %).** Regression danach erneut
+vollständig: 1.380/1.380 online, 1.260/1.260 offline, Semantik ändert die Treffermenge weiterhin
+nicht, alle 11 Testdateien grün.
+
