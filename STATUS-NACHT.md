@@ -176,3 +176,67 @@ offline: „ست" findet Seiten mit „الست" (6/6 im Volltext), „جهات 
 `stem("له")=له`; im Volltext enthalten 10/10 (offline) bzw. 6/6 (online) Treffer „الله" als ganzes
 Wort. Online- und Offline-Ergebnis stimmen überein.
 
+---
+
+# Nachtrag 26.07. (4) — Grundfunktion der Suche abgesichert
+
+**Ergebnis: 4.860 geprüfte Treffer, 100 % erfüllen ihre Anfrage.** Geprüft wurde immer gegen den
+indexierten Passagentext, nie gegen den Ausschnitt und nie gegen die Seiten-Rekonstruktion.
+
+## Der gemeldete Befund war ein Anzeigefehler, kein Suchfehler
+
+Die beiden Ausreißer aus dem Auftrag habe ich am Index nachgefahren:
+
+| Treffer | Befund |
+|---|---|
+| V06P356 | enthält `ست` als **Artikel-Form `الست`** — Treffer korrekt |
+| P349 | enthält alle drei Begriffe direkt — Treffer korrekt |
+
+**Alle 8 Treffer der Ausgangsanfrage erfüllten sie bereits.** Was fehlte, war die Anzeige: Die
+Artikel-Erweiterung saß nur in der Suchabfrage, nicht in der Markierung — ein über `الست` gefundener
+Treffer wurde nicht markiert, und der Ausschnitt fand keinen Anker und zeigte nur den Anfang der
+Passage. Es *sah aus*, als fehle der Begriff.
+
+## Vier Korrekturen (online und offline identisch)
+
+1. **Artikel-Konsistenz.** `match_forms()` liefert Normalformen (inkl. Artikel-Form) und Stämme;
+   Markierung, Trefferwörter und Ausschnitt nutzen dieselben Formen wie die Suche.
+2. **Ausschnitt.** Das Fenster wird jetzt so gelegt, dass möglichst viele verschiedene Suchwörter
+   darin liegen — vorher wurde stumpf um den ersten Treffer geschnitten.
+3. **Über-Breite eingegrenzt.** Der Artikel hängt sich nie an Präpositionen, Pronomen oder Partikeln.
+   Ohne diese Einschränkung zog `له` über `الله` **3.702.177** Passagen herein, die `له` gar nicht
+   enthalten (48 % der Treffermenge). Die im Auftrag vermutete Über-Breite `لا → الا` existiert
+   dagegen **nicht** (`norm(الا)=الا`, `stem(الا)=ال`); über `اللا` kommen nur 157 Passagen herein.
+4. **Semantik ändert nur die Reihenfolge der ausgegebenen Seite.** Vorher wurde über einen dreifach
+   größeren Kandidatenvorrat umsortiert, wodurch Treffer von Rang 21–60 nach vorn rutschen konnten —
+   die TrefferMENGE hing also doch davon ab, ob die Semantik an ist (gemessen bei `لا الله`).
+
+## Prüfumfang
+
+| Prüfung | Treffer | erfüllen |
+|---|---|---|
+| Online, 16 Anfragen (UND/ODER/Ausschluss/Phrase) | 480 | **480** |
+| Online, tiefe Listen (150) + Buchfilter | 1.260 | **1.260** |
+| Online, Abschlusslauf 24 Anfragen | 1.380 | **1.380** |
+| Offline, 21 Anfragen mit echten arabischen Wörtern | 1.260 | **1.260** |
+| Offline, Ausschluss vorher/nachher + Buchfilter | 480 | **480** |
+| **Summe** | **4.860** | **4.860 (100 %)** |
+
+**Ausschluss** wurde wie gefordert mit real vorkommenden Wörtern geprüft: In allen sechs Durchläufen
+verschwanden genau die Treffer mit dem Ausschlusswort (0 fälschlich geblieben), und alle übrigen
+blieben erhalten (43/43, 31/31, 33/33, 38/38, 27/27, 31/31).
+
+**Semantik** ändert in keinem der 8 Vergleichsfälle die Treffermenge — online wie offline.
+
+## Ein Sonderfall, der korrekt ist
+
+`الله علي -قال -تعالي` liefert 0 Treffer. Grund: `stem(تعالي) == stem(علي) == علي`. Die Anfrage
+verlangt also die Wurzel `علي` und schließt sie zugleich aus — logisch leer. Zwei Ausschlüsse
+funktionieren generell (`الدين محمد -ابن -الحسن` → 219.826 Passagen).
+
+## Tests
+
+Alle 11 Testdateien grün. Neu in `test_boolean_search.py` und `server/test_search_hybrid.py`:
+Prüfungen gegen den **Passagentext** (UND vollständig, ODER, Ausschluss mit real vorkommendem Wort,
+Artikel-Form wird markiert, Funktionswörter werden nicht erweitert).
+
