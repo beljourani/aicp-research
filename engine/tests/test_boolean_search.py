@@ -107,10 +107,105 @@ def test_artikel_unabhaengig():
     print("OK  Artikel-unabhängig: ست findet الست, الله trifft nicht له")
 
 
+# --- Grundwahrheit: geprüft wird gegen den PASSAGENTEXT, nie gegen den
+#     240-Zeichen-Ausschnitt. Der Ausschnitt ist nur ein Fenster und kann
+#     täuschen – diese Falle hat hier mehrfach zu Fehldiagnosen geführt.
+
+def _erfuellt(text, anfrage):
+    """Enthält die Passage wirklich alles Geforderte? Bildet die FTS-Regel
+    nach: Normalform ODER Artikel-Form ODER Stamm, jeweils als GANZES Wort."""
+    from echo_engine.normalize import tokenize as tk, stem as st
+    from echo_engine.search import _norm_variants
+    toks = list(tk(text or ""))
+    norms, stems = set(toks), {st(t) for t in toks}
+
+    def da(n, s):
+        return any(v in norms for v in _norm_variants(n)) or s in stems
+
+    for g in parse_query(anfrage):
+        if (all(da(n, s) for n, s in g.include)
+                and all(" ".join(tk(text)).find(p) >= 0 for p in g.phrases)
+                and not any(da(n, s) for n, s in g.exclude)):
+            return True
+    return False
+
+
+def _bibliothek():
+    con = connect(":memory:")
+    index_pages(con, [
+        (1, "الجهات الست لا تخلو من إشكال عند أهل النظر. " * 3),
+        (2, "الجهات الست معروفة والكلام فيها طويل جدا. " * 3),
+        (3, "الست خصال التي ذكرها المصنف في هذا الباب. " * 3),
+        (4, "باب في الصبر والحلم من غير ذكر للجهات هنا. " * 3),
+    ], title="Prüfbuch", author="Autor")
+    con.commit()
+    return con
+
+
+def test_und_jeder_treffer_vollstaendig():
+    """UND: JEDER Treffer enthält im Passagentext alle Begriffe."""
+    con = _bibliothek()
+    for q in ["جهات ست لا", "الجهات الست", "ست جهات", "لا جهات"]:
+        hits = search(con, q, limit=50)
+        assert hits, f"keine Treffer für {q}"
+        schlecht = [h.passage_id for h in hits
+                    if not _erfuellt(_text(con, h.passage_id), q)]
+        assert not schlecht, f"{q}: Treffer ohne alle Begriffe: {schlecht}"
+    print("OK  UND – jeder Treffer enthält alle Begriffe (Passagentext)")
+
+
+def _text(con, pid):
+    return con.execute("SELECT text FROM passages WHERE id=?", (pid,)).fetchone()[0]
+
+
+def test_oder_jeder_treffer_erfuellt_eine_gruppe():
+    """ODER: jeder Treffer erfüllt mindestens eine Gruppe."""
+    con = _bibliothek()
+    q = "جهات لا | صبر حلم"
+    hits = search(con, q, limit=50)
+    assert hits
+    for h in hits:
+        assert _erfuellt(_text(con, h.passage_id), q), h.passage_id
+    print("OK  ODER – jeder Treffer erfüllt eine Gruppe")
+
+
+def test_ausschluss_mit_real_vorkommendem_wort():
+    """Ausschluss: genau die Treffer mit dem Wort fallen weg, der Rest bleibt."""
+    con = _bibliothek()
+    ohne = search(con, "الجهات الست", limit=50)
+    assert len(ohne) >= 2, "Vorbedingung: mehrere Treffer"
+    # „لا" kommt in EINEM Teil der Treffer vor – genau darum geht es.
+    hatte = {h.passage_id for h in ohne if _erfuellt(_text(con, h.passage_id), "لا")}
+    assert hatte, "Vorbedingung: das Ausschlusswort muss vorkommen"
+    mit = search(con, "الجهات الست -لا", limit=50)
+    ids = {h.passage_id for h in mit}
+    assert not (hatte & ids), "Treffer mit dem Ausschlusswort blieben stehen"
+    assert {h.passage_id for h in ohne} - hatte == ids, "übrige Treffer verloren"
+    for h in mit:
+        assert _erfuellt(_text(con, h.passage_id), "الجهات الست -لا")
+    print("OK  Ausschluss – nur die passenden Treffer fallen weg")
+
+
+def test_artikel_form_wird_markiert():
+    """Ein über die Artikel-Form gefundener Treffer wird auch markiert."""
+    from echo_engine.search import highlight_spans
+    t = "الجهات الست لا تخلو"
+    marks = [t[a:b] for a, b in highlight_spans(t, ["ست"])]
+    assert "الست" in marks, f"Artikel-Form nicht markiert: {marks}"
+    # Umgekehrt: Funktionswörter bekommen keine Artikel-Form
+    marks2 = [t[a:b] for a, b in highlight_spans("له كتاب والله أعلم", ["له"])]
+    assert "الله" not in marks2, f"Funktionswort zog die Artikel-Form: {marks2}"
+    print("OK  Artikel-Form wird markiert, Funktionswörter nicht erweitert")
+
+
 if __name__ == "__main__":
     test_parser()
     test_boolean_search_deutsch()
     test_boolean_search_arabisch()
     test_gemischt()
     test_artikel_unabhaengig()
+    test_und_jeder_treffer_vollstaendig()
+    test_oder_jeder_treffer_erfuellt_eine_gruppe()
+    test_ausschluss_mit_real_vorkommendem_wort()
+    test_artikel_form_wird_markiert()
     print("\nAlle Boolesche-Suche-Tests bestanden.")

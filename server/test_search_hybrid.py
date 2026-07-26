@@ -208,6 +208,78 @@ def test_semantic_false_ist_reine_wortsuche():
     _mit_index(pruef)
 
 
+# --- Grundwahrheit: gegen den PASSAGENTEXT im Index, nie gegen den Ausschnitt.
+
+def _erfuellt_online(text, anfrage):
+    from echo_engine.normalize import tokenize as tk, stem as st
+    from echo_engine.search import parse_query, _norm_variants
+    toks = list(tk(text or ""))
+    norms, stems = set(toks), {st(t) for t in toks}
+
+    def da(n, s):
+        return any(v in norms for v in _norm_variants(n)) or s in stems
+
+    for g in parse_query(anfrage):
+        if (all(da(n, s) for n, s in g.include)
+                and not any(da(n, s) for n, s in g.exclude)):
+            return True
+    return False
+
+
+def _passagentext(pfad, pid):
+    import sqlite3
+    con = sqlite3.connect(pfad)
+    r = con.execute("SELECT text FROM passages WHERE id=?", (pid,)).fetchone()
+    con.close()
+    return r[0] if r else ""
+
+
+def test_und_treffer_vollstaendig_online():
+    """Jeder Online-Treffer enthält im Passagentext alle Begriffe."""
+    def pruef():
+        import sqlite3
+        for q in ["الصبر البلاء", "صبر بلاء", "الصلاة الدين"]:
+            r = _suche(q=q, limit=10, semantic=False)
+            for h in r["hits"]:
+                con = sqlite3.connect(api.FTS_DB)
+                con.row_factory = sqlite3.Row
+                # Passage über Buch+Seite finden (der Treffer trägt keine id)
+                row = con.execute(
+                    "SELECT p.text FROM passages p JOIN chunk_meta c "
+                    "ON c.passage_id=p.id WHERE c.book_id=? AND c.page_str=?",
+                    (h["book_id"], h["page"])).fetchone()
+                con.close()
+                assert row, f"Passage nicht gefunden: {h['page']}"
+                assert _erfuellt_online(row["text"], q), \
+                    f"{q}: Treffer {h['page']} erfuellt die Anfrage nicht"
+        print("ok  test_und_treffer_vollstaendig_online")
+    _mit_index(pruef)
+
+
+def test_ausschluss_online_mit_echtem_wort():
+    """Ausschluss mit einem Wort, das wirklich vorkommt."""
+    def pruef():
+        ohne = _suche(q="الصبر", limit=10, semantic=False)["hits"]
+        assert ohne, "Vorbedingung: Treffer vorhanden"
+        mit = _suche(q="الصبر -البلاء", limit=10, semantic=False)["hits"]
+        seiten_ohne = {h["page"] for h in ohne}
+        seiten_mit = {h["page"] for h in mit}
+        # V01P006 enthaelt "والصبر عند البلاء" -> muss wegfallen
+        assert "V01P006" in seiten_ohne, seiten_ohne
+        assert "V01P006" not in seiten_mit, seiten_mit
+        print("ok  test_ausschluss_online_mit_echtem_wort")
+    _mit_index(pruef)
+
+
+def test_artikel_form_online_markiert():
+    """Ein über die Artikel-Form gefundener Treffer wird markiert."""
+    from echo_engine.search import highlight_spans
+    t = "الجهات الست لا تخلو"
+    marks = [t[a:b] for a, b in highlight_spans(t, ["ست"])]
+    assert "الست" in marks, marks
+    print("ok  test_artikel_form_online_markiert")
+
+
 if __name__ == "__main__":
     test_wurzelsuche_findet_beugung()
     test_vokalzeichen_egal()
@@ -218,4 +290,7 @@ if __name__ == "__main__":
     test_semantik_fuegt_nichts_hinzu()
     test_keine_doppelungen()
     test_semantic_false_ist_reine_wortsuche()
+    test_und_treffer_vollstaendig_online()
+    test_ausschluss_online_mit_echtem_wort()
+    test_artikel_form_online_markiert()
     print("\nAlle Tests bestanden.")
