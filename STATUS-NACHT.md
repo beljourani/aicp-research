@@ -168,3 +168,11 @@ Fehler meiner Prüfung, nicht des Produkts: Ich hatte den Text mit `split()` zer
 Satzzeichen am Wort kleben (`الست،`) und anders gestemmt werden als im Index. Mit der Zerlegung der
 Engine (`tokenize`) stimmt es vollständig.
 
+**Nachtrag 26.07. (3):** Artikelloses Suchwort findet auch die ال-Form (Engine-Fix `_group_expr`,
+rein query-seitig, kein Index-Neuaufbau — nur API-Container neu gebaut). Live geprüft, online wie
+offline: „ست" findet Seiten mit „الست" (6/6 im Volltext), „جهات ست لا" findet die Stelle mit
+„الجهات الست لا", und „الله" trifft **nicht** fälschlich „له" — die Anfrage lautet
+`({norm}:"الله" OR {stems}:"الل")`, es wird kein Artikel abgetrennt, und `stem("الله")=الل` ≠
+`stem("له")=له`; im Volltext enthalten 10/10 (offline) bzw. 6/6 (online) Treffer „الله" als ganzes
+Wort. Online- und Offline-Ergebnis stimmen überein.
+
