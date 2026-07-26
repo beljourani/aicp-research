@@ -1878,7 +1878,7 @@ function shamelaHitEl(h){
       <span class="meta"><span class="pageTag">${label?esc(label):""}</span>
         <button class="bmBtn" title="${esc(t("bmAdd"))}">${svg("bookmark")}</button></span>
     </div>
-    <div class="text" dir="auto">${highlight(h.snippet||"",shamelaTerms(shQuery||""))}</div>`;
+    <div class="text" dir="auto">${stitchMarks(h.snippet||"",h.snippet_spans,null,null)}</div>`;
   const bm=el.querySelector(".bmBtn");
   bm.dataset.bmkey=bmKeyOf(shamelaBmData(h));   // für den Abgleich mit dem Leser
   if(bmKeys.has(bm.dataset.bmkey))bm.classList.add("on");
@@ -1898,7 +1898,7 @@ function hitEl(h){
       <span class="meta"><span class="pageTag">${pageStr(h)}</span>${relTag(h.reliability)}
         <button class="bmBtn" title="${esc(t("bmAdd"))}">${svg("bookmark")}</button></span>
     </div>
-    <div class="text" dir="auto">${highlight(h.snippet,h.matched_words)}</div>`;
+    <div class="text" dir="auto">${stitchMarks(h.snippet||"",h.snippet_spans,null,null)}</div>`;
   const bm=el.querySelector(".bmBtn");
   if(bmKeys.has(bmKey(h.document_id,h.page_from,h.passage_id)))bm.classList.add("on");
   bm.onclick=(e)=>{
@@ -2472,7 +2472,7 @@ function shamelaToReaderHit(h,q){
     matched_words:shamelaTerms(q),page_from:h.seq,page_to:h.seq,
     page_label:shamelaHitLabel(h),passage_id:null,
     book_id:h.book_id,seq:h.seq,page:h.page,page_str:h.page,
-    part:h.part,page_num:h.page_num,
+    part:h.part,page_num:h.page_num,snippet_spans:h.snippet_spans,
     reliability:"exact"};
 }
 // Sortierschlüssel eines Treffers für die Reihenfolge im Buch. Online steht
@@ -2560,7 +2560,7 @@ function renderReaderHits(res){
     // Remote: (noch) keine Lesezeichen – Fähnchen weglassen.
     const bmHtml=rRemote?"":`<button class="bmBtn" title="${esc(t("bmAdd"))}">${svg("bookmark")}</button>`;
     el.innerHTML=`<div class="rp"><span>${pg}</span>${bmHtml}</div>`
-      +`<div class="rtext" dir="auto">${highlight(h.snippet,h.matched_words)}</div>`;
+      +`<div class="rtext" dir="auto">${stitchMarks(h.snippet||"",h.snippet_spans,null,null)}</div>`;
     const bm=el.querySelector(".bmBtn");
     if(bm){
       if(bmKeys.has(bmKey(rDoc,h.page_from,h.passage_id)))bm.classList.add("on");

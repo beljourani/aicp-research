@@ -44,7 +44,40 @@ def test_empty_terms_no_spans():
     print("OK  leere/mehrwortige Begriffe korrekt behandelt")
 
 
+
+def test_kurzes_wort_nur_ganzwoertig():
+    """Kurze Wörter dürfen nicht INNERHALB längerer Wörter markiert werden.
+
+    'لا' steckt als Zeichenfolge in 'الكلام' – der frühere wörtliche
+    Vergleich im Browser markierte es dort mit. Die wurzelbewusste
+    Markierung arbeitet auf ganzen Wörtern und tut das nicht.
+    """
+    text = "الكلام في الجهات الست لا يخلو من إشكال"
+    spans = highlight_spans(text, ["لا"])
+    markiert = [text[a:b] for a, b in spans]
+    assert markiert == ["لا"], f"erwartet nur das eigene Wort, war {markiert}"
+    # Gegenprobe: die Fundstelle liegt NICHT im Wort الكلام
+    kl = text.index("الكلام")
+    assert all(not (kl <= a < kl + len("الكلام")) for a, b in spans), \
+        "لا wurde innerhalb von الكلام markiert"
+    print("ok  test_kurzes_wort_nur_ganzwoertig")
+
+
+def test_alle_begriffe_ganzwoertig():
+    """Mehrere Begriffe: jeder nur als ganzes Wort bzw. Beugung."""
+    text = "الجهات الست لا تخلو والجهة الواحدة كذلك"
+    spans = highlight_spans(text, ["الجهات", "الست", "لا"])
+    markiert = [text[a:b] for a, b in spans]
+    assert "الجهات" in markiert and "الست" in markiert and "لا" in markiert, markiert
+    # 'لا' darf nicht in 'تخلو' markiert sein
+    tx = text.index("تخلو")
+    assert all(not (tx <= a < tx + len("تخلو")) for a, b in spans), markiert
+    print("ok  test_alle_begriffe_ganzwoertig")
+
+
 if __name__ == "__main__":
     test_spans_find_all_inflections()
     test_empty_terms_no_spans()
+    test_kurzes_wort_nur_ganzwoertig()
+    test_alle_begriffe_ganzwoertig()
     print("\nAlle Highlight-Tests bestanden.")

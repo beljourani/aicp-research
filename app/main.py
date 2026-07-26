@@ -745,10 +745,17 @@ class Core:
         if body.get("semantic") is not None:
             payload["semantic"] = bool(body["semantic"])
         try:
-            return self._shamela_request("POST", "/search", body=payload,
-                                         timeout=45)
+            res = self._shamela_request("POST", "/search", body=payload,
+                                        timeout=45)
         except Exception as e:
             return {"error": str(e)}
+        # Wie bei der lokalen Suche: Markierung wurzelbewusst und ganzwörtig
+        # in der App berechnen (kein Server-Neustart nötig).
+        terme = self._include_terme({"q": payload["q"]})
+        for h in (res.get("hits") or []):
+            h["snippet_spans"] = (highlight_spans(h.get("snippet") or "", terme)
+                                  if terme else [])
+        return res
 
     def shamela_page(self, body):
         """Seite eines Online-Buches holen.
@@ -1334,6 +1341,22 @@ class Core:
         con.close()
         return {"ok": True, "deleted": deleted}
 
+    def _include_terme(self, body) -> list:
+        """Die positiven Suchbegriffe einer Anfrage.
+
+        Sie dienen der Markierung im Textausschnitt. Ausschlüsse gehören
+        bewusst nicht dazu – markiert wird nur, wonach gesucht wurde.
+        """
+        body = body or {}
+        if body.get("mode") == "terms":
+            return [w for g in (body.get("groups") or []) for w in (g or []) if w]
+        from echo_engine.search import parse_query
+        raus = []
+        for g in parse_query(body.get("q") or ""):
+            raus += [n for n, _s in g.include]
+            raus += list(g.phrases)
+        return raus
+
     def search(self, body):
         from dataclasses import asdict
         body = body or {}
@@ -1388,7 +1411,17 @@ class Core:
         categories = [r[0] for r in con.execute(
             "SELECT name FROM categories ORDER BY name")]
         con.close()
-        return {"hits": [asdict(h) for h in hits], "authors": authors,
+        # Markierung im Ausschnitt wurzelbewusst und ganzwörtig berechnen –
+        # dieselbe Logik wie im Leser. Der frühere Weg im Browser verglich
+        # wörtlich und markierte kurze Wörter auch mitten in anderen.
+        terme = self._include_terme(body)
+        aus = []
+        for h in hits:
+            d = asdict(h)
+            d["snippet_spans"] = (highlight_spans(d.get("snippet") or "", terme)
+                                  if terme else [])
+            aus.append(d)
+        return {"hits": aus, "authors": authors,
                 "categories": categories,
                 "offset": offset, "limit": limit, "has_more": has_more}
 
