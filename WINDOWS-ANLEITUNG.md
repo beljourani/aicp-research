@@ -21,9 +21,16 @@ Falls das nicht klappt, einmal manuell:
 
 ## Ergebnis
 
-**`dist\AICP-Research-Setup.exe`** – der Installer.
-Doppelklick installiert AICP Research nach *Programme* und legt Start- und
+**`dist\AICP-Research-Setup-<Version>.exe`** – der Installer.
+Doppelklick installiert AICP Research **in Ihr Benutzerprofil**
+(`%LOCALAPPDATA%\Programs\AICP Research`) und legt Start- und
 Desktop-Verknüpfung an. Deinstallieren wie üblich über „Apps & Features".
+
+Die Installation braucht **keine Administratorrechte** – deshalb erscheint
+weder beim Installieren noch bei späteren Updates die Windows-Abfrage
+„Möchten Sie zulassen, dass durch diese App Änderungen vorgenommen werden?".
+Automatische Updates laufen dadurch still im Hintergrund; danach startet die
+App von selbst wieder.
 
 (Ohne Inno Setup als Notlösung: `dist\AICP-Research-Windows.zip` – entpacken und
 `AICPResearch.exe` starten.)
