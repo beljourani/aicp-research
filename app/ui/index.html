@@ -41,8 +41,9 @@
     --shadow: 0 1px 2px rgba(20,30,25,.04), 0 8px 24px rgba(20,30,25,.06);
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
             "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-    /* Oberflächen-Schrift (Menü, Titel, Trefferliste): kompakt & gut lesbar. */
-    --arab: "Noto Naskh Arabic", "Amiri", var(--sans);
+    /* Oberflächen-Schrift (Menü, Titel, Trefferliste): klare, gut lesbare
+       serifenlose Schrift – wirkt größer/ruhiger als Naskh bei UI-Größen. */
+    --arab: "Noto Sans Arabic", "Noto Naskh Arabic", "Amiri", var(--sans);
     /* Lese-Schrift NUR für den Dokumenttext im Leser (im Panel wählbar). */
     --rArab: "Scheherazade New", "Noto Naskh Arabic", "Amiri", var(--sans);
   }
@@ -544,6 +545,29 @@
     border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
     animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* Auffälliger Ladehinweis auf hellem Grund (Suche, Leser, ladende Seiten).
+     Akzentfarbener Ring – deutlich sichtbare Bewegung, nicht weiß-auf-weiß. */
+  .loadBox { display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 16px; padding: 60px 16px; }
+  .ring { width: 40px; height: 40px; border-radius: 50%; flex: none; display: block;
+    border: 4px solid var(--accent-weak); border-top-color: var(--accent);
+    animation: spin .8s linear infinite; }
+  .ring.sm { width: 26px; height: 26px; border-width: 3px; }
+  .loadBox .txt { font-size: 16px; font-weight: 600; color: var(--muted);
+    font-family: var(--arab); }
+  /* Arabische Oberfläche etwas größer & klarer – nur im RTL-Modus, damit die
+     deutsche Ansicht unverändert bleibt. Höhere Spezifität als die Basisregeln. */
+  [dir="rtl"] { font-size: 15.5px; }
+  [dir="rtl"] .navItem { font-size: 16px; }
+  [dir="rtl"] .navItem.subtle { font-size: 14.5px; }
+  [dir="rtl"] .inputWrap input { font-size: 17px; }
+  [dir="rtl"] .inputWrap input::placeholder { font-size: 16px; }
+  [dir="rtl"] .btn { font-size: 15px; }
+  [dir="rtl"] .chipField, [dir="rtl"] .chipField input { font-size: 15.5px; }
+  [dir="rtl"] .mfLabel { font-size: 13.5px; }
+  [dir="rtl"] .subtitle { font-size: 15px; }
+  [dir="rtl"] .hit .htitle { font-size: 16px; }
+  [dir="rtl"] .empty { font-size: 15.5px; }
   .verLabel { font-size: 11.5px; color: var(--faint); padding: 8px 11px 2px;
     letter-spacing: .02em; }
   /* Quellen-Umschalter (Bibliothek / Shamela online) */
@@ -1130,14 +1154,13 @@ function emptyBox(msg) {
 }
 // Sichtbarer Ladehinweis in der Trefferfläche, solange gesucht wird.
 function searchingBox() {
-  return `<div class="empty"><span class="spin" style="width:22px;height:22px">`
-    +`</span><div>${esc(t("searching"))}</div></div>`;
+  return `<div class="loadBox"><span class="ring"></span>`
+    +`<div class="txt">${esc(t("searching"))}</div></div>`;
 }
 // Ladehinweis im Leser, solange das Buch/die Seiten vom Server kommen.
 function readerLoadingBox() {
-  return `<div class="empty" style="padding:64px 16px">`
-    +`<span class="spin" style="width:26px;height:26px"></span>`
-    +`<div>${esc(t("loading"))}</div></div>`;
+  return `<div class="loadBox"><span class="ring"></span>`
+    +`<div class="txt">${esc(t("loading"))}</div></div>`;
 }
 
 /* ---------- API ---------- */
@@ -2184,7 +2207,7 @@ function makeSheet(p){
   s.className="pageSheet loading";s.id="pg"+p;s.dataset.page=p;
   const lbl=rRemote?(rPageLabels[p]||"…"):`${esc(t("pagePrefix"))} ${p}`;
   s.innerHTML=`<div class="pageNum">${lbl}</div>`
-    +`<div class="pageText" dir="auto"><span class="spin" style="display:block;margin:8px auto"></span></div>`;
+    +`<div class="pageText" dir="auto"><span class="ring sm" style="margin:14px auto"></span></div>`;
   s.style.minHeight=Math.max(40,pageH(p)-GAP)+"px";
   return s;
 }
