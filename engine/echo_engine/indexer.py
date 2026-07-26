@@ -25,8 +25,6 @@ LAYOUT_VERSION = 1
 def ensure_index_version(con: sqlite3.Connection) -> bool:
     """Baut den FTS-Index neu auf, wenn sich das Stemming geändert hat.
     Liefert True, wenn ein Neuaufbau stattgefunden hat."""
-    con.execute("CREATE TABLE IF NOT EXISTS meta "
-                "(key TEXT PRIMARY KEY, value TEXT)")
     row = con.execute(
         "SELECT value FROM meta WHERE key='stem_version'").fetchone()
     if row and row[0] == str(STEM_VERSION):
@@ -55,8 +53,6 @@ def ensure_text_layout_version(con: sqlite3.Connection) -> int:
 
     Liefert die Zahl der geänderten Seiten.
     """
-    con.execute("CREATE TABLE IF NOT EXISTS meta "
-                "(key TEXT PRIMARY KEY, value TEXT)")
     row = con.execute(
         "SELECT value FROM meta WHERE key='layout_version'").fetchone()
     if row and row[0] == str(LAYOUT_VERSION):

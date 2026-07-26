@@ -252,8 +252,6 @@ class Core:
 
     def get_settings(self, _body=None):
         con = self._con()
-        con.execute("CREATE TABLE IF NOT EXISTS meta "
-                    "(key TEXT PRIMARY KEY, value TEXT)")
         row = con.execute(
             "SELECT value FROM meta WHERE key='lang'").fetchone()
         con.close()
@@ -261,8 +259,6 @@ class Core:
 
     def set_settings(self, body):
         con = self._con()
-        con.execute("CREATE TABLE IF NOT EXISTS meta "
-                    "(key TEXT PRIMARY KEY, value TEXT)")
         con.execute("INSERT OR REPLACE INTO meta (key, value) "
                     "VALUES ('lang', ?)", (body.get("lang", "de"),))
         con.commit()
@@ -273,8 +269,6 @@ class Core:
     def _meta_get(self, key: str, default: str = "") -> str:
         try:
             con = self._con()
-            con.execute("CREATE TABLE IF NOT EXISTS meta "
-                        "(key TEXT PRIMARY KEY, value TEXT)")
             row = con.execute(
                 "SELECT value FROM meta WHERE key=?", (key,)).fetchone()
             con.close()
@@ -314,8 +308,6 @@ class Core:
     def set_update_repo(self, body):
         repo = (body or {}).get("repo", "").strip()
         con = self._con()
-        con.execute("CREATE TABLE IF NOT EXISTS meta "
-                    "(key TEXT PRIMARY KEY, value TEXT)")
         con.execute("INSERT OR REPLACE INTO meta (key, value) "
                     "VALUES ('update_repo', ?)", (repo,))
         con.commit()
@@ -1078,8 +1070,6 @@ class Core:
         if not key:
             return {"error": "kein Schlüssel"}
         con = self._con()
-        con.execute("CREATE TABLE IF NOT EXISTS meta "
-                    "(key TEXT PRIMARY KEY, value TEXT)")
         con.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?,?)",
                     (key, str(body.get("value", ""))))
         con.commit()

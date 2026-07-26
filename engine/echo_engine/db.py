@@ -8,6 +8,10 @@ Tabellen:
   passages_fts – FTS5-Volltextindex über zwei Felder:
                  norm  = normalisierter Text  (exaktere Treffer, höher gewichtet)
                  stems = gestemmter Text      (findet Konjugationen/Wurzeln)
+  categories / document_categories – Sammlungen (n:m)
+  authors / document_authors       – Autoren (n:m)
+  meta       – kleine Schlüssel/Wert-Einstellungen
+  bookmarks  – Lesezeichen (lokal und online)
 """
 from __future__ import annotations
 
@@ -87,6 +91,15 @@ CREATE TABLE IF NOT EXISTS document_authors (
     document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     author_id   INTEGER NOT NULL REFERENCES authors(id)   ON DELETE CASCADE,
     PRIMARY KEY (document_id, author_id)
+);
+
+-- Kleine Schlüssel/Wert-Einstellungen: Leseposition je Buch, Schriftgröße,
+-- gesehene Version, zwischengespeicherte Release-Notizen, Shamela-Zugang.
+-- Steht bewusst hier im zentralen Schema; früher legte fast jede Funktion
+-- diese Tabelle selbst an (sieben Stellen mit demselben CREATE).
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
 );
 
 -- Lesezeichen: bewusst OHNE Fremdschlüssel-Kaskade, damit sie ein
