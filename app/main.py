@@ -1500,6 +1500,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/", "/index.html"):
             self._send(200, UI_FILE.read_bytes(), "text/html; charset=utf-8")
             return
+        if self.path.startswith("/fonts/"):
+            self._font()
+            return
         if self.path.startswith("/api/page_image"):
             self._page_image()
             return
@@ -1512,6 +1515,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": str(e)}, 500)
         else:
             self._json({"error": "not found"}, 404)
+
+    def _font(self):
+        """Liefert eine mitgelieferte Leseschrift aus app/ui/fonts/.
+        Nur der Dateiname wird verwendet (kein Pfad-Ausbruch), nur .woff2."""
+        name = os.path.basename(self.path.split("?", 1)[0])
+        if not name.endswith(".woff2"):
+            self._json({"error": "not found"}, 404)
+            return
+        f = UI_FILE.parent / "fonts" / name
+        try:
+            data = f.read_bytes()
+        except Exception:
+            self._json({"error": "not found"}, 404)
+            return
+        # Schriften ändern sich nie -> lange cachen
+        self.send_response(200)
+        self.send_header("Content-Type", "font/woff2")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _page_image(self):
         """Rendert eine PDF-Seite als Bild (Originalansicht im Leser)."""
