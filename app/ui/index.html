@@ -445,7 +445,11 @@
     line-height: 2.2; font-size: calc(16.5px * var(--rfont));
     font-family: var(--arab); color: var(--ink);
     -webkit-user-select: text; user-select: text; cursor: text; }
-  .pageSheet.loading .pageText { color: var(--faint); }
+  /* Leere „…"-Blätter nutzen eine feste Schrift statt var(--arab). So bricht
+     ein Schrift-/Fett-Wechsel nur die wenigen GELADENEN Blätter neu um (nicht
+     alle tausend Platzhalter) – ohne das Scrollen anzufassen. */
+  .pageSheet.loading .pageText { color: var(--faint); font-family: var(--sans);
+    font-weight: 400; }
   .pageSheet img { max-width: 100%; display: block; margin: 0 auto;
     border-radius: 6px; }
   .pageSheet.current { border-color: var(--line-strong); }
@@ -490,7 +494,7 @@
   .typoBold.on { border-color: var(--accent); background: var(--accent-weak);
     color: var(--accent); }
   /* „kräftiger": Inhaltstext fett (Leserseiten + Trefferausschnitte) */
-  .arBold .pageSheet .pageText, .arBold .hit .text,
+  .arBold .pageSheet:not(.loading) .pageText, .arBold .hit .text,
   .arBold .rHit .rtext { font-weight: 700; }
   #rHitNav { display: inline-flex; align-items: center; gap: 4px; }
   #rHitCount { font-size: 12.5px; color: var(--muted); min-width: 62px;
@@ -2088,6 +2092,9 @@ let rTitleTxt="",rAuthorTxt="",rLoaded=new Set(),rHits=[],rHitIdx=-1,rFont=1,rRe
 // rPageStrs merkt zusätzlich die Seitenkennung ("V01P441") je Blatt – nötig,
 // um ein Online-Lesezeichen später wieder exakt aufzuschlagen.
 let rRemote=false,rBook=null,rPageLabels={},rPageStrs={};
+// Roh-Text + Marker je geladener Seite zwischenspeichern, damit Umschalten
+// (Vokalzeichen/Bild) ohne Server-Neuladen sofort neu darstellen kann.
+let rPageText={},rPageSpans={};
 let rHideTashkil=false;     // globaler Schalter: Vokalzeichen im Lesetext ausblenden
 // Generationszähler für Reader-Navigation: jeder Sprung (Klick/Taste) erhöht
 // ihn; veraltete, noch laufende Sprünge erkennen das und brechen ab (kein
@@ -2179,7 +2186,7 @@ async function openShamelaReader(hit){
   }
   rRemote=true;rBook=hit.book_id;rDoc="shx:"+hit.book_id;
   rImg=false;rHasImg=false;rPassageText="";rReady=false;
-  rLoaded=new Set();rHits=[];rHitIdx=-1;rPageLabels={};rPageStrs={};
+  rLoaded=new Set();rHits=[];rHitIdx=-1;rPageLabels={};rPageStrs={};rPageText={};rPageSpans={};
   setReaderRemoteUI(true);
   const q=hit._query||"";
   rWords=shamelaTerms(q);
@@ -2335,12 +2342,15 @@ async function ensurePages(from,to){
             if(pg.page_label==null) pg.page_label=shamelaPageLabel(pg);
             rPageLabels[pg.seq]=pg.page_label;
             rPageStrs[pg.seq]=pg.page_str||"";
+            rPageText[pg.seq]=pg.text||"";rPageSpans[pg.seq]=pg.spans||null;
             setSheetLabel(pg.seq,pg.page_label);
             fillSheet(pg.seq,pg.text,pg.spans||null);
           }
           updateBookmarkBtn();})
       : api().pages(rDoc,a,b,readerTerms())
-          .then(res=>{for(const pg of (res.pages||[]))fillSheet(pg.page_no,pg.text,pg.spans);}))
+          .then(res=>{for(const pg of (res.pages||[])){
+            rPageText[pg.page_no]=pg.text||"";rPageSpans[pg.page_no]=pg.spans||null;
+            fillSheet(pg.page_no,pg.text,pg.spans);}}))
     .catch(()=>{need.forEach(p=>rLoaded.delete(p));});
   rInflight.add(job);
   try{ await job; } finally{ rInflight.delete(job); pruneFar(); }
@@ -2379,6 +2389,7 @@ function pruneFar(){
         s.querySelector(".pageText").innerHTML="…";s.classList.add("loading");
       }
       rLoaded.delete(p);
+      delete rPageText[p]; delete rPageSpans[p];   // Cache mit freigeben
     }
   }
 }
@@ -2695,33 +2706,34 @@ document.addEventListener("mousedown",e=>{if(e.target.closest&&!e.target.closest
 
 /* ---------- Bedienelemente des Lesers ---------- */
 $("#rClose").onclick=closeReader;
-// Nach einem Umschalten (Tashkil/Bild) alle Blätter neu befüllen, aber die
-// aktuelle Seite BEHALTEN. Zuerst die Höhe jedes Blatts einfrieren (wie
-// pruneFar) – sonst fällt das Dokument zusammen und die Scrollposition
-// springt nach vorn. Dann über gotoPage sauber neu laden: das wartet das
-// echte Nachladen des Sichtfensters ab (inkl. Online-Seiten) und positioniert
-// exakt zurück – so bleiben Online-Seiten nicht ewig auf „…".
-async function reloadKeepPos(){
-  const cur=rPage;
-  $$("#rReading .pageSheet").forEach(s=>{
-    s.style.minHeight=s.offsetHeight+"px";
-    s.classList.add("loading");
-    s.querySelector(".pageText").innerHTML="…";
-  });
-  rLoaded=new Set();
-  try{ await gotoPage(cur,false); }catch(e){}
+// Nach einem Umschalten (Vokalzeichen/Bild) nur die GELADENEN Blätter aus dem
+// Cache neu darstellen – kein Server-Neuladen und keine Schleife über tausende
+// Blätter. fillSheet/stitchMarks wenden den neuen Anzeige-Zustand (disp/rImg)
+// an; die Position bleibt unangetastet. Fehlt ausnahmsweise der Text im Cache,
+// wird nur diese eine Seite nachgeladen.
+async function rerenderLoaded(){
+  const fehlt=[];
+  for(const p of [...rLoaded]){
+    if(!sheetOf(p))continue;
+    if(rPageText[p]!=null) fillSheet(p, rPageText[p], rPageSpans[p]||null);
+    else fehlt.push(p);
+  }
+  if(fehlt.length){
+    fehlt.forEach(p=>rLoaded.delete(p));
+    await ensurePages(Math.min(...fehlt),Math.max(...fehlt));
+  }
 }
-$("#rImgToggle").onclick=async()=>{rImg=!rImg;$("#rImgToggle").textContent=rImg?t("viewText"):t("viewOriginal");
-  await reloadKeepPos();};
+$("#rImgToggle").onclick=()=>{rImg=!rImg;$("#rImgToggle").textContent=rImg?t("viewText"):t("viewOriginal");
+  rerenderLoaded();};
 // Vokalzeichen (Tashkil) im Lesetext ein-/ausblenden – global, gemerkt
 function updateTashkilBtn(){
   const b=$("#rTashkil");if(b)b.textContent=rHideTashkil?t("showTashkil"):t("hideTashkil");
 }
-$("#rTashkil").onclick=async()=>{
+$("#rTashkil").onclick=()=>{
   rHideTashkil=!rHideTashkil;
   try{api().meta_set("hide_tashkil",rHideTashkil?"1":"0");}catch(e){}
   updateTashkilBtn();
-  await reloadKeepPos();
+  rerenderLoaded();
 };
 // Lesezeichen für die Stelle, an der gerade gelesen wird (an/aus)
 function readerBmData(){
