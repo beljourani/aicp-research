@@ -129,7 +129,7 @@ prüfen), und ihr Wegfall nähme eine Fähigkeit weg, ohne etwas zu gewinnen.
 
 ## 5. Was nicht gut aufgebaut ist
 
-**a) `app/ui/index.html` ist mit 3.318 Zeilen die größte Datei des Projekts.**
+**a) `app/ui/index.html` ist mit 3.319 Zeilen die größte Datei des Projekts.**
 Alles in einer Datei: Stil, Aufbau, Zustand, Netzzugriffe, Leser, Suche, Bibliothek, Lesezeichen.
 *Vorschlag:* Nicht in Module zerlegen (das brächte einen Build-Schritt und widerspräche dem
 „kein Build" -Prinzip), sondern **die Abschnitts-Kommentare zu einem Inhaltsverzeichnis am
