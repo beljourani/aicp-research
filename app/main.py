@@ -681,7 +681,27 @@ class Core:
                                    "Einstellungen prüfen.")
             raise RuntimeError(f"Server-Fehler {e.code}.")
         except urllib.error.URLError as e:
+            # Zeitüberschreitung kommt hier als eingepackter TimeoutError an.
+            if isinstance(getattr(e, "reason", None), TimeoutError):
+                raise RuntimeError(self._zeit_meldung())
             raise RuntimeError(f"Server nicht erreichbar: {e.reason}")
+        except TimeoutError:
+            # Ohne diesen Zweig landete die englische Originalmeldung
+            # ("The read operation timed out") in der deutschen Oberfläche.
+            raise RuntimeError(self._zeit_meldung())
+
+    @staticmethod
+    def _zeit_meldung() -> str:
+        """Verständliche Meldung bei Zeitüberschreitung.
+
+        Sehr häufige Wörter (z. B. „الله") treffen Millionen Abschnitte; die
+        Rangfolge darüber zu berechnen dauert. Der Hinweis soll dem Nutzer
+        sagen, was er tun kann, statt ihn mit einer technischen Meldung
+        allein zu lassen.
+        """
+        return ("Die Suche hat zu lange gedauert. Sehr häufige Wörter "
+                "durchsuchen Millionen Textstellen – bitte einen weiteren "
+                "Begriff hinzufügen oder auf ein Buch einschränken.")
 
     def shamela_status(self, _body=None):
         """Ob ein Server hinterlegt ist (URL sichtbar, Token nie)."""
