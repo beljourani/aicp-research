@@ -141,27 +141,70 @@ def test_boolesche_anfrage_nur_wortsuche():
     _mit_index(pruef)
 
 
-def test_zusammenfuehrung_mit_semantik():
-    """Mit semantic=True fließen beide Listen ein (RRF)."""
+class _P:
+    def __init__(self, payload, score=0.9):
+        self.payload, self.score = payload, score
+
+
+def test_semantik_fuegt_nichts_hinzu():
+    """Eine rein semantische Stelle OHNE die Suchwörter erscheint NICHT."""
     def pruef():
-        class P:
-            def __init__(self, payload, score):
-                self.payload, self.score = payload, score
-        # Die Semantik liefert eine Stelle, die die Wortsuche NICHT findet.
-        semantisch = [P({"title": "صحيح مسلم", "author": "مسلم",
-                         "page": "V02P100", "chunk_no": 0,
-                         "text": "الصلاة عماد الدين والصلوات خمس",
-                         "source": "shamela"}, 0.9)]
+        # 'الصلاة' steht auf V02P100 – dort kommt 'الصبر' nicht vor.
+        semantisch = [_P({"title": "صحيح مسلم", "author": "مسلم",
+                          "page": "V02P100", "chunk_no": 0,
+                          "text": "الصلاة عماد الدين والصلوات خمس",
+                          "source": "shamela"})]
+        nur_wort = _suche(q="الصبر", limit=10, semantic=False)
         echt = api._vektor_rangliste
         api._vektor_rangliste = lambda *a, **k: semantisch
         try:
-            r = _suche(q="الصبر", limit=10, semantic=True)
-            seiten = {h["page"] for h in r["hits"]}
-            assert "V02P101" in seiten, f"Worttreffer fehlt: {seiten}"
-            assert "V02P100" in seiten, f"semantischer Treffer fehlt: {seiten}"
+            hy = _suche(q="الصبر", limit=10, semantic=True)
         finally:
             api._vektor_rangliste = echt
-        print("ok  test_zusammenfuehrung_mit_semantik")
+        seiten_wort = {h["page"] for h in nur_wort["hits"]}
+        seiten_hy = {h["page"] for h in hy["hits"]}
+        assert "V02P100" not in seiten_hy, \
+            f"begriffloser Treffer wurde aufgenommen: {seiten_hy}"
+        assert seiten_hy == seiten_wort, \
+            f"Menge veraendert: {seiten_hy} != {seiten_wort}"
+        print("ok  test_semantik_fuegt_nichts_hinzu")
+    _mit_index(pruef)
+
+
+def test_keine_doppelungen():
+    """Eine Stelle in beiden Listen erscheint genau einmal."""
+    def pruef():
+        wort = _suche(q="الصبر", limit=10, semantic=False)["hits"]
+        assert wort, "Vorbedingung: Wortsuche muss etwas finden"
+        w = wort[0]
+        semantisch = [_P({"title": w["title"], "author": w["author"],
+                          "page": w["page"], "chunk_no": 0,
+                          "text": w["snippet"], "source": "shamela"})]
+        echt = api._vektor_rangliste
+        api._vektor_rangliste = lambda *a, **k: semantisch
+        try:
+            hy = _suche(q="الصبر", limit=10, semantic=True)["hits"]
+        finally:
+            api._vektor_rangliste = echt
+        schluessel = [(h["book_id"], h["page"]) for h in hy]
+        assert len(schluessel) == len(set(schluessel)), f"Doppelung: {schluessel}"
+        print("ok  test_keine_doppelungen")
+    _mit_index(pruef)
+
+
+def test_semantic_false_ist_reine_wortsuche():
+    """Mit semantic=false wird die Vektorsuche gar nicht erst gefragt."""
+    def pruef():
+        gerufen = []
+        echt = api._vektor_rangliste
+        api._vektor_rangliste = lambda *a, **k: gerufen.append(1) or []
+        try:
+            r = _suche(q="الصبر", limit=10, semantic=False)
+        finally:
+            api._vektor_rangliste = echt
+        assert not gerufen, "Semantik wurde trotz semantic=false benutzt"
+        assert r["hits"], "keine Treffer"
+        print("ok  test_semantic_false_ist_reine_wortsuche")
     _mit_index(pruef)
 
 
@@ -172,5 +215,7 @@ if __name__ == "__main__":
     test_buchfilter()
     test_autorenfilter()
     test_boolesche_anfrage_nur_wortsuche()
-    test_zusammenfuehrung_mit_semantik()
+    test_semantik_fuegt_nichts_hinzu()
+    test_keine_doppelungen()
+    test_semantic_false_ist_reine_wortsuche()
     print("\nAlle Tests bestanden.")

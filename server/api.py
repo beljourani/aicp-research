@@ -384,6 +384,10 @@ def search(req: SearchReq,
         punkte[schluessel] = punkte.get(schluessel, 0) + 1 / (RRF_K + rang)
         treffer[schluessel] = _hit_aus_fts(fts_con, h) if fts_con else None
 
+    # Die Wort-Treffer sind die EINZIGE Ergebnismenge. Die semantische Liste
+    # ändert nur ihre Reihenfolge – eine Stelle, die die gesuchten Wörter
+    # nicht enthält, kommt NICHT hinzu. Sonst stünden begrifflose Treffer in
+    # der Liste und „alle Begriffe" wäre nicht mehr verlässlich.
     con = _meta()
     mi.ensure_schema(con)
     for rang, p in enumerate(vec):
@@ -391,29 +395,18 @@ def search(req: SearchReq,
         title, author = pl.get("title"), pl.get("author")
         bid = mi.book_id(title, author)
         mi.remember_book(con, bid, title, author, pl.get("source"))
-        page_str = pl.get("page")
-        # Dieselbe Stelle kann in beiden Listen stehen – über
-        # (Buch, Seite, Abschnittsnummer) wird sie zusammengeführt.
-        schluessel = None
-        if fts_con is not None:
-            m = fts_con.execute(
-                "SELECT passage_id FROM chunk_meta WHERE book_id=? AND "
-                "page_str=? AND chunk_no=?",
-                (bid, page_str, pl.get("chunk_no"))).fetchone()
-            if m:
-                schluessel = ("p", m["passage_id"])
-        if schluessel is None:
-            schluessel = ("v", bid, page_str, pl.get("chunk_no"))
-        punkte[schluessel] = punkte.get(schluessel, 0) + 1 / (RRF_K + rang)
-        if treffer.get(schluessel) is None:
-            part, page_num = mi.parse_page(page_str)
-            treffer[schluessel] = {
-                "score": 0.0, "book_id": bid, "page_id": None, "seq": None,
-                "title": title, "author": author,
-                "category": pl.get("category_name_ar"),
-                "page": page_str, "page_num": page_num, "part": part,
-                "source": pl.get("source"), "snippet": pl.get("text"),
-            }
+        if fts_con is None:
+            continue
+        # Zuordnung zur Wort-Trefferliste über (Buch, Seite, Abschnittsnummer).
+        m = fts_con.execute(
+            "SELECT passage_id FROM chunk_meta WHERE book_id=? AND "
+            "page_str=? AND chunk_no=?",
+            (bid, pl.get("page"), pl.get("chunk_no"))).fetchone()
+        if not m:
+            continue
+        schluessel = ("p", m["passage_id"])
+        if schluessel in treffer:          # nur echte Wort-Treffer umsortieren
+            punkte[schluessel] = punkte.get(schluessel, 0) + 1 / (RRF_K + rang)
     con.commit()
     con.close()
 

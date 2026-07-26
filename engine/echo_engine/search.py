@@ -274,22 +274,13 @@ def hybrid_search(con: sqlite3.Connection, query: str, embedder=None,
     for rank, hit in enumerate(fts_hits):
         scores[hit.passage_id] = scores.get(hit.passage_id, 0) + 1 / (k + rank)
         by_id[hit.passage_id] = hit
+    # Die Wort-Treffer sind die EINZIGE Ergebnismenge. Die semantische Suche
+    # ändert nur ihre Reihenfolge – sie nimmt keine Stelle neu auf. Sonst
+    # stünden in der Liste Treffer, die die gesuchten Wörter gar nicht
+    # enthalten; „alle Begriffe" wäre dann nicht mehr verlässlich.
     for rank, (pid, _sim) in enumerate(vec_hits):
-        scores[pid] = scores.get(pid, 0) + 1 / (k + rank)
-        if pid not in by_id:
-            row = con.execute(
-                "SELECT p.id, p.document_id, p.page_from, p.page_to, p.text, "
-                "d.title, d.author, d.reliability FROM passages p "
-                "JOIN documents d ON d.id = p.document_id WHERE p.id = ?",
-                (pid,)).fetchone()
-            if row:
-                _, stem_tokens = query_forms(query)
-                matched = _matched_words(row["text"], set(stem_tokens))
-                by_id[pid] = SearchHit(
-                    row["id"], row["document_id"], row["title"],
-                    row["author"], row["page_from"], row["page_to"],
-                    _make_snippet(row["text"], matched), 0.0, matched,
-                    reliability=row["reliability"] or "sicher")
+        if pid in by_id:
+            scores[pid] = scores.get(pid, 0) + 1 / (k + rank)
 
     ranked = sorted(by_id.values(),
                     key=lambda h: -scores.get(h.passage_id, 0))
