@@ -265,3 +265,37 @@ einzelnen Suchbegriff bleibt alles wie bisher.
 vollständig: 1.380/1.380 online, 1.260/1.260 offline, Semantik ändert die Treffermenge weiterhin
 nicht, alle 11 Testdateien grün.
 
+---
+
+# Nachtrag 26.07. (6) — Leser virtualisiert
+
+**Umgebaut:** Der Leser legte bisher für *jede* Buchseite einen DOM-Knoten an (bei 63.513 Seiten
+also 63.513 auf einmal); ferne Blätter wurden nur geleert, nie entfernt. Jetzt existieren immer nur
+**~41 Blätter** (Fenster ±20 um die Leseposition), ober- und unterhalb je ein Platzhalter mit
+berechneter Höhe.
+
+**Belegte Knotenzahl (die strukturelle Garantie):**
+
+| Buch | Seiten | Knoten im DOM |
+|---|---|---|
+| مجلة الرسالة (online) | **63.513** | **21–41** |
+| الأدب المفرد (offline) | 762 | 21–41 |
+
+Die Zahl hängt **nicht** von der Buchgröße ab — das ist der eigentliche Punkt des Umbaus.
+
+**Ein Befund, der den ersten Entwurf gerettet hat:** Browser begrenzen die Höhe eines Elements auf
+2^25 px (33.554.432). Ein Buch mit 63.513 Seiten × ~1.079 px bräuchte **70 Mio. px** — die
+Platzhalter wurden abgeschnitten, und jeder weite Sprung landete daneben (Ziel 63000 → gelandet bei
+30139). Die Bildlaufhöhe wird deshalb gestaucht; innerhalb des Fensters gilt weiter die echte Höhe,
+und die Seitenzuordnung wird dort direkt am DOM abgelesen statt gerechnet.
+
+**Geprüft in der echten App (WKWebView), 28 von 28 Prüfungen bestanden:**
+Seitensprünge landen exakt (30000, 63000, 5, 12345 / 400, 760, 1, 555), weites Scrollen, Suche im
+Buch mit Treffer-Klick (Treffer im Blickfeld und markiert), Lesezeichen setzen/entfernen,
+Zitat-Seitenzuordnung, Vokalzeichen- und Schriftwechsel — alles korrekt, Knotenzahl durchgehend
+beschränkt. Alle 11 Engine-/Server-Testdateien weiter grün.
+
+**Was noch offen ist:** die **Tempo-Abnahme auf Windows/WebView2**. Meine Engine ist dafür nicht
+repräsentativ, deshalb habe ich bewusst keine Zeitangaben gemacht. Zu prüfen wäre dort: Öffnen eines
+dicken Buches, langes Scrollen, Vokalzeichen an/aus, Schriftwechsel.
+
