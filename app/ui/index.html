@@ -2891,6 +2891,11 @@ $("#rClose").onclick=closeReader;
 // an; die Position bleibt unangetastet. Fehlt ausnahmsweise der Text im Cache,
 // wird nur diese eine Seite nachgeladen.
 async function rerenderLoaded(){
+  const box=$("#rReading");
+  // Aktuelle Seite als Anker festhalten: Beim Umschalten (Vokalzeichen aus,
+  // Bild an) ändert sich die Texthöhe, die Blätter darüber schrumpfen oder
+  // wachsen – ohne Anker verrutschte die Leseposition um mehrere Seiten.
+  const anker=rPage, vorher=sheetY(anker);
   const fehlt=[];
   // Knoten gibt es nur im Fenster – alles andere ist reiner Textspeicher.
   for(let p=rWinFrom;p<=rWinTo;p++){
@@ -2903,6 +2908,9 @@ async function rerenderLoaded(){
     await ensurePages(Math.min(...fehlt),Math.max(...fehlt));
   }
   measureWindow();syncSpacers();
+  const nachher=sheetY(anker);
+  if(vorher!=null&&nachher!=null)box.scrollTop+=(nachher-vorher);
+  setCurrentPage(anker);
 }
 $("#rImgToggle").onclick=()=>{rImg=!rImg;$("#rImgToggle").textContent=rImg?t("viewText"):t("viewOriginal");
   rerenderLoaded();};
