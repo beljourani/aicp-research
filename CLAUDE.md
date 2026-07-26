@@ -50,9 +50,13 @@ python3 engine/tests/test_categories.py
 python3 engine/tests/test_authors.py
 python3 engine/tests/test_textlayout.py
 python3 engine/tests/test_bookmarks.py
+python3 engine/tests/test_hybrid.py
+python3 engine/tests/test_library_io.py
 
-# Shamela-Server: reine Datenlogik (läuft ohne Qdrant/Netz)
+# Shamela-Server: läuft ohne Qdrant/Netz (Attrappe statt Server)
 python3 server/test_meta.py
+python3 server/test_build_fts.py
+python3 server/test_search_hybrid.py
 
 # run a single test function: import and call it directly, e.g.
 python3 -c "import sys; sys.path.insert(0,'engine'); sys.path.insert(0,'engine/tests'); from test_engine import test_stemming; test_stemming()"
@@ -207,6 +211,11 @@ One file, no build step, no framework. It is long — use the section comments t
 - **German UI, Arabic as second language.** Every user-facing string goes into the `T.de` / `T.ar`
   dictionaries and is applied in `applyLang()`. Arabic switches the whole layout to RTL.
 - **No emojis** anywhere in the UI or in generated documents.
+- **Arabic is set at the same size as German**, only heavier if needed — the German view is the
+  yardstick. Do not inflate the RTL layout.
+- **Fonts are bundled** in `app/ui/fonts/` (Noto Sans Arabic for the UI, Amiri / Scheherazade New /
+  Noto Naskh for the reader, each with its OFL licence file). They are loaded via `@font-face` from
+  the local server — nothing is fetched from a CDN, which is what keeps the app fully offline.
 - Design language: minimal and calm (Notion/Linear feel), teal accent (`--accent`), generous
   whitespace, no decorative noise. New UI should look like it was always there.
 - **The search UI is field- and chip-based.** The engine has a query syntax, but the user must never
@@ -219,9 +228,20 @@ One file, no build step, no framework. It is long — use the section comments t
 - **Every key you handle must call `e.preventDefault()`.** On macOS an unhandled key produces the
   system error beep, which makes working keys feel broken. Applies to Enter in every input, Escape
   everywhere, and Backspace when it removes a chip.
-- The reader renders one `.pageSheet` per page and lazily loads text in ranges via `/api/pages`, keeping
-  a prefetch window (`BEHIND`/`AHEAD`) and discarding pages further than `KEEP` away. `KEEP` must stay
-  larger than the prefetch window, otherwise pages are dropped and re-fetched in a loop.
+- **The reader is virtualised.** Only a window of ~41 real `.pageSheet` nodes exists at any time
+  (`HALF=20` around the current page); above and below sits one `.pageSpacer` div whose height stands
+  in for the pages that are not rendered. It used to create one node per book page — 63,513 nodes for
+  a big Shamela book — which was unusable on weaker machines. Text is still loaded lazily in ranges
+  (`BEHIND`/`AHEAD`); `KEEP` only bounds the *text cache* now, not the DOM.
+  - Height model: `rHeights[p]` per measured page, unmeasured ones estimated from the running average;
+    `offsetOf()`/`pageAtOffset()` work on prefix sums.
+  - **Browsers cap an element's height at 2^25 px** (33,554,432). A 63,513-page book would need ~70 M px,
+    the spacers got truncated and every far jump landed wrong (target 63000 → 30139). The scroll height
+    is therefore compressed (`MAXH`); inside the window real heights still apply.
+  - `visiblePage()` reads the page off the DOM inside the window (~41 nodes) and only estimates from
+    the model outside it. Anything that shifts heights (window slide, refill, tashkil toggle) must
+    re-anchor the scroll position on a page via `sheetY()` — otherwise the reading position drifts.
+  - `sheetOf(p)` returns `null` for pages outside the window. Every caller must cope with that.
 - Long async flows (e.g. `openReader`) must wrap each risky step in its own `try/catch`. A single
   failing `await` used to abort the rest of the function and leave the UI half-initialised.
 
@@ -236,6 +256,16 @@ Both workflows then build and attach the installers to a GitHub Release automati
 Assets and why their names matter (`echo_engine/updater.py` → `_pick_asset`):
 - `AICP-Research-Setup-<ver>.exe` — Windows installer. Auto-update runs it silently
   (`/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS`); `installer.iss` sets `CloseApplications=yes`.
+  **Per-user install** (`PrivilegesRequired=lowest`, so `{autopf}` resolves to
+  `%LOCALAPPDATA%\Programs`): installing into `Program Files` needs admin rights, and Windows then
+  shows the UAC prompt on *every* update — even with `/SILENT`. Without admin rights the silent
+  update really is silent, like on macOS. A second `[Run]` entry (`skipifnotsilent`) restarts the app
+  after a silent update; relying on `RestartApplications` alone was racy because the app exits itself
+  so its files can be replaced. A double start is harmless — the single-instance lock just focuses
+  the existing window.
+  Note: this only takes effect for releases built *after* the change; the currently installed
+  version still performs one last update the old way, and the move from `Program Files` to the
+  per-user folder needs one manual reinstall (otherwise two installations sit side by side).
 - `AICP-Research-macOS-<ver>.zip` — the `.app` bundle, used for **automatic** macOS updates. A detached
   shell script waits for the app to quit, swaps the bundle in place, strips the quarantine attribute
   and relaunches.
