@@ -555,19 +555,11 @@
   .ring.sm { width: 26px; height: 26px; border-width: 3px; }
   .loadBox .txt { font-size: 16px; font-weight: 600; color: var(--muted);
     font-family: var(--arab); }
-  /* Arabische Oberfläche etwas größer & klarer – nur im RTL-Modus, damit die
-     deutsche Ansicht unverändert bleibt. Höhere Spezifität als die Basisregeln. */
-  [dir="rtl"] { font-size: 15.5px; }
-  [dir="rtl"] .navItem { font-size: 16px; }
-  [dir="rtl"] .navItem.subtle { font-size: 14.5px; }
-  [dir="rtl"] .inputWrap input { font-size: 17px; }
-  [dir="rtl"] .inputWrap input::placeholder { font-size: 16px; }
-  [dir="rtl"] .btn { font-size: 15px; }
-  [dir="rtl"] .chipField, [dir="rtl"] .chipField input { font-size: 15.5px; }
-  [dir="rtl"] .mfLabel { font-size: 13.5px; }
-  [dir="rtl"] .subtitle { font-size: 15px; }
-  [dir="rtl"] .hit .htitle { font-size: 16px; }
-  [dir="rtl"] .empty { font-size: 15.5px; }
+  /* Arabische Oberfläche: GLEICHE Größe wie Deutsch – nur etwas kräftiger, weil
+     Noto Sans Arabic bei gleichem Gewicht dünner/blasser wirkt als die lateinische
+     Schrift. So ist sie so gut sichtbar wie die (fette) deutsche Ansicht. */
+  [dir="rtl"] { font-weight: 500; }
+  [dir="rtl"] .navItem { font-weight: 600; }
   .verLabel { font-size: 11.5px; color: var(--faint); padding: 8px 11px 2px;
     letter-spacing: .02em; }
   /* Quellen-Umschalter (Bibliothek / Shamela online) */
