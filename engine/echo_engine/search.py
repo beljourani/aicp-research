@@ -71,16 +71,39 @@ def _esc(t: str) -> str:
     return '"' + t.replace('"', '""') + '"'
 
 
+def _norm_variants(n: str) -> list[str]:
+    """Artikel-Varianten für die norm-Suche.
+
+    Der bestimmte Artikel „ال" klebt im Arabischen am Wort. Ein artikelloses
+    Suchwort soll deshalb auch die ال-Form finden (ست -> الست), sonst findet
+    man ein Substantiv nur, wenn man den Artikel exakt so eintippt wie im Text.
+    Nötig, weil der Stemmer bei manchen (oft kurzen) Wörtern uneinheitlich ist:
+    stem("الست")=="الس" != stem("ست"), sodass weder norm noch stems greifen.
+
+    Nur diese Richtung (Artikel ergänzen). Das Abtrennen von „ال" bei einem
+    Suchwort wäre gefährlich – „الله" würde zu „له" und träfe jedes „له".
+    """
+    if n.startswith("ال"):
+        return [n]
+    return [n, "ال" + n]
+
+
+def _term_expr(n: str, s: str) -> str:
+    """FTS5-Ausdruck für einen Einzelbegriff: norm (inkl. Artikel-Variante)
+    ODER Stamm."""
+    alts = " OR ".join(f'{{norm}} : {_esc(v)}' for v in _norm_variants(n))
+    return f'({alts} OR {{stems}} : {_esc(s)})'
+
+
 def _group_expr(g: QueryGroup) -> str | None:
     """Baut den FTS5-MATCH-Ausdruck für eine Gruppe."""
-    positive = [f'({{norm}} : {_esc(n)} OR {{stems}} : {_esc(s)})'
-                for n, s in g.include]
+    positive = [_term_expr(n, s) for n, s in g.include]
     positive += [f'{{norm}} : {_esc(p)}' for p in g.phrases]
     if not positive:
         return None  # reine Ausschluss-Gruppe ist nicht sinnvoll
     expr = " AND ".join(positive)
     for n, s in g.exclude:
-        expr = f'({expr}) NOT ({{norm}} : {_esc(n)} OR {{stems}} : {_esc(s)})'
+        expr = f'({expr}) NOT {_term_expr(n, s)}'
     for p in g.neg_phrases:
         expr = f'({expr}) NOT {{norm}} : {_esc(p)}'
     return expr

@@ -90,9 +90,27 @@ def test_gemischt():
     print("OK  Gemischt Deutsch+Arabisch in einer Anfrage")
 
 
+def test_artikel_unabhaengig():
+    # Der bestimmte Artikel „ال" klebt im Arabischen am Wort. Ein artikelloses
+    # Suchwort muss die ال-Form finden (ست -> الست), auch wenn der Stemmer bei
+    # solchen kurzen Wörtern uneinheitlich stemmt.
+    con = connect(":memory:")
+    index_pages(con, [
+        (1, "معنى قول الطحاوي لا تحويه الجهات الست كسائر المبتدعات وهذا الكلام"),
+        (2, "قال المؤلف الله رب العالمين وله الحمد وهذا كلام في العقيدة"),
+    ], title="Artikel")
+    # Ohne Artikel eingegeben -> muss die Stelle mit Artikel finden
+    assert 1 in [h.page_from for h in search(con, "جهات ست لا")]
+    assert 1 in [h.page_from for h in search(con, "ست")]
+    # Gefahr-Gegenprobe: „الله" (beginnt mit ال) darf NICHT jedes „له" treffen
+    assert [h.page_from for h in search(con, "الله")] == [2]
+    print("OK  Artikel-unabhängig: ست findet الست, الله trifft nicht له")
+
+
 if __name__ == "__main__":
     test_parser()
     test_boolean_search_deutsch()
     test_boolean_search_arabisch()
     test_gemischt()
+    test_artikel_unabhaengig()
     print("\nAlle Boolesche-Suche-Tests bestanden.")
