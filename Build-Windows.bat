@@ -115,12 +115,18 @@ if defined ISCC (
   echo    Verwende Inno Setup: "!ISCC!"
   "!ISCC!" build\installer.iss || ( echo [FEHLER] Inno Setup fehlgeschlagen. & pause & exit /b 1 )
   echo.
-  if exist "dist\AICP-Research-Setup.exe" (
+  REM Der Dateiname enthaelt die Version (AICP-Research-Setup-1.0.0.exe),
+  REM deshalb mit Platzhalter suchen - sonst meldet der Build faelschlich
+  REM einen Fehler, obwohl der Installer erzeugt wurde.
+  set "SETUPEXE="
+  for %%F in ("dist\AICP-Research-Setup-*.exe") do set "SETUPEXE=%%~fF"
+  if defined SETUPEXE (
     echo ==========================================================
     echo   FERTIG.  Der Installer liegt hier:
-    echo       dist\AICP-Research-Setup.exe
-    echo   Doppelklick darauf installiert AICP Research nach "Programme"
-    echo   und legt eine Start- und Desktop-Verknuepfung an.
+    echo       !SETUPEXE!
+    echo   Doppelklick darauf installiert AICP Research in Ihr
+    echo   Benutzerprofil ^(ohne Administrator-Abfrage^) und legt eine
+    echo   Start- und Desktop-Verknuepfung an.
     echo ==========================================================
   ) else (
     echo [FEHLER] Installer wurde nicht erzeugt. Bitte Ausgabe oben pruefen.
