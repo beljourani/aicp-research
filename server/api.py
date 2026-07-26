@@ -382,9 +382,13 @@ def search(req: SearchReq,
     punkte: dict = {}
     treffer: dict = {}
 
-    for rang, h in enumerate(fts_hits):
+    # Umsortiert wird NUR die ausgegebene Trefferseite – sonst hinge die
+    # TrefferMENGE davon ab, ob die Semantik an ist (Treffer von weiter hinten
+    # könnten nach vorn rutschen). Sie soll nur die Reihenfolge ändern.
+    seite = fts_hits[req.offset:spanne]
+    for rang, h in enumerate(seite):
         schluessel = ("p", h["passage_id"])
-        punkte[schluessel] = punkte.get(schluessel, 0) + 1 / (RRF_K + rang)
+        punkte[schluessel] = 1 / (RRF_K + rang)
         treffer[schluessel] = _hit_aus_fts(fts_con, h) if fts_con else None
 
     # Die Wort-Treffer sind die EINZIGE Ergebnismenge. Die semantische Liste
@@ -416,11 +420,11 @@ def search(req: SearchReq,
     rang_liste = sorted((k for k in treffer if treffer[k] is not None),
                         key=lambda k: -punkte.get(k, 0))
     hits = []
-    for k in rang_liste[req.offset:spanne]:
+    for k in rang_liste:
         h = treffer[k]
         h["score"] = punkte.get(k, 0)
         hits.append(h)
-    has_more = len(rang_liste) > spanne
+    has_more = len(fts_hits) > spanne
     if fts_con is not None:
         fts_con.close()
     return {"hits": hits, "has_more": has_more,

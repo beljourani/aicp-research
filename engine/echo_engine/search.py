@@ -318,10 +318,15 @@ def hybrid_search(con: sqlite3.Connection, query: str, embedder=None,
     vec_hits = vector_search(con, qvec, limit=span * 3, author=author,
                              document_id=document_id, category=category)
 
+    # Umsortiert wird NUR die tatsächlich ausgegebene Trefferseite. Würde man
+    # über einen größeren Kandidatenvorrat umsortieren, könnten Treffer von
+    # weiter hinten nach vorn rutschen – die TrefferMENGE hinge dann davon ab,
+    # ob die Semantik an ist. Sie soll aber nur die Reihenfolge ändern.
+    seite = fts_hits[offset:span]
     scores: dict[int, float] = {}
     by_id: dict[int, SearchHit] = {}
-    for rank, hit in enumerate(fts_hits):
-        scores[hit.passage_id] = scores.get(hit.passage_id, 0) + 1 / (k + rank)
+    for rank, hit in enumerate(seite):
+        scores[hit.passage_id] = 1 / (k + rank)
         by_id[hit.passage_id] = hit
     # Die Wort-Treffer sind die EINZIGE Ergebnismenge. Die semantische Suche
     # ändert nur ihre Reihenfolge – sie nimmt keine Stelle neu auf. Sonst
@@ -335,7 +340,7 @@ def hybrid_search(con: sqlite3.Connection, query: str, embedder=None,
                     key=lambda h: -scores.get(h.passage_id, 0))
     for h in ranked:
         h.score = scores.get(h.passage_id, 0)
-    return ranked[offset:span]
+    return ranked
 
 
 def _browse(con: sqlite3.Connection, limit: int, author,
