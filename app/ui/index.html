@@ -435,6 +435,10 @@
   #rReading { overflow-y: auto; background: var(--surface);
     padding: 26px 24px 70px; --rfont: 1;
     -webkit-user-select: text; user-select: text; }
+  /* Platzhalter für die nicht gerenderten Seiten ober-/unterhalb des
+     Fensters. Sie tragen nur Höhe, damit Scrollbalken und Sprungziele
+     stimmen, ohne dass für jede Buchseite ein Knoten existiert. */
+  .pageSpacer { margin: 0; padding: 0; width: 100%; pointer-events: none; }
   .pageSheet { position: relative; max-width: 820px; margin: 0 auto 30px;
     background: #fff; border: 1px solid var(--line); border-radius: 10px;
     box-shadow: var(--shadow); padding: 44px 48px 46px; min-height: 260px; }
@@ -2111,7 +2115,140 @@ let rCenter=null;
 let rInflight=new Set();
 // Puffer: so viele Seiten werden im Voraus geladen, damit beim Weiterlesen
 // nie gewartet werden muss. KEEP muss größer sein als der Puffer.
-const BEHIND=3, AHEAD=10, KEEP=30;
+const BEHIND=3, AHEAD=10, KEEP=60;
+// --- Fenster-Rendering ----------------------------------------------------
+// Es existieren immer nur ~2*HALF+1 echte Blätter im DOM, egal wie dick das
+// Buch ist. Ober- und unterhalb steht je ein Platzhalter mit berechneter Höhe,
+// damit Scrollbalken und Scrollpositionen stimmen. Früher wurde für JEDE
+// Buchseite ein Knoten angelegt (bei 8.000 Seiten 8.000 Knoten) und ferne
+// Blätter nur geleert – auf schwächeren Geräten unbenutzbar.
+const HALF=20;          // Fensterradius in Seiten
+const RAND=6;           // so nah am Fensterrand wird nachgeschoben
+const GAP=30;           // margin-bottom der .pageSheet – gehört zur Höhe
+let rWinFrom=1,rWinTo=0;        // aktuell gerendertes Fenster
+let rHeights={};                // gemessene Höhen je Seite
+let rAvgH=600;                  // Schätzwert für noch nie gemessene Seiten
+let rMessungen=0,rMessSumme=0;  // laufender Mittelwert
+let rPrefix=null,rPrefixAlt=true;   // Präfixsummen der Höhen (für Offsets)
+
+function pageH(p){const h=rHeights[p];return (h&&h>0)?h:rAvgH;}
+function prefixNeu(){
+  const n=Math.max(0,rLast-rFirst+1);
+  rPrefix=new Float64Array(n+1);
+  for(let i=1;i<=n;i++)rPrefix[i]=rPrefix[i-1]+pageH(rFirst+i-1);
+  rPrefixAlt=false;
+}
+// y-Position der Oberkante von Seite p im gedachten Gesamtdokument
+function offsetOf(p){
+  if(rPrefixAlt)prefixNeu();
+  const i=Math.max(0,Math.min(rPrefix.length-1,(p|0)-rFirst));
+  return rPrefix[i];
+}
+function totalH(){ if(rPrefixAlt)prefixNeu(); return rPrefix[rPrefix.length-1]; }
+// Browser begrenzen die Höhe eines Elements (WebKit/Chromium: 2^25 px). Ein
+// Buch mit 63.000 Seiten bräuchte ~70 Mio. px – die Platzhalter würden
+// abgeschnitten und jede Offset-Rechnung ginge daneben. Deshalb wird die
+// Bildlaufhöhe gestaucht; innerhalb des Fensters gilt weiter die echte Höhe.
+const MAXH=20000000;
+function skala(){const t=totalH();return t>MAXH?MAXH/t:1;}
+function vOff(p){return offsetOf(p)*skala();}
+function vTotal(){return Math.min(totalH(),MAXH);}
+// Welche Seite liegt bei dieser Scrollhöhe? (Binärsuche über die Präfixsummen)
+function pageAtOffset(y){
+  if(rPrefixAlt)prefixNeu();
+  let lo=0,hi=rPrefix.length-2;
+  if(hi<0)return rFirst;
+  while(lo<hi){const m=(lo+hi+1)>>1; if(rPrefix[m]<=y)lo=m; else hi=m-1;}
+  return rFirst+lo;
+}
+// Ein Blatt erzeugen (noch ungefüllt, mit geschätzter Höhe als Platzhalter)
+function makeSheet(p){
+  const s=document.createElement("div");
+  s.className="pageSheet loading";s.id="pg"+p;s.dataset.page=p;
+  const lbl=rRemote?(rPageLabels[p]||"…"):`${esc(t("pagePrefix"))} ${p}`;
+  s.innerHTML=`<div class="pageNum">${lbl}</div>`
+    +`<div class="pageText" dir="auto">…</div>`;
+  s.style.minHeight=Math.max(40,pageH(p)-GAP)+"px";
+  return s;
+}
+// Gemessene Höhen der gerenderten Blätter ins Modell übernehmen
+function measureWindow(){
+  let geaendert=false;
+  for(let p=rWinFrom;p<=rWinTo;p++){
+    const s=sheetOf(p);if(!s||s.classList.contains("loading"))continue;
+    const h=s.offsetHeight+GAP;
+    if(h>0&&Math.abs((rHeights[p]||0)-h)>1){
+      if(!rHeights[p]){rMessungen++;rMessSumme+=h;}
+      else{rMessSumme+=h-rHeights[p];}
+      rHeights[p]=h;geaendert=true;
+    }
+  }
+  if(geaendert){
+    if(rMessungen>0)rAvgH=Math.max(120,rMessSumme/rMessungen);
+    rPrefixAlt=true;
+  }
+  return geaendert;
+}
+// Platzhalterhöhen nachziehen; optional die Scrollposition an einer Seite
+// verankern, damit gemessene Höhenänderungen nichts verschieben.
+function syncSpacers(){
+  const oben=document.getElementById("rSpacerTop");
+  const unten=document.getElementById("rSpacerBot");
+  if(oben)oben.style.height=vOff(rWinFrom)+"px";
+  if(unten)unten.style.height=Math.max(0,vTotal()-vOff(rWinTo+1))+"px";
+}
+// Bildschirmposition eines Blatts relativ zum Lesebereich (exakt, am DOM).
+function sheetY(p){
+  const s=sheetOf(p);if(!s)return null;
+  const box=$("#rReading");
+  return s.getBoundingClientRect().top-box.getBoundingClientRect().top;
+}
+// Fenster um `center` aufbauen. Gibt false zurück, wenn es schon passt.
+function buildWindow(center,erzwingen){
+  center=Math.min(rLast,Math.max(rFirst,(center|0)||rFirst));
+  const von=Math.max(rFirst,center-HALF), bis=Math.min(rLast,center+HALF);
+  if(!erzwingen&&von===rWinFrom&&bis===rWinTo)return false;
+  const box=$("#rReading");
+  box.innerHTML="";
+  const frag=document.createDocumentFragment();
+  const oben=document.createElement("div");
+  oben.id="rSpacerTop";oben.className="pageSpacer";
+  frag.appendChild(oben);
+  for(let p=von;p<=bis;p++)frag.appendChild(makeSheet(p));
+  const unten=document.createElement("div");
+  unten.id="rSpacerBot";unten.className="pageSpacer";
+  frag.appendChild(unten);
+  box.appendChild(frag);
+  rWinFrom=von;rWinTo=bis;
+  // Was schon im Textspeicher liegt, sofort darstellen (kein Nachladen nötig)
+  for(let p=von;p<=bis;p++)if(rPageText[p]!=null)fillSheet(p,rPageText[p],rPageSpans[p]||null);
+  measureWindow();
+  syncSpacers();
+  return true;
+}
+// Fenster nachschieben, ohne dass die Ansicht springt
+function slideWindow(center){
+  const box=$("#rReading");
+  const anker=visiblePage(rPage);
+  const vorher=sheetY(anker);              // wo steht die Seite gerade?
+  if(!buildWindow(center))return false;
+  const nachher=sheetY(anker);
+  // Dieselbe Seite wieder an dieselbe Stelle bringen – ohne Modellrechnung,
+  // damit Schätzfehler in den Höhen nichts verschieben.
+  if(vorher!=null&&nachher!=null)box.scrollTop+=(nachher-vorher);
+  else box.scrollTop=vOff(center);
+  return true;
+}
+// Liegt die Seite zu nah am Fensterrand? Dann nachschieben.
+function ensureWindow(p){
+  if(p<rWinFrom+RAND||p>rWinTo-RAND){
+    if(rWinFrom>rFirst||rWinTo<rLast)return slideWindow(p);
+  }
+  return false;
+}
+function setTotalLabel(){
+  $("#rPageTotal").textContent=rRemote?`/ ${rLast-rFirst+1}`:`/ ${rLast}`;
+}
 function escRe(s){return s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");}
 function passageRe(p){const parts=p.trim().split(/\s+/).map(escRe);if(!parts.length)return null;try{return new RegExp(parts.join("\\s+"));}catch(e){return null;}}
 const sheetOf=p=>document.getElementById("pg"+p);
@@ -2230,20 +2367,12 @@ async function openShamelaReader(hit){
   updateBookmarkBtn();
 }
 
-function buildSheets(){
-  const box=$("#rReading");box.innerHTML="";
-  const frag=document.createDocumentFragment();
-  for(let p=rFirst;p<=rLast;p++){
-    const s=document.createElement("div");
-    s.className="pageSheet loading";s.id="pg"+p;s.dataset.page=p;
-    // Lokal: Seitenzahl steht fest. Remote: Label kommt erst mit dem Seiteninhalt.
-    const lbl=rRemote?(rPageLabels[p]||"…"):`${esc(t("pagePrefix"))} ${p}`;
-    s.innerHTML=`<div class="pageNum">${lbl}</div>`
-      +`<div class="pageText" dir="auto">…</div>`;
-    frag.appendChild(s);
-  }
-  box.appendChild(frag);
-  $("#rPageTotal").textContent=rRemote?`/ ${rLast-rFirst+1}`:`/ ${rLast}`;
+// Leser neu aufsetzen: Höhenmodell zurücksetzen und das erste Fenster bauen.
+function buildSheets(start){
+  rHeights={};rAvgH=600;rMessungen=0;rMessSumme=0;rPrefixAlt=true;
+  rWinFrom=1;rWinTo=0;
+  buildWindow(start!=null?start:rFirst,true);
+  setTotalLabel();
 }
 
 // Seitenlabel eines Blatts nachträglich setzen (Remote: nach dem Laden bekannt)
@@ -2353,7 +2482,20 @@ async function ensurePages(from,to){
             fillSheet(pg.page_no,pg.text,pg.spans);}}))
     .catch(()=>{need.forEach(p=>rLoaded.delete(p));});
   rInflight.add(job);
-  try{ await job; } finally{ rInflight.delete(job); pruneFar(); }
+  try{ await job; } finally{
+    rInflight.delete(job);
+    // Neu gefüllte Blätter haben ihre echte Höhe – Modell und Platzhalter
+    // nachziehen, an der aktuellen Seite verankert (keine Positions-Drift).
+    const box=$("#rReading");
+    const anker=visiblePage(rPage);
+    const vorher=sheetY(anker);
+    if(measureWindow()){
+      syncSpacers();
+      const nachher=sheetY(anker);
+      if(vorher!=null&&nachher!=null)box.scrollTop+=(nachher-vorher);
+    }
+    pruneFar();
+  }
 }
 // Prüft, ob im Fenster noch eine Seite ungefüllt ("…") ist.
 function windowHasLoading(from,to){
@@ -2376,20 +2518,15 @@ async function ensureWindowFilled(from,to,gen){
     if(gen!==rNavGen)return;
   }
 }
-// Weit entfernte Seiten wieder leeren, damit dicke Bücher flüssig bleiben
+// Weit entfernte Seiten aus dem Textspeicher nehmen. Die DOM-Knoten regelt
+// jetzt das Fenster – außerhalb existieren gar keine. Die gemessenen Höhen
+// bleiben erhalten, damit Scrollbalken und Sprungziele stimmen.
 function pruneFar(){
   const center=(rCenter!=null?rCenter:rPage);
   for(const p of [...rLoaded]){
     if(Math.abs(p-center)>KEEP){
-      const s=sheetOf(p);
-      if(s){
-        // Aktuelle Höhe einfrieren, damit das Leeren die Dokumenthöhe – und
-        // damit die Scrollposition – nicht verändert.
-        s.style.minHeight=s.offsetHeight+"px";
-        s.querySelector(".pageText").innerHTML="…";s.classList.add("loading");
-      }
       rLoaded.delete(p);
-      delete rPageText[p]; delete rPageSpans[p];   // Cache mit freigeben
+      delete rPageText[p]; delete rPageSpans[p];
     }
   }
 }
@@ -2420,6 +2557,8 @@ async function gotoPage(n,smooth=true,hit=false,gen,toPage){
   // Prune um die Zielseite zentrieren, damit die frisch geladene Umgebung nicht
   // sofort wieder geleert wird (sonst Sprung auf ein leeres Sheet).
   rCenter=n;
+  // Erst das Fenster auf die Zielseite legen – nur dort existieren Knoten.
+  buildWindow(n);
   try{
     // Ganzes Puffer-Fenster VOR dem Scrollen laden UND auf das tatsächliche
     // Rendern warten, damit sich das Layout oberhalb des Ziels danach nicht
@@ -2427,6 +2566,9 @@ async function gotoPage(n,smooth=true,hit=false,gen,toPage){
     await ensureWindowFilled(n-BEHIND,n+AHEAD,gen);
   }finally{ rCenter=null; }
   if(gen!==rNavGen)return;              // ein neuerer Sprung hat übernommen
+  // Gemessene Höhen übernehmen und die Platzhalter nachziehen, BEVOR gescrollt
+  // wird – sonst zielt der Sprung auf eine veraltete Position.
+  measureWindow(); syncSpacers();
   let scrollPage=n,target=sheetOf(n),block="start";
   if(hit){
     // Nur innerhalb der Passagenspanne suchen (nicht auf Rest-Markierungen
@@ -2469,16 +2611,16 @@ function saveReadPos(n){
 // WKWebView: 1,50 ms gegenüber jetzt unter der Messgrenze).
 function visiblePage(fallback){
   const box=$("#rReading");
-  const sheets=box.querySelectorAll(".pageSheet");
-  if(!sheets.length)return fallback;
-  const top=box.getBoundingClientRect().top+60;
-  let lo=0,hi=sheets.length-1,treffer=-1;
-  while(lo<=hi){
-    const mid=(lo+hi)>>1;
-    if(sheets[mid].getBoundingClientRect().bottom>top){ treffer=mid; hi=mid-1; }
-    else lo=mid+1;
+  if(rLast<rFirst)return fallback;
+  const grenze=box.getBoundingClientRect().top+60;
+  // Im Fenster (nur ~40 Knoten) exakt am DOM ablesen …
+  for(let p=rWinFrom;p<=rWinTo;p++){
+    const s=sheetOf(p);if(!s)continue;
+    if(s.getBoundingClientRect().bottom>grenze)return p;
   }
-  return treffer>=0?+sheets[treffer].dataset.page:fallback;
+  // … außerhalb (nach einem weiten Sprung) über das Modell schätzen.
+  const f=skala();
+  return pageAtOffset((box.scrollTop+60)/(f||1));
 }
 // Sichtbare Seite ermitteln + nachladen
 let _scrollT=null;
@@ -2486,6 +2628,7 @@ $("#rReading").addEventListener("scroll",()=>{
   clearTimeout(_scrollT);
   _scrollT=setTimeout(()=>{
     const cur=visiblePage(rPage);
+    ensureWindow(cur);          // Fenster mitführen (Knotenzahl bleibt klein)
     setCurrentPage(cur);
     prefetch(cur);
   },90);
@@ -2713,7 +2856,8 @@ $("#rClose").onclick=closeReader;
 // wird nur diese eine Seite nachgeladen.
 async function rerenderLoaded(){
   const fehlt=[];
-  for(const p of [...rLoaded]){
+  // Knoten gibt es nur im Fenster – alles andere ist reiner Textspeicher.
+  for(let p=rWinFrom;p<=rWinTo;p++){
     if(!sheetOf(p))continue;
     if(rPageText[p]!=null) fillSheet(p, rPageText[p], rPageSpans[p]||null);
     else fehlt.push(p);
@@ -2722,6 +2866,7 @@ async function rerenderLoaded(){
     fehlt.forEach(p=>rLoaded.delete(p));
     await ensurePages(Math.min(...fehlt),Math.max(...fehlt));
   }
+  measureWindow();syncSpacers();
 }
 $("#rImgToggle").onclick=()=>{rImg=!rImg;$("#rImgToggle").textContent=rImg?t("viewText"):t("viewOriginal");
   rerenderLoaded();};
