@@ -8,3 +8,9 @@ build/innosetup/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Ausgaben der Hilfsskripte in tools/ - werden bei jedem Lauf neu erzeugt
+tools/diagnose_ergebnis.txt
+tools/probe.txt
+tools/ocr_benchmark.html
+tools/ocr_vergleich.html

@@ -1215,7 +1215,6 @@ const api=()=>API;
 function esc(s){return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 function splitAuthors(a){if(!a)return[];return String(a).split(/\s*[؛;]\s*/).map(s=>s.trim()).filter(Boolean);}
 function authorText(a){const p=splitAuthors(a);return p.length?p.join(" · "):"—";}
-function highlight(sn,ws){let o=esc(sn);for(const w of(ws||[])){if(!w)continue;o=o.split(esc(w)).join("<mark>"+esc(w)+"</mark>");}return o;}
 function showError(m){const e=$("#errbar");e.textContent=m;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(()=>e.style.display="none",7000);}
 function showToast(m){const e=$("#toast");e.textContent=m;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(()=>e.style.display="none",5000);}
 function relTag(rel){
