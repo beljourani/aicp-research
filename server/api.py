@@ -121,15 +121,18 @@ def _fts_suche(con, q: str, limit: int, authors=None, book_ids=None):
     ist also dieselbe.
     """
     from echo_engine.search import (parse_query, _group_expr, _matched_words,
-                                    _make_snippet)
+                                    _make_snippet, match_forms)
     groups = parse_query(q or "")
     exprs = [e for e in (_group_expr(g) for g in groups) if e]
     if not exprs:
         return []
     match_expr = " OR ".join(f"({e})" for e in exprs)
-    stem_tokens = [s for g in groups for _, s in g.include]
-    stem_tokens += [el.stem(w) for g in groups for p in g.phrases
-                    for w in p.split()]
+    # Dieselben Formen wie die Abfrage (inkl. Artikel-Form) – sonst bliebe
+    # ein über die Artikel-Form gefundener Treffer unmarkiert und ohne Anker
+    # im Ausschnitt.
+    such_terme = [n for g in groups for n, _s in g.include]
+    such_terme += [w for g in groups for p in g.phrases for w in p.split()]
+    formen = match_forms(such_terme)
 
     # Filter auf Bücher zurückführen (documents ist klein, ~8.700 Zeilen).
     docs = None
@@ -180,11 +183,11 @@ def _fts_suche(con, q: str, limit: int, authors=None, book_ids=None):
         row = zeilen.get(pid)
         if not row:
             continue
-        matched = _matched_words(row["text"], set(stem_tokens))
+        matched = _matched_words(row["text"], formen)
         treffer.append({
             "passage_id": row["id"], "document_id": row["document_id"],
             "title": row["title"], "author": row["author"],
-            "snippet": _make_snippet(row["text"], matched),
+            "snippet": _make_snippet(row["text"], matched, formen=formen),
             "score": punkte[pid],
         })
     return treffer

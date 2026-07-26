@@ -71,6 +71,29 @@ def _esc(t: str) -> str:
     return '"' + t.replace('"', '""') + '"'
 
 
+# Funktionswörter: Präpositionen, Pronomen, Partikeln. An sie hängt sich der
+# bestimmte Artikel nie. Ohne diese Liste entstünden Scheintreffer, weil
+# „ال" + Funktionswort zufällig ein ganz anderes Wort ergeben kann – der
+# schwerste Fall ist له -> الله: gemessen kamen dadurch 3,7 Mio. Passagen in
+# die Treffer, die „له" überhaupt nicht enthalten (48 % der Treffermenge).
+# Die Formen stehen normalisiert (alif/hamza vereinheitlicht).
+_OHNE_ARTIKEL = {
+    # Präposition/Pronomen-Verbindungen
+    "له", "لها", "لهم", "لهن", "لك", "لكم", "لكن", "لنا", "لي",
+    "به", "بها", "بهم", "بك", "بكم", "بنا", "بي",
+    "منه", "منها", "منهم", "عنه", "عنها", "عنهم",
+    "فيه", "فيها", "فيهم", "اليه", "اليها", "عليه", "عليها", "عليهم",
+    # Präpositionen
+    "من", "في", "علي", "عن", "الي", "مع", "عند", "بين", "بعد", "قبل",
+    # Partikeln
+    "لا", "ما", "لم", "لن", "ان", "او", "ام", "لو", "قد", "ثم", "بل",
+    "حتي", "اذا", "اذ", "كي", "هل", "نعم", "بلي",
+    # Pronomen / Demonstrativa
+    "هو", "هي", "هم", "هن", "انا", "انت", "نحن",
+    "هذا", "هذه", "ذلك", "تلك", "هولاء", "الذي", "التي",
+}
+
+
 def _norm_variants(n: str) -> list[str]:
     """Artikel-Varianten für die norm-Suche.
 
@@ -82,8 +105,10 @@ def _norm_variants(n: str) -> list[str]:
 
     Nur diese Richtung (Artikel ergänzen). Das Abtrennen von „ال" bei einem
     Suchwort wäre gefährlich – „الله" würde zu „له" und träfe jedes „له".
+
+    Funktionswörter bekommen keine Artikel-Form (siehe _OHNE_ARTIKEL).
     """
-    if n.startswith("ال"):
+    if n.startswith("ال") or n in _OHNE_ARTIKEL:
         return [n]
     return [n, "ال" + n]
 
@@ -228,10 +253,11 @@ def _search_groups(con: sqlite3.Connection, groups: list[QueryGroup],
                        offset=offset)
     match_expr = " OR ".join(f"({e})" for e in exprs)
 
-    # Für Hervorhebung/Snippets: alle positiven Begriffe aller Gruppen
-    stem_tokens = [s for g in groups for _, s in g.include]
-    stem_tokens += [stem(w) for g in groups for p in g.phrases
-                    for w in p.split()]
+    # Für Hervorhebung/Snippets: alle positiven Begriffe aller Gruppen –
+    # mit denselben Formen, mit denen auch gesucht wird (inkl. Artikel-Form).
+    such_terme = [n for g in groups for n, _s in g.include]
+    such_terme += [w for g in groups for p in g.phrases for w in p.split()]
+    formen = match_forms(such_terme)
 
     sql = """
         SELECT p.id, p.document_id, p.page_from, p.page_to, p.text,
@@ -255,12 +281,12 @@ def _search_groups(con: sqlite3.Connection, groups: list[QueryGroup],
 
     hits: list[SearchHit] = []
     for row in con.execute(sql, params):
-        matched = _matched_words(row["text"], set(stem_tokens))
+        matched = _matched_words(row["text"], formen)
         hits.append(SearchHit(
             passage_id=row["id"], document_id=row["document_id"],
             title=row["title"], author=row["author"],
             page_from=row["page_from"], page_to=row["page_to"],
-            snippet=_make_snippet(row["text"], matched),
+            snippet=_make_snippet(row["text"], matched, formen=formen),
             score=row["score"], matched_words=matched,
             reliability=row["reliability"] or "sicher"))
     return hits
@@ -341,22 +367,50 @@ import re as _re
 _WORD = _re.compile(r"[ء-يٮ-ۓؐ-ٰA-Za-z0-9ً-ٟ]+")
 
 
-def _match_spans(original_text: str,
-                 query_stems: set[str]) -> list[tuple[int, int, str]]:
-    """Findet (start, ende, wort) aller Wörter im ORIGINALTEXT, deren
-    normalisierter Stamm zur Anfrage passt. Positionen beziehen sich auf
-    den Originaltext (inkl. Tashkil) und stimmen daher für die Anzeige."""
+def match_forms(terms) -> tuple[set[str], set[str]]:
+    """(Normalformen, Stämme) einer Anfrage – exakt die Formen, mit denen die
+    Suche ihre Treffer findet.
+
+    Enthält auch die Artikel-Varianten aus `_norm_variants`. Ohne sie würde
+    ein über „الست" gefundener Treffer nicht markiert und der Ausschnitt fände
+    keinen Anker – es sähe aus, als fehlte der Begriff, obwohl er da ist.
+    """
+    norms: set[str] = set()
+    stems: set[str] = set()
+    for term in (terms or []):
+        for tok in tokenize(term or ""):
+            stems.add(stem(tok))
+            norms.update(_norm_variants(tok))
+    norms.discard("")
+    stems.discard("")
+    return norms, stems
+
+
+def _als_formen(query_forms_or_stems) -> tuple[set[str], set[str]]:
+    """Nimmt (norms, stems) entgegen – oder nur eine Stamm-Menge (alt)."""
+    if isinstance(query_forms_or_stems, tuple):
+        return query_forms_or_stems
+    return set(), set(query_forms_or_stems or ())
+
+
+def _match_spans(original_text: str, formen) -> list[tuple[int, int, str]]:
+    """Findet (start, ende, wort) aller Wörter im ORIGINALTEXT, die zur
+    Anfrage passen – über Normalform (inkl. Artikel-Form) ODER Stamm.
+    Positionen beziehen sich auf den Originaltext (inkl. Tashkil) und stimmen
+    daher für die Anzeige."""
     from .normalize import normalize as _norm
+    norms, stems = _als_formen(formen)
     spans = []
     for m in _WORD.finditer(original_text):
-        if stem(_norm(m.group())) in query_stems:
+        n = _norm(m.group())
+        if n in norms or stem(n) in stems:
             spans.append((m.start(), m.end(), m.group()))
     return spans
 
 
-def _matched_words(original_text: str, query_stems: set[str]) -> list[str]:
+def _matched_words(original_text: str, formen) -> list[str]:
     seen, out = set(), []
-    for _, _, word in _match_spans(original_text, query_stems):
+    for _, _, word in _match_spans(original_text, formen):
         if word not in seen:
             seen.add(word)
             out.append(word)
@@ -381,19 +435,47 @@ def highlight_spans(text: str, terms) -> list[tuple[int, int]]:
     zu einem der ``terms`` passt. Die Berechnung läuft wurzelbewusst gegen den
     TATSÄCHLICH angezeigten Text – so werden alle Flexionen und Diakritika-
     Varianten markiert (behebt den Markierungs-Bug im Leser)."""
-    stems = stems_of_terms(terms)
-    if not stems:
+    formen = match_forms(terms)
+    if not formen[0] and not formen[1]:
         return []
-    return [(s, e) for s, e, _ in _match_spans(text, stems)]
+    return [(s, e) for s, e, _ in _match_spans(text, formen)]
 
 
-def _make_snippet(text: str, matched: list[str], width: int = 240) -> str:
-    """Schneidet einen Ausschnitt um den ersten Treffer im Original aus."""
-    if not matched:
+def _make_snippet(text: str, matched: list[str], width: int = 240,
+                  formen=None) -> str:
+    """Schneidet einen Ausschnitt aus, in dem möglichst VIELE der gesuchten
+    Begriffe stehen.
+
+    Früher wurde nur um den ersten Treffer geschnitten. Bei mehreren Begriffen
+    zeigte der Ausschnitt dann oft nur einen davon – es sah aus, als fehlten
+    die anderen, obwohl die Passage sie enthält.
+    """
+    if not text:
+        return ""
+    if formen is not None:
+        stellen = _match_spans(text, formen)
+    elif matched:
+        stellen = []
+        for w in matched:
+            i = text.find(w)
+            if i >= 0:
+                stellen.append((i, i + len(w), w))
+        stellen.sort()
+    else:
+        stellen = []
+    if not stellen:
         return text[:width] + ("…" if len(text) > width else "")
-    first = text.find(matched[0])
-    pos = first if first >= 0 else 0
-    start = max(0, pos - width // 3)
+
+    # Fenster so legen, dass es möglichst viele VERSCHIEDENE Wortformen deckt.
+    from .normalize import normalize as _norm
+    bestes, beste_zahl = stellen[0][0], -1
+    for a, _b, _w in stellen:
+        start = max(0, a - width // 6)
+        ende = start + width
+        abgedeckt = {_norm(w) for s, e, w in stellen if s >= start and e <= ende}
+        if len(abgedeckt) > beste_zahl:
+            beste_zahl, bestes = len(abgedeckt), a
+    start = max(0, bestes - width // 6)
     end = min(len(text), start + width)
     prefix = "…" if start > 0 else ""
     suffix = "…" if end < len(text) else ""
