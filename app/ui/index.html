@@ -188,14 +188,9 @@
     color: #fff; font-weight: 600; }
   .btn.primary:hover { background: var(--accent-ink); }
   .btn.sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
-  /* „In die Bibliothek übernehmen": klare Aktion, abgesetzt von den Anzeige-
-     Umschaltern der Leser-Leiste (Akzent, etwas Abstand, Icon + Text). */
-  .btn.sm.rAdopt { margin-inline-start: 10px; border-color: var(--accent);
-    color: var(--accent-ink); background: var(--accent-weak); font-weight: 600; }
-  .btn.sm.rAdopt:hover:not(:disabled) { background: #dfeee7; }
-  .btn.sm.rAdopt .ic { width: 15px; height: 15px; }
   .btn:disabled, .iconBtn:disabled { opacity: .55; cursor: default; }
-  .btn.rAdopt .spin { border: 2px solid #cbdfd6; border-top-color: var(--accent); }
+  /* kleiner Akzent-Spinner im Icon-Knopf (statt weiß-auf-weiß) */
+  .iconBtn .ring.mini { width: 16px; height: 16px; border-width: 2px; }
   .btn.ghost { border-color: transparent; background: none; color: var(--muted); }
   .btn.ghost:hover { background: var(--surface); color: var(--ink); }
   .btn.danger { border-color: #e6c3bd; color: var(--err); }
@@ -770,7 +765,7 @@
       </span>
       <button class="btn sm" id="rTashkil"></button>
       <button class="btn sm" id="rImgToggle" style="display:none"></button>
-      <button class="btn sm rAdopt" id="rDownloadBook" style="display:none"><span class="ci" data-ic="download"></span><span id="rDownloadBookLbl"></span></button>
+      <button class="iconBtn" id="rDownloadBook" style="display:none" title=""><span class="ci" data-ic="download"></span></button>
       <span class="pageJump">
         <input id="rPageInput" inputmode="numeric" autocomplete="off">
         <span id="rPageTotal"></span>
@@ -1184,7 +1179,6 @@ function applyLang(l) {
   set("navUpload", d.navUpload); set("titleSearch", d.titleSearch);
   set("navBookmarks", d.navBookmarks); set("titleBookmarks", d.titleBookmarks);
   set("citeLabel", d.cite);
-  set("rDownloadBookLbl", d.dlBook);
   { const _db=$("#rDownloadBook"); if(_db)_db.title=d.dlBook; }
   set("dlHead", d.dlHead);
   set("dlPagesLbl", d.dlPagesLbl); set("dlSizeLbl", d.dlSizeLbl);
@@ -3294,12 +3288,12 @@ function dlGroesseText(bytes){
 }
 // Ladezustand direkt am Übernehmen-Knopf: gesperrt + Spinner + Text, damit ein
 // Klick nie „tot" wirkt, während die Buch-Info vom Server geholt wird.
-function setAdoptLoading(on,msg){
+function setAdoptLoading(on){
   const b=$("#rDownloadBook"); if(!b)return;
   if(on){
     if(b._orig==null)b._orig=b.innerHTML;
     b.disabled=true;
-    b.innerHTML=`<span class="spin"></span><span>${esc(msg||t("dlChecking"))}</span>`;
+    b.innerHTML=`<span class="ring mini"></span>`;
   }else{
     b.disabled=false;
     if(b._orig!=null){b.innerHTML=b._orig;b._orig=null;}
@@ -3307,15 +3301,16 @@ function setAdoptLoading(on,msg){
 }
 async function openDownloadDialog(){
   if(!rRemote||!rBook)return showError(t("dlNoBook"));
-  setAdoptLoading(true,t("dlChecking"));
+  setAdoptLoading(true);
+  showProgress(t("dlChecking"));   // gut sichtbare Pille, nicht nur der kleine Icon-Spinner
   let info;
   try{
     info=await api().shamela_book_info({book_id:rBook,title:rTitleTxt,author:rAuthorTxt});
   }catch(err){
-    setAdoptLoading(false);
+    setAdoptLoading(false); hideProgress();
     return showError(t("dlErrNet"));
   }
-  setAdoptLoading(false);
+  setAdoptLoading(false); hideProgress();
   if(!info)return showError(t("dlErrNet"));
   if(info.error)return showError(info.error);
   if(info.vorhanden){
@@ -3332,9 +3327,9 @@ async function openDownloadDialog(){
   $("#dlTimeVal").textContent=dlDauerText(s.sekunden);
   $("#dlSemantic").checked=false;
   $("#dlSemanticHint").textContent=t("dlSemanticHint")(Math.max(1,s.vektorMin));
-  $("#dlOverlay").classList.add("on");
+  $("#dlOverlay").classList.add("show");
 }
-function closeDownloadDialog(){ $("#dlOverlay").classList.remove("on"); }
+function closeDownloadDialog(){ $("#dlOverlay").classList.remove("show"); }
 async function startDownload(){
   if(!dlBook)return;
   const body={book_id:dlBook.book_id,title:dlBook.title,author:dlBook.author,
