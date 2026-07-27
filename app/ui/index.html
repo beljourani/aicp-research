@@ -1015,6 +1015,7 @@ const T = {
     dlChecking: "prüfe Buch …",
     dlNoBook: "Kein Buch geöffnet.",
     dlErrNet: "Server nicht erreichbar. Bitte Verbindung und Zugangsdaten prüfen (Einstellungen).",
+    shamelaFilterErr: "Online-Filter konnten nicht geladen werden – Server nicht erreichbar.",
     errGeneric: "Etwas ist schiefgelaufen. Bitte erneut versuchen.",
     dlHave: "Dieses Buch ist bereits in der Bibliothek.",
     dlAboutMin: (n)=>`etwa ${n} Minuten`,
@@ -1134,6 +1135,7 @@ const T = {
     dlChecking: "جارٍ التحقق من الكتاب …",
     dlNoBook: "لا يوجد كتاب مفتوح.",
     dlErrNet: "تعذّر الوصول إلى الخادم. تحقّق من الاتصال وبيانات الدخول (الإعدادات).",
+    shamelaFilterErr: "تعذّر تحميل فلاتر الإنترنت – الخادم غير متاح.",
     errGeneric: "حدث خطأ ما. حاول مرة أخرى.",
     dlHave: "هذا الكتاب موجود في المكتبة بالفعل.",
     dlAboutMin: (n)=>`نحو ${n} دقيقة`,
@@ -1372,6 +1374,7 @@ function fillAuthorSel(authors){
 }
 // Autoren-Vorschläge laden (auch leere, aus der Verwaltung) – analog Kategorien
 async function refreshAuthorSources(){
+  if(searchSource==="shamela")return;   // Online-Autorenfilter kommt vom Server
   try{ const auth=await api().list_authors(); fillAuthorSel(auth); }catch(e){}
 }
 function removeAuthorFilter(name){
@@ -1461,14 +1464,19 @@ function addCatFilter(name){
 }
 // Kategorie-Vorschläge laden (auch leere, aus der Verwaltung)
 async function refreshCategorySources(){
+  if(searchSource==="shamela")return;   // Online-Modus nutzt Server-Filter
   try{ const cats=await api().list_categories(); fillCatSel(cats); }catch(e){}
 }
 async function refreshDocs(){
   const docs=await api().list_documents();
-  // Autorenfilter aus allen Dokumenten füllen (auch ohne vorherige Suche)
-  const auth=[];for(const d of docs)auth.push(...splitAuthors(d.author));
-  fillAuthorSel(auth);
-  fillBookSel(docs);      // Buchfilter-Vorschläge (Titel -> id)
+  // Such-Filter (Autor/Buch) nur im lokalen Modus aus der Bibliothek füllen.
+  // Im Shamela-Modus kommen die Optionen vom Server – hier NICHT überschreiben,
+  // sonst tauchen im Online-Modus plötzlich die Offline-Bücher/-Autoren auf.
+  if(searchSource!=="shamela"){
+    const auth=[];for(const d of docs)auth.push(...splitAuthors(d.author));
+    fillAuthorSel(auth);
+    fillBookSel(docs);    // Buchfilter-Vorschläge (Titel -> id)
+  }
   const box=$("#docList");box.innerHTML="";
   box.style.display=docs.length?"":"none";
   $("#docsToolbar").style.display=docs.length?"flex":"none";
@@ -3394,27 +3402,33 @@ async function loadShamelaFilters(){
   // leere Liste. Der Aufruf war ein reiner Verbindungsaufbau für nichts,
   // und der Filter wird ohnehin ausgeblendet (siehe applySourceUI).
   shHasCats=false; fillCatSel([]);
-  try{ await loadShamelaAuthors(""); }catch(e){}
-  try{ await loadShamelaBooks(""); }catch(e){}
+  let okA=false, okB=false;
+  try{ okA=await loadShamelaAuthors(""); }catch(e){ okA=false; }
+  try{ okB=await loadShamelaBooks(""); }catch(e){ okB=false; }
   applySourceUI();
+  // Wenn der Server die Filter nicht liefert: leer lassen (nicht lokal) und
+  // sichtbar melden, damit klar ist, dass die Verbindung das Problem ist.
+  if(!okA||!okB){ if(!okA)authorOptions=[]; if(!okB)allDocs=[]; showError(t("shamelaFilterErr")); }
 }
 // Bücherliste des Servers in den Buchfilter laden (Titel -> Kennung).
 async function loadShamelaBooks(q){
   const r=await api().shamela_books({q:q||"",limit:200});
-  if(!r||r.error)return;
+  if(!r||r.error)return false;
   const seen=new Set(bookFilterSel.map(b=>b.id));
   const liste=(r.books||[]).map(b=>({id:b.book_id,title:b.title,author:b.author}));
   // Bereits gewählte behalten, damit ihre Titel auflösbar bleiben.
   allDocs=bookFilterSel.filter(b=>seen.has(b.id))
     .concat(liste.filter(b=>!seen.has(b.id)));
+  return true;
 }
 // Autorenliste des Servers in den Autorenfilter laden (durchsuchbar). Der
 // Server durchsucht ALLE ~3.000 Autoren per Teilstring; ohne diesen Aufruf
 // würde nur eine feste Anfangsliste lokal gefiltert.
 async function loadShamelaAuthors(q){
   const a=await api().shamela_authors(q||"",200);
-  if(!a||a.error)return;
+  if(!a||a.error)return false;
   fillAuthorSel(a.authors||[]);
+  return true;
 }
 function applySourceUI(){
   const shamela=searchSource==="shamela";
@@ -3437,6 +3451,9 @@ async function setSource(src){
   renderAuthorFilter();renderCatFilter();renderBookFilter();
   applySourceUI();
   if(src==="shamela"){
+    // Keine lokalen Reste im Online-Modus: Options-Caches leeren, bevor der
+    // Server sie füllt. Scheitert das Laden, bleiben sie leer statt lokal.
+    authorOptions=[]; allDocs=[];
     await refreshShamelaState();
     if(!_shStatus.configured){ openShamelaCfg(); }
     else { await loadShamelaFilters(); }
