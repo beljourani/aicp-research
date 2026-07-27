@@ -268,17 +268,27 @@ Zeitgrenze — das war die eigentliche Ursache der Abbrüche.
 - `/health` meldet jetzt Modell- und Speicherstand — sonst würde ein Zwischenspeicher still
   verdecken, wenn die Suche insgesamt langsamer geworden wäre.
 
+**Zweiter Schritt: auch die erste Suche wurde beschleunigt.** Der Speicher hilft erst ab dem
+zweiten Mal — die erste Suche kostete weiter 14 s, weil ein einziger Kern rechnete, während sieben
+brachlagen. Der Index wird jetzt in Zeilennummern-Streifen geteilt, die gleichzeitig bewertet
+werden. Die Reihenfolge bleibt erhalten, weil bm25 mit den Kennzahlen des **ganzen** Index rechnet
+und nicht mit denen des Streifens — genau darauf beruht der Buchfilter schon heute. Ein Halbmesser
+begrenzt die gleichzeitigen Durchläufe über alle Suchen hinweg; über `STREIFEN=1` lässt sich das
+Ganze ohne Codeänderung abschalten.
+
 **Gemessen am laufenden Dienst, so wie die App ihn ruft** (limit=40):
 
-| Anfrage | Semantik | erstmals | nochmal | weiterblättern |
-|---|---|---|---|---|
-| `الله` | an | 16,3 s | **0,80 s** | **2,6 s** |
-| `العلم` | an | 11,5 s | **0,98 s** | **1,7 s** |
-| `الصلاة` | an | 4,1 s | **0,79 s** | **1,8 s** |
-| `الرحمن` | aus | 4,6 s | **0,34 s** | **0,98 s** |
-| `الميراث` | aus | 1,1 s | **0,26 s** | **0,86 s** |
+| Anfrage | Semantik | vorher | erstmals | nochmal | weiterblättern |
+|---|---|---|---|---|---|
+| `الله` | an | ~16 s | **7,5 s** | **0,55 s** | **0,99 s** |
+| `العلم` | an | ~11 s | **5,3 s** | **0,65 s** | **1,5 s** |
+| `الصلاة` | an | 4,1 s | **1,9 s** | **0,75 s** | **0,73 s** |
+| `الرحمن` | aus | 4,6 s | **1,9 s** | **0,41 s** | **0,66 s** |
+| `الميراث` | aus | 1,1 s | **0,68 s** | **0,33 s** | **0,52 s** |
 
-Fünf gleichzeitige gleiche Anfragen brauchten zusammen 14,6 s statt fünfmal 14,6 s.
+Fünf gleichzeitige **gleiche** Anfragen brauchten zusammen 14,6 s statt fünfmal 14,6 s. Vier
+gleichzeitige **verschiedene** teure Anfragen liefen in 12,8 s alle durch, ohne Fehler und mit
+8 GB freiem Arbeitsspeicher.
 
 **Nachgewiesen, dass sich nichts verändert hat** — das war der wichtigere Teil der Arbeit:
 
@@ -291,13 +301,24 @@ Fünf gleichzeitige gleiche Anfragen brauchten zusammen 14,6 s statt fünfmal 14
    dasselbe Ergebnis. Behoben mit `ORDER BY score, rowid`; gemessen kostet das nichts (14,57 s
    statt 14,70 s) und liefert bei 12 geprüften Anfragen exakt dieselbe Liste wie bisher. Es legt
    nur eine bislang zufällige Reihenfolge innerhalb eines Gleichstands fest.
-4. Elf Tests für die Speicherlogik (`server/test_fts_cache.py`, laufen ohne Server und ohne Daten)
-   und fünf neue Integrationstests in `server/test_search_hybrid.py`, darunter einer, der
-   sicherstellt, dass nach einem neu gebauten Index nichts aus dem alten durchschlägt.
+4. Für die Streifen eigens: bei 12 Anfragen liefert die gestreifte Bewertung zeichengleich
+   dieselbe Liste wie die einfache, bei 6 Anfragen auch die vollständige Suchantwort, und beim
+   Blättern (offset 40 und 80) ebenfalls. Null Abweichungen.
+5. Elf Tests für die Speicherlogik (`server/test_fts_cache.py`, laufen ohne Server und ohne Daten)
+   und acht neue Integrationstests in `server/test_search_hybrid.py`, darunter einer, der
+   sicherstellt, dass nach einem neu gebauten Index nichts aus dem alten durchschlägt, und einer,
+   der die lückenlose Streifeneinteilung prüft — der hat prompt einen Fehler bei kleinen Indizes
+   gefunden (leere Streifen), bevor er ausgeliefert war.
 
-**Was bewusst nicht gemacht wurde:** Der Buchfilter geht weiter am Speicher vorbei — dort ist die
-Suche mit 0,6–1,0 s bereits schnell. Und die **erste** Suche nach einem seltenen Wort bleibt
-langsam; das ließe sich nur mit einer Parallelisierung über mehrere Kerne angehen (siehe 9.3).
+**Was bewusst nicht gemacht wurde:**
+
+- Der Buchfilter geht weiter am Speicher vorbei — dort ist die Suche mit 0,6–1,0 s bereits schnell.
+- **Der Speicher überlebt keinen Neustart.** Das wäre möglich gewesen, ist aber verworfen worden:
+  Der große Neustart-Schaden waren die 19,7 s Modellladen, und die sind durch das Vorladen weg.
+  Übrig bliebe einmal wenige Sekunden je häufigem Wort. Dafür bräuchte es einen Schreibzugriff auf
+  die Indexplatte und einen Fingerabdruck, der einen neu gebauten Index sicher erkennt — erkennt er
+  ihn nicht, lieferte die Suche **fremde Textstellen** statt nur veralteter. Das Verhältnis stimmt
+  nicht. Der Speicher füllt sich nach einem Neustart beim Suchen von selbst wieder.
 
 ### 9.3 Kleinere Vorschläge
 
@@ -306,14 +327,7 @@ langsam; das ließe sich nur mit einer Parallelisierung über mehrere Kerne ange
 - ~~**Fehler-Protokollierung statt stummer `catch`** (Punkt 5b)~~ — erledigt für die Online-Suche:
   ein Fehler in der Wortsuche sah bisher aus wie „keine Treffer" und stand nirgends im Protokoll.
 - ~~**`docs/`-Probedateien** (Punkt 7)~~ — entschieden und erledigt: gelöscht (siehe Punkt 7).
-- **Auch die erste Suche beschleunigen** (neu, aus 9.2) — der Zwischenspeicher hilft ab dem
-  zweiten Mal. Die erste Suche nach einem häufigen Wort kostet weiter 14 s, weil ein einziger
-  Kern die Bewertung rechnet, während sieben brachliegen. Die Arbeit ließe sich über
-  Zeilennummern-Streifen auf mehrere Kerne verteilen; die Reihenfolge bliebe dabei erhalten, weil
-  bm25 mit den Kennzahlen des ganzen Index rechnet und nicht mit denen des Streifens — genau
-  darauf beruht der Buchfilter heute schon. Erwartung: 14 s → 3–4 s. Vorher zu messen wäre, ob
-  sechs gleichzeitige Durchläufe über die 29,8-GB-Datei den Arbeitsspeicher überlasten. Das ist
-  ein spürbarer Eingriff in den Suchpfad, deshalb erst nach deinem OK.
+- ~~**Auch die erste Suche beschleunigen**~~ — entschieden und erledigt, siehe 9.2.
 
 ---
 
