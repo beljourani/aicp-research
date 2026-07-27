@@ -656,6 +656,7 @@ class Core:
                          params=None, timeout: int = 30):
         """Ruft den Shamela-Server auf und gibt die JSON-Antwort zurück.
         Wirft bei Fehlern eine Exception mit sprechender Meldung."""
+        import gzip
         import urllib.error
         import urllib.parse
         import urllib.request
@@ -666,7 +667,11 @@ class Core:
         if params:
             full += "?" + urllib.parse.urlencode(params)
         data = None
-        headers = {"X-API-Key": token}
+        # Komprimiert anfordern: eine Trefferliste mit 40 Einträgen ist
+        # unkomprimiert 28,5 KB und gepackt 8,1 KB. Der Server kann das
+        # längst, es wurde nur nie verlangt. Nur gzip – zstd anzubieten
+        # hiesse, eine Kodierung zuzusagen, die wir nicht auspacken können.
+        headers = {"X-API-Key": token, "Accept-Encoding": "gzip"}
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -674,7 +679,14 @@ class Core:
                                      method=method)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                roh = resp.read()
+                kodierung = (resp.headers.get("Content-Encoding") or "").lower()
+            # urllib packt nicht selbst aus. Antwortet der Server
+            # unkomprimiert – etwa beim Selbsttest ohne vorgeschalteten
+            # Caddy –, bleibt es beim Rohtext.
+            if kodierung == "gzip":
+                roh = gzip.decompress(roh)
+            return json.loads(roh.decode("utf-8"))
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 raise RuntimeError("Token abgelehnt – bitte in den "

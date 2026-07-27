@@ -1207,7 +1207,6 @@ const API = {
   shamela_search:b=>_post("/api/shamela_search",b),
   shamela_page:(o)=>_post("/api/shamela_page",o),
   shamela_books:(o)=>_post("/api/shamela_books",o),
-  shamela_categories:()=>_get("/api/shamela_categories"),
   shamela_authors:(q,limit)=>_post("/api/shamela_authors",{q,limit}),
 };
 const api=()=>API;
@@ -3190,9 +3189,11 @@ async function refreshShamelaState(){
 // bleibt der Kategoriefilter ausgeblendet (siehe applySourceUI).
 let shHasCats=false;
 async function loadShamelaFilters(){
-  try{ const c=await api().shamela_categories();
-       const list=(c&&!c.error)?(c.categories||[]):[];
-       shHasCats=list.length>0; fillCatSel(list); }catch(e){ shHasCats=false; }
+  // Kategorien werden bewusst nicht mehr abgefragt: die Shamela-Daten
+  // enthalten kein Kategorienfeld, der Server liefert deshalb immer eine
+  // leere Liste. Der Aufruf war ein reiner Verbindungsaufbau für nichts,
+  // und der Filter wird ohnehin ausgeblendet (siehe applySourceUI).
+  shHasCats=false; fillCatSel([]);
   try{ await loadShamelaAuthors(""); }catch(e){}
   try{ await loadShamelaBooks(""); }catch(e){}
   applySourceUI();
