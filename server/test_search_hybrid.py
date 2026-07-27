@@ -59,6 +59,11 @@ def _mit_index(fn):
         api.API_TOKEN = "T"
         api.META_DB = os.path.join(d, "meta.db")
         _index(p)
+        # Jeder Test baut einen eigenen Wegwerf-Index im selben Prozess, und
+        # mehrere suchen dieselben Wörter. Der Zwischenspeicher trägt zwar die
+        # Indexkennung im Schlüssel, aber sich darauf zu verlassen hieße, die
+        # Testtrennung an Dateigröße und Zeitstempel zu hängen.
+        api._speicher.leeren()
         fn()
 
 
@@ -280,6 +285,107 @@ def test_artikel_form_online_markiert():
     print("ok  test_artikel_form_online_markiert")
 
 
+# ------------------------------------------- Zwischenspeicher (fts_cache) ----
+# Der Speicher darf ausschließlich schneller machen. Ändert sich irgendetwas
+# am Ergebnis, ist er falsch und muss wieder raus.
+
+def test_speicher_aendert_das_ergebnis_nicht():
+    def pruef():
+        a = _suche(q="الصبر", limit=10, semantic=False)
+        b = _suche(q="الصبر", limit=10, semantic=False)
+        assert a == b, "zweite Suche liefert etwas anderes"
+        print("ok  test_speicher_aendert_das_ergebnis_nicht")
+    _mit_index(pruef)
+
+
+def test_speicher_greift():
+    """Die zweite gleiche Suche darf die teure Bewertung nicht erneut rufen."""
+    def pruef():
+        echt = api._fts_roh
+        zaehler = {"n": 0}
+
+        def gezaehlt(*a, **kw):
+            zaehler["n"] += 1
+            return echt(*a, **kw)
+
+        api._fts_roh = gezaehlt
+        try:
+            _suche(q="الصلاة", limit=10, semantic=False)
+            nach_erster = zaehler["n"]
+            _suche(q="الصلاة", limit=10, semantic=False)
+            assert nach_erster >= 1, "erste Suche hat gar nicht gerechnet"
+            assert zaehler["n"] == nach_erster, "zweite Suche hat neu gerechnet"
+        finally:
+            api._fts_roh = echt
+        print("ok  test_speicher_greift")
+    _mit_index(pruef)
+
+
+def test_blaettern_ist_zusammenhaengend():
+    """Seitenweise geholt muss dieselbe Folge ergeben wie in einem Stück.
+
+    Das ist der eigentliche Zweck des Entwurfs: einmal großzügig rechnen und
+    für jeden Blätterschritt zuschneiden. Stimmt das nicht, verschieben sich
+    beim Weiterblättern Treffer – schlimmstenfalls unbemerkt.
+    """
+    def pruef():
+        ganz = _suche(q="الصبر", limit=4, offset=0, semantic=False)["hits"]
+        stueckweise = []
+        for off in range(0, 4, 2):
+            stueckweise += _suche(q="الصبر", limit=2, offset=off,
+                                  semantic=False)["hits"]
+        assert stueckweise == ganz[:len(stueckweise)], "Blättern verschiebt Treffer"
+        print("ok  test_blaettern_ist_zusammenhaengend")
+    _mit_index(pruef)
+
+
+def test_buchfilter_geht_am_speicher_vorbei():
+    """Mit Buchfilter wird weiterhin gerechnet – dort ist die Suche schon
+    schnell (rowid-Bereiche). Diese Entscheidung wird hier festgehalten."""
+    def pruef():
+        r1 = _suche(q="الصبر", limit=10, semantic=False)
+        buecher = [h["book_id"] for h in r1["hits"]]
+        assert buecher, "keine Treffer zum Filtern"
+        echt = api._fts_roh
+        zaehler = {"n": 0}
+
+        def gezaehlt(*a, **kw):
+            zaehler["n"] += 1
+            return echt(*a, **kw)
+
+        api._fts_roh = gezaehlt
+        try:
+            _suche(q="الصبر", limit=10, semantic=False,
+                   book_ids=[buecher[0]])
+            assert zaehler["n"] >= 1, "Buchfilter kam unerwartet aus dem Speicher"
+        finally:
+            api._fts_roh = echt
+        print("ok  test_buchfilter_geht_am_speicher_vorbei")
+    _mit_index(pruef)
+
+
+def test_indexwechsel_liefert_keine_alten_zeilen():
+    """Nach einem neuen Index darf nichts aus dem alten durchschlagen.
+
+    Zeilennummern werden beim Neubau anders vergeben; ein alter Eintrag
+    zeigte auf fremde Abschnitte. Deshalb steht die Indexkennung im
+    Schlüssel. Hier wird der Speicher bewusst NICHT geleert.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        api.API_TOKEN = "T"
+        api.META_DB = os.path.join(d, "meta.db")
+        _index(os.path.join(d, "a.db"))
+        api._speicher.leeren()
+        a = _suche(q="الصبر", limit=10, semantic=False)
+        _index(os.path.join(d, "b.db"))       # zweiter Index, gleiche Daten
+        b = _suche(q="الصبر", limit=10, semantic=False)
+        seiten_a = [h["page"] for h in a["hits"]]
+        seiten_b = [h["page"] for h in b["hits"]]
+        assert seiten_a == seiten_b, (seiten_a, seiten_b)
+        assert all(h["snippet"] for h in b["hits"]), "leere Ausschnitte"
+    print("ok  test_indexwechsel_liefert_keine_alten_zeilen")
+
+
 if __name__ == "__main__":
     test_wurzelsuche_findet_beugung()
     test_vokalzeichen_egal()
@@ -293,4 +399,9 @@ if __name__ == "__main__":
     test_und_treffer_vollstaendig_online()
     test_ausschluss_online_mit_echtem_wort()
     test_artikel_form_online_markiert()
+    test_speicher_aendert_das_ergebnis_nicht()
+    test_speicher_greift()
+    test_blaettern_ist_zusammenhaengend()
+    test_buchfilter_geht_am_speicher_vorbei()
+    test_indexwechsel_liefert_keine_alten_zeilen()
     print("\nAlle Tests bestanden.")

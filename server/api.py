@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
+import traceback
+from contextlib import asynccontextmanager
 from functools import lru_cache
 
 from fastapi import FastAPI, Header, HTTPException, Query
@@ -27,6 +30,8 @@ from qdrant_client import models as qm
 import meta_index as mi
 # Wort-/Wurzelsuche mit derselben Engine wie offline (ohne PyMuPDF/OCR).
 import engine_light as el
+# Zwischenspeicher für die teure Bewertungsstufe (reine Logik, testbar).
+import fts_cache as fc
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 COLLECTION = os.environ.get("QDRANT_COLLECTION", "shamela")
@@ -34,7 +39,33 @@ META_DB = os.environ.get("META_DB", "meta.db")
 MODEL_NAME = os.environ.get("EMBED_MODEL", "intfloat/multilingual-e5-base")
 API_TOKEN = os.environ.get("API_TOKEN", "")     # Pflicht: nur mit Token nutzbar
 
-app = FastAPI(title="Shamela Search API")
+def _vorladen() -> None:
+    try:
+        _model()
+    except Exception:
+        # Ohne Modell läuft die Wort-/Wurzelsuche unverändert weiter.
+        traceback.print_exc()
+
+
+@asynccontextmanager
+async def lifespan(app):
+    """Einmalige Arbeit beim Start des Dienstes.
+
+    Das Einbettungsmodell wird faul geladen (siehe `_model`). Der erste
+    Aufruf nach einem Neustart kostete gemessen 19,7 s – zusammen mit einer
+    langen Wortsuche (14 s) sind das 34 s und damit gefährlich nahe an der
+    45-Sekunden-Grenze der App (app/main.py, `shamela_search`). Deshalb lädt
+    ein Hintergrundfaden es sofort. Der Dienst ist trotzdem gleich
+    erreichbar; /health meldet, ob das Modell schon steht.
+
+    Bewusst hier und nicht beim Import: `test_search_hybrid.py` importiert
+    api.py, und dort soll nicht sentence-transformers geladen werden.
+    """
+    threading.Thread(target=_vorladen, name="vorladen", daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Shamela Search API", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 
@@ -150,7 +181,7 @@ def _fts_suche(con, q: str, limit: int, authors=None, book_ids=None):
             return []
 
     if docs is None:
-        rohe = _fts_roh(con, match_expr, limit)
+        rohe = _kandidaten(con, match_expr, limit)
     else:
         # Buchfilter: NICHT global suchen und danach filtern. Ein häufiges
         # Wort trifft Millionen Abschnitte; die Prüfung gegen die Buchliste
@@ -168,7 +199,9 @@ def _fts_suche(con, q: str, limit: int, authors=None, book_ids=None):
                              buch=bid)
         # bm25-Werte sind über die Bücher hinweg vergleichbar (gleiche
         # Anfrage, gleicher Index) – die Reihenfolge bleibt damit dieselbe.
-        rohe.sort(key=lambda r: r["score"])
+        # Zweitschlüssel wie in _fts_roh, damit Gleichstände auch hier eine
+        # feste Reihenfolge haben.
+        rohe.sort(key=lambda r: (r["score"], r["rid"]))
         rohe = rohe[:limit]
 
     if not rohe:
@@ -213,7 +246,14 @@ def _fts_roh(con, match_expr: str, limit: int, bereich=None, buch=None):
     if bereich:
         sql += " AND rowid BETWEEN ? AND ?"
         params += [bereich[0], bereich[1]]
-    sql += " ORDER BY score LIMIT ?"
+    # Zweitschlüssel `rowid`: bm25 erzeugt sehr viele Gleichstände (gemessen
+    # bis zu 467 von 1200 Zeilen). Ohne festen Zweitschlüssel darf SQLite bei
+    # LIMIT 90 anders sortieren als bei LIMIT 1200 – dann wäre der Zuschnitt
+    # einer großen Liste auf eine kleine nicht mehr dasselbe Ergebnis, worauf
+    # der Zwischenspeicher aber baut. Gemessen kostet der Zusatz nichts
+    # (14,57 s statt 14,70 s) und liefert dieselbe Liste wie bisher; er legt
+    # nur eine bislang zufällige Reihenfolge innerhalb eines Gleichstands fest.
+    sql += " ORDER BY score, rowid LIMIT ?"
     params.append(limit * 4 if bereich else limit)
     rohe = [{"rid": r["rid"], "score": r["score"]}
             for r in con.execute(sql, params)]
@@ -224,6 +264,51 @@ def _fts_roh(con, match_expr: str, limit: int, bereich=None, buch=None):
             [buch] + [r["rid"] for r in rohe])}
         rohe = [r for r in rohe if r["rid"] in eigene][:limit]
     return rohe
+
+
+# Zwischenspeicher für die Bewertung. Gemerkt wird nur die Kandidatenliste
+# (Zeilennummer + Punktzahl); Verbinden, Ausschnitte und die semantische
+# Umsortierung laufen weiter bei jeder Anfrage. Begründung und Messwerte:
+# siehe fts_cache.py.
+_speicher = fc.Kandidatenspeicher()
+
+
+def _index_kennung() -> str:
+    """Fingerabdruck der Indexdatei – Teil jedes Schlüssels.
+
+    Ein neu gebauter Index vergibt ANDERE Zeilennummern: build_fts.py
+    schreibt die Autoren in der Reihenfolge, in der die Lesefäden fertig
+    werden, und die liegt nicht fest. Ein alter Eintrag zeigte danach auf
+    fremde Abschnitte – also falsche Treffer, nicht bloß veraltete. Für ein
+    Zitierwerkzeug ist das der schlimmste denkbare Fehler, deshalb steht die
+    Kennung im Schlüssel und nicht bloß in einer Prüfung beim Start.
+    Größe und Änderungszeit ändern sich bei jedem Neubau; der Aufruf kostet
+    Mikrosekunden.
+    """
+    try:
+        s = os.stat(FTS_DB)
+        return f"{s.st_size}:{s.st_mtime_ns}"
+    except OSError:
+        return "?"
+
+
+def _kandidaten(con, match_expr: str, limit: int):
+    """Bewertete Kandidatenliste – aus dem Speicher, sonst frisch gerechnet.
+
+    Schlüssel ist der MATCH-Ausdruck, nicht die eingetippte Anfrage: er ist
+    die bereits normalisierte Form (Vokalzeichen, Leerraum und Artikel sind
+    darin aufgelöst) und zugleich das Einzige, wovon `_fts_roh` überhaupt
+    abhängt. Damit teilen sich „الله", " الله " und „اللّه" einen Eintrag.
+    Ändert sich die Engine-Logik, ändert sich der Ausdruck automatisch mit –
+    ein Deploy kann also keine inhaltlich veralteten Einträge erben.
+
+    Nur der ungefilterte Zweig geht über den Speicher. Mit Buchfilter ist die
+    Suche bereits schnell (gemessen 0,6–1,0 s), weil sie über rowid-Bereiche
+    läuft; dort lohnt der Aufwand nicht.
+    """
+    schluessel = f"{_index_kennung()}\x00{match_expr}"
+    return _speicher.hole(schluessel, limit,
+                          lambda n: _fts_roh(con, match_expr, n))
 
 
 def _hit_aus_fts(con, h) -> dict:
@@ -336,7 +421,13 @@ class SearchReq(BaseModel):
 def health():
     try:
         info = _client.get_collection(COLLECTION)
-        return {"ok": True, "points": info.points_count}
+        # Modell- und Speicherstand mitmelden: nur so lässt sich auf dem
+        # Server ohne Debugger prüfen, ob Vorladen und Zwischenspeicher
+        # greifen. Ein Zwischenspeicher verdeckt sonst still, wenn die Suche
+        # insgesamt langsamer geworden ist.
+        return {"ok": True, "points": info.points_count,
+                "modell_geladen": _model.cache_info().currsize > 0,
+                "speicher": _speicher.stand()}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -364,6 +455,9 @@ def search(req: SearchReq,
                                   authors=req.authors or None,
                                   book_ids=req.book_ids or None)
         except Exception:
+            # Ohne Ausgabe sähe ein Fehler hier wie „keine Treffer" aus –
+            # die Suche wirkte kaputt, ohne dass im Protokoll etwas stünde.
+            traceback.print_exc()
             fts_hits = []
 
     # Ohne Wortindex (oder ohne Treffer bei reiner Wortsuche) bleibt es bei

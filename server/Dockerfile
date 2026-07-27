@@ -19,6 +19,7 @@ RUN python -c "from sentence_transformers import SentenceTransformer; \
 # Online-Suche andere Wortformen.
 COPY engine/echo_engine /engine/echo_engine
 COPY server/api.py server/meta_index.py server/engine_light.py \
+     server/fts_cache.py \
      server/import_shamela.py server/build_catalog.py server/build_fts.py .
 ENV PYTHONPATH=/engine
 
