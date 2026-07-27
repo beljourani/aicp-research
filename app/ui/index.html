@@ -351,6 +351,12 @@
   /* Aus der Online-Sammlung uebernommen: ruhig, kein Warnton -- die
      Angabe ist zitierfaehig, nur anderer Herkunft als eine PDF-Seite. */
   .rel.src { background: var(--chip-bg); color: var(--muted); }
+  .dlTitle { font-size: 15px; font-weight: 600; margin: 4px 0 2px; }
+  .dlAuthor { color: var(--muted); margin-bottom: 14px; }
+  .dlFacts { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+  .dlFacts td { padding: 4px 0; }
+  .dlFacts td:first-child { color: var(--muted); width: 45%; }
+  .dlCheck { display: flex; gap: 8px; align-items: center; cursor: pointer; }
   .hit .text { line-height: 1.9; font-size: 14.5px; color: #2a332e;
     font-family: var(--arab); }
   mark { background: var(--hl); color: var(--hl-ink); font-weight: 600;
@@ -753,6 +759,7 @@
       </span>
       <button class="btn sm" id="rTashkil"></button>
       <button class="btn sm" id="rImgToggle" style="display:none"></button>
+      <button class="btn sm" id="rDownloadBook" style="display:none"></button>
       <span class="pageJump">
         <input id="rPageInput" inputmode="numeric" autocomplete="off">
         <span id="rPageTotal"></span>
@@ -786,6 +793,26 @@
       <button class="iconBtn" id="newsClose"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
     <div id="newsBody" class="newsBody"></div>
     <div class="modalFoot"><button class="btn primary" id="newsOk"></button></div>
+  </div>
+</div>
+
+<div id="dlOverlay" class="overlay">
+  <div class="modal">
+    <div class="modalHead"><span id="dlHead"></span>
+      <button class="iconBtn" id="dlClose"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+    <div id="dlBookTitle" class="dlTitle"></div>
+    <div id="dlBookAuthor" class="dlAuthor"></div>
+    <table class="dlFacts">
+      <tr><td id="dlPagesLbl"></td><td id="dlPagesVal"></td></tr>
+      <tr><td id="dlSizeLbl"></td><td id="dlSizeVal"></td></tr>
+      <tr><td id="dlTimeLbl"></td><td id="dlTimeVal"></td></tr>
+    </table>
+    <label class="dlCheck"><input type="checkbox" id="dlSemantic"><span id="dlSemanticLbl"></span></label>
+    <p id="dlSemanticHint" class="mfHint"></p>
+    <div class="modalFoot">
+      <button class="btn" id="dlCancel"></button>
+      <button class="btn primary" id="dlStart"></button>
+    </div>
   </div>
 </div>
 
@@ -971,6 +998,17 @@ const T = {
     relApproxHint: "Seitenzahl per Näherung – kann bei langen Dokumenten leicht abweichen.",
     relShamela: "Shamela",
     relShamelaHint: "Seitenzahl aus der Maktaba Shamela – Band und Druckseite stammen unverändert aus der Quelle.",
+    dlBook: "In die Bibliothek übernehmen",
+    dlHead: "Buch in die Bibliothek übernehmen",
+    dlPagesLbl: "Seiten", dlSizeLbl: "Umfang", dlTimeLbl: "Dauer",
+    dlAbout: "etwa",
+    dlSemantic: "Bedeutungssuche für dieses Buch berechnen",
+    dlSemanticHint: (n)=>`Dauert zusätzlich etwa ${n} Minuten und verlangsamt die Bedeutungssuche in der ganzen Bibliothek.`,
+    dlStart: "Übernehmen", dlCancel: "Abbrechen",
+    dlBookDone: "Buch übernommen",
+    dlHave: "Dieses Buch ist bereits in der Bibliothek.",
+    dlAboutMin: (n)=>`etwa ${n} Minuten`,
+    dlAboutSec: (n)=>`etwa ${n} Sekunden`,
     exportLabel: "Bibliothek exportieren", importLabel: "Bibliothek importieren",
     exportDone: "Exportiert", importDone: "Importiert",
     selAllLabel: "Alle", exportSel: "Auswahl exportieren",
@@ -1075,6 +1113,17 @@ const T = {
     relApproxHint: "رقم الصفحة تقريبي – قد يختلف قليلاً في المستندات الطويلة.",
     relShamela: "الشاملة",
     relShamelaHint: "رقم الصفحة من المكتبة الشاملة – الجزء والصفحة كما في المصدر.",
+    dlBook: "إضافة إلى المكتبة",
+    dlHead: "إضافة الكتاب إلى المكتبة",
+    dlPagesLbl: "الصفحات", dlSizeLbl: "الحجم", dlTimeLbl: "المدة",
+    dlAbout: "نحو",
+    dlSemantic: "حساب البحث الدلالي لهذا الكتاب",
+    dlSemanticHint: (n)=>`يستغرق ${n} دقيقة إضافية ويبطئ البحث الدلالي في المكتبة كلها.`,
+    dlStart: "إضافة", dlCancel: "إلغاء",
+    dlBookDone: "تمت إضافة الكتاب",
+    dlHave: "هذا الكتاب موجود في المكتبة بالفعل.",
+    dlAboutMin: (n)=>`نحو ${n} دقيقة`,
+    dlAboutSec: (n)=>`نحو ${n} ثانية`,
     exportLabel: "تصدير المكتبة", importLabel: "استيراد مكتبة",
     exportDone: "تم التصدير", importDone: "تم الاستيراد",
     selAllLabel: "الكل", exportSel: "تصدير المحدد",
@@ -1116,6 +1165,10 @@ function applyLang(l) {
   set("navUpload", d.navUpload); set("titleSearch", d.titleSearch);
   set("navBookmarks", d.navBookmarks); set("titleBookmarks", d.titleBookmarks);
   set("citeLabel", d.cite);
+  set("rDownloadBook", d.dlBook); set("dlHead", d.dlHead);
+  set("dlPagesLbl", d.dlPagesLbl); set("dlSizeLbl", d.dlSizeLbl);
+  set("dlTimeLbl", d.dlTimeLbl); set("dlSemanticLbl", d.dlSemantic);
+  set("dlStart", d.dlStart); set("dlCancel", d.dlCancel);
   set("titleDocs", d.titleDocs); set("titleUpload", d.titleUpload);
   set("mSearchBtn", d.searchBtn); set("rSearchBtn", d.searchBtn);
   set("mAddGroup", d.addGroup); set("rAddGroup", d.addGroup);
@@ -1212,6 +1265,8 @@ const API = {
   shamela_save:(url,token)=>_post("/api/shamela_save",{url,token}),
   shamela_clear:()=>_post("/api/shamela_clear",{}),
   shamela_search:b=>_post("/api/shamela_search",b),
+  shamela_book_info:b=>_post("/api/shamela_book_info",b),
+  shamela_download:b=>_post("/api/shamela_download",b),
   shamela_page:(o)=>_post("/api/shamela_page",o),
   shamela_books:(o)=>_post("/api/shamela_books",o),
   shamela_authors:(q,limit)=>_post("/api/shamela_authors",{q,limit}),
@@ -1767,7 +1822,7 @@ async function refreshStatus(){
       if(up.available&&up.latest)ub.title=`${T[lang].updateAvail}: ${up.latest}`; }
     const jb=$("#uploadJobs");jb.innerHTML="";let active=false,doneCount=0;
     for(const j of st.jobs){
-      if(j.file==="Export"||j.file==="Import"||j.file==="Update")continue;
+      if(j.file==="Export"||j.file==="Import"||j.file==="Update"||j.file==="Buchübernahme")continue;
       const el=document.createElement("div");
       el.className="ujob"+(j.state==="fehler"?" err":j.state==="fertig"?" done":j.state==="übersprungen"?" skip":"");
       const label=j.state==="übersprungen"?`${t("jobs")&&T[lang].jobs["übersprungen"]} – ${esc(j.error||"")}`:esc(jobLabel(j));
@@ -2366,6 +2421,8 @@ function setReaderRemoteUI(remote){
   // Lesezeichen gibt es jetzt auch für Online-Bücher; nur die Bildansicht
   // bleibt aus (Originalseiten liegen nicht auf diesem Rechner).
   const img=$("#rImgToggle"); if(img)img.style.display=remote?"none":"";
+  // Übernehmen gibt es nur online – ein bereits lokales Buch ist ja da.
+  const dl=$("#rDownloadBook"); if(dl)dl.style.display=remote?"":"none";
 }
 
 // Leser für ein Online-Buch der Shamela öffnen. hit trägt book_id + page
@@ -3180,6 +3237,64 @@ function showProgress(msg){
   el.style.display="flex";
 }
 function hideProgress(){const el=$("#progress");if(el)el.style.display="none";}
+// ---- Online-Buch in die Bibliothek übernehmen ------------------------
+// Der Umfang wird vorher gezeigt, weil ein grosses Buch Minuten braucht und
+// dauerhaft Platz belegt. Geschaetzt wird bewusst grob und sichtbar als
+// Schaetzung ("etwa"), statt eine Genauigkeit vorzutaeuschen.
+let dlBook=null;
+function dlSchaetzung(info){
+  const seiten=info.page_count||0, abschnitte=info.chunks||seiten*2;
+  const bytes=abschnitte*1400;                    // ~1,4 kB je Abschnitt
+  const block=info.block||500;
+  const sekunden=Math.ceil(seiten/block)*1.2+1;   // ~1,2 s je Block
+  const vektorMin=Math.round(abschnitte/75/60);   // gemessen 75 Passagen/s
+  return {seiten,bytes,sekunden,vektorMin};
+}
+function dlDauerText(sek){
+  if(sek<90) return t("dlAboutSec")(Math.max(1,Math.round(sek)));
+  return t("dlAboutMin")(Math.max(1,Math.round(sek/60)));
+}
+function dlGroesseText(bytes){
+  return bytes>=1e6?`${(bytes/1e6).toFixed(1)} MB`:`${Math.max(1,Math.round(bytes/1e3))} kB`;
+}
+async function openDownloadDialog(){
+  if(!rRemote||!rBook)return;
+  const info=await api().shamela_book_info({book_id:rBook,title:rTitleTxt,author:rAuthorTxt});
+  if(info&&info.error)return showError(info.error);
+  if(info&&info.vorhanden){
+    // Schon da: lieber die lokale Fassung öffnen als ein zweites Mal laden.
+    showToast(t("dlHave"));
+    return;
+  }
+  dlBook=info;
+  const s=dlSchaetzung(info);
+  $("#dlBookTitle").textContent=info.title||rTitleTxt;
+  $("#dlBookAuthor").textContent=info.author||rAuthorTxt||"";
+  $("#dlPagesVal").textContent=s.seiten.toLocaleString();
+  $("#dlSizeVal").textContent=t("dlAbout")+" "+dlGroesseText(s.bytes);
+  $("#dlTimeVal").textContent=dlDauerText(s.sekunden);
+  $("#dlSemantic").checked=false;
+  $("#dlSemanticHint").textContent=t("dlSemanticHint")(Math.max(1,s.vektorMin));
+  $("#dlOverlay").classList.add("on");
+}
+function closeDownloadDialog(){ $("#dlOverlay").classList.remove("on"); }
+async function startDownload(){
+  if(!dlBook)return;
+  const body={book_id:dlBook.book_id,title:dlBook.title,author:dlBook.author,
+              semantic:$("#dlSemantic").checked};
+  closeDownloadDialog();
+  const r=await api().shamela_download(body);
+  if(r&&r.error)return showError(r.error);
+  trackJob("Buchübernahme",t("dlBookDone"));
+}
+$("#rDownloadBook").onclick=e=>{e.preventDefault();openDownloadDialog();};
+$("#dlClose").onclick=e=>{e.preventDefault();closeDownloadDialog();};
+$("#dlCancel").onclick=e=>{e.preventDefault();closeDownloadDialog();};
+$("#dlStart").onclick=e=>{e.preventDefault();startDownload();};
+$("#dlOverlay").addEventListener("keydown",e=>{
+  if(e.key==="Escape"){e.preventDefault();closeDownloadDialog();}
+});
+
 async function trackJob(key,doneMsg){
   showProgress(doneMsg+" …");
   const poll=async()=>{const st=await api().status();const j=st.jobs.find(x=>x.file===key);
