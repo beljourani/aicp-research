@@ -383,6 +383,54 @@ kann — eine Trefferliste mit 40 Einträgen war 28,5 KB statt 8,1 KB. Und beim 
 Beides behoben. Nicht gemacht: Verbindungen wiederverwenden — das spart rund 60 ms je Anfrage,
 verlangt aber Zustandshaltung über Fäden hinweg; das Verhältnis stimmt nicht.
 
+### 9.2c Online-Bücher in die Offline-Bibliothek übernehmen — gebaut
+
+Ein Buch aus der Shamela-Sammlung lässt sich jetzt **einmal übernehmen** und liegt danach dauerhaft
+in der eigenen Bibliothek: durchsuchbar ohne Netz, lesbar, mit Lesezeichen und Zitat wie jedes
+andere Buch. Kein Umschalten der Quelle mehr.
+
+**Am schwierigsten war nicht das Herunterladen, sondern die Seitenzahl.** Lokal ist eine Seite eine
+Ganzzahl; bei Shamela ist sie „Band 1, Seite 441". **25,5 % der 8.698 Bücher sind mehrbändig**, bei
+22,7 % kommt dieselbe Seitenzahl mehrfach vor — die Eindeutigkeit der lokalen Seitentabelle wäre
+gebrochen, und der Leser setzt zusätzlich eine lückenlose Zahlenreihe voraus, die Shamela-Seiten
+nicht haben. Gelöst: intern zählt eine lückenlose Blattnummer, die echte Druckseite kommt als
+eigene Bezeichnung mit und wird angezeigt und zitiert. Übernommene Bücher tragen die vierte
+Verlässlichkeitsangabe „Shamela".
+
+**Live geprüft** (Buch *الموسوعة الفقهية*, 1.352 Seiten, in die echte Bibliothek übernommen):
+
+- Übernahme in wenigen Sekunden, danach in der Bibliotheksliste.
+- Die **Offline**-Suche findet es und zeigt `ج3 ص7` statt einer Blattnummer.
+- Der Leser zeigt Blatt 800 als `ج2 ص302`, Blatt 1200 als `ج3 ص211` — Bände bleiben unterscheidbar.
+- Ein vorhandenes lokales Buch daneben ist unverändert (`Seite 79`, `exakt`).
+- Nach einem Neustart der App ist das Buch noch da, und der Semantik-Schalter hält:
+  2.216 Abschnitte, **0 vektorisiert** — obwohl der Start sonst alles nachholt.
+
+**Dabei gefunden: ein Fehler, der schon vorher wirkte.** Ein Buch löschen und danach ein anderes
+einlesen liess die Suche Treffer liefern, **deren angezeigter Text das gesuchte Wort gar nicht
+enthält**: der Volltextindex wurde beim Löschen nicht mitaufgeräumt, und SQLite vergibt die
+Passagen-Nummern neu. Reproduziert, behoben, zwei Tests dagegen. Das wirkt unabhängig von diesem
+Vorhaben.
+
+**Zwei Entscheidungen mit Begründung:**
+
+- **Blockweise herunterladen** (500 Blätter je Anfrage, serverseitig gedeckelt). Das grösste Buch
+  hat 231 MB Text und 90.751 Blätter — eine einzige Antwort wäre in keiner Zeitgrenze zustellbar.
+  Je Block genügt ein Qdrant-Durchlauf; seitenweise hätte ein grosses Buch 1.171 s gebraucht.
+- **Bedeutungssuche standardmässig aus** für übernommene Bücher. Grund: `vector_search` lädt bei
+  **jeder** Anfrage alle Vektoren der ganzen Bibliothek. Ein einziges grosses Buch (≈322 MB je
+  Suche) hätte die Bedeutungssuche über die eigenen Bücher dauerhaft verlangsamt — ein Schaden am
+  Bestehenden. Abwählbar im Vorschaudialog.
+
+**Nebenwirkung zum Guten:** Weil Seiten jetzt in einem Durchlauf zusammengesetzt werden, kostet das
+Vorausladen des Online-Lesers eine Serverrunde statt vierzehn.
+
+**Absicherungen:** Die Bibliothek enthält nie ein halbes Buch, das aussieht wie ein ganzes — die
+Buchzeile gilt bis zum Schluss als „in Arbeit", die Liste zeigt nur fertige Bücher, ein Fehler
+löscht die angefangene Zeile, und ein Abbruch wird beim nächsten Start weggeräumt. Die Blattfolge
+jedes Blocks wird auf Lücken geprüft. Und die Druckseiten überleben den `.echolib`-Rundlauf —
+sonst hätte ein übernommenes Buch auf einem anderen Rechner lautlos seine Zitierfähigkeit verloren.
+
 ### 9.3 Kleinere Vorschläge
 
 - **`app/shamela.py` abtrennen** (Punkt 5d) — reine Umstrukturierung, kein Verhaltenswechsel, aber
