@@ -49,9 +49,21 @@ class FakeClient:
 
     def scroll(self, collection_name=None, scroll_filter=None, with_payload=None,
                with_vectors=None, limit=None, offset=None):
-        autor = scroll_filter.must[0].match.value
+        """Filtert über ALLE Bedingungen, nicht nur über den Autor.
+
+        Der Indexbau filtert nur nach Autor; das Seitenverzeichnis filtert
+        nach Titel (+Autor), der Seitentext zusätzlich nach Seite. Ohne diese
+        Verallgemeinerung liesse sich die Rückfallebene nicht prüfen.
+        """
         FakeClient.gelesen += 1
-        return [_Punkt(p) for p in self.DATEN.get(autor, [])], None
+        bed = {c.key: c.match.value for c in (scroll_filter.must or [])}
+        autoren = [bed["author"]] if "author" in bed else list(self.DATEN)
+        raus = []
+        for a in autoren:
+            for p in self.DATEN.get(a, []):
+                if all(p.get(k) == v for k, v in bed.items() if k != "author"):
+                    raus.append(_Punkt(p))
+        return raus, None
 
 
 fake_qc = types.ModuleType("qdrant_client")

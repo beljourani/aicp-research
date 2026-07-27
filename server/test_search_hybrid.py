@@ -445,6 +445,112 @@ def test_streifen_abschaltbar():
     _mit_index(pruef)
 
 
+# --------------------------------------- Seitenverzeichnis (Quelle: fts.db) ---
+# Das Verzeichnis bestimmt die Blattnummerierung des Lesers. Kommt es aus einer
+# anderen Quelle, muss es Blatt für Blatt dasselbe ergeben - sonst zeigt der
+# Leser andere Seiten an, je nachdem wann ein Buch zuerst geöffnet wurde.
+
+def _ein_buch():
+    """Titel, Autor und Buchkennung eines Buches aus den Testdaten."""
+    autor = "البخاري"
+    titel = DATEN[autor][0]["title"]
+    import meta_index as mi
+    return titel, autor, mi.book_id(titel, autor)
+
+
+def test_seitenliste_stimmt_mit_qdrant_ueberein():
+    def pruef():
+        import meta_index as mi
+        for autor, abschnitte in DATEN.items():
+            titel = abschnitte[0]["title"]
+            bid = mi.book_id(titel, autor)
+            aus_wort = api._seiten_aus_wortindex(bid)
+            aus_qdrant = api._seiten_aus_qdrant(titel, autor)
+            assert aus_wort is not None, titel
+            # Als Liste vergleichen, nicht als Menge: die Reihenfolge IST die
+            # Blattnummer und damit eine Produktzusage.
+            assert aus_wort == aus_qdrant, (titel, aus_wort, aus_qdrant)
+        print("ok  test_seitenliste_stimmt_mit_qdrant_ueberein")
+    _mit_index(pruef)
+
+
+def test_seitenindex_ohne_qdrant():
+    """Der Aufbau darf Qdrant gar nicht mehr anfassen.
+
+    Dieser Test nagelt die 195 Sekunden fest: er schlägt fehl, sobald jemand
+    den Qdrant-Weg versehentlich wieder zum Normalfall macht.
+    """
+    def pruef():
+        import meta_index as mi
+        titel, autor, bid = _ein_buch()
+        con = api._meta()
+        mi.ensure_schema(con)
+        mi.remember_book(con, bid, titel, autor, None)
+        con.commit()
+        tbf.FakeClient.gelesen = 0
+        anzahl = api._ensure_book_index(con, bid)
+        con.close()
+        assert anzahl > 0, "kein Seitenverzeichnis gebaut"
+        assert tbf.FakeClient.gelesen == 0, \
+            "Qdrant wurde gelesen, obwohl der Wortindex reicht"
+        print("ok  test_seitenindex_ohne_qdrant")
+    _mit_index(pruef)
+
+
+def test_rueckfall_auf_qdrant_bei_unbekanntem_buch():
+    """Kennt der Wortindex das Buch nicht, muss Qdrant einspringen."""
+    def pruef():
+        import sqlite3
+        titel, autor, bid = _ein_buch()
+        erwartet = api._seiten_aus_qdrant(titel, autor)
+        c = sqlite3.connect(api.FTS_DB)
+        c.execute("DELETE FROM chunk_meta WHERE book_id=?", (bid,))
+        c.execute("DELETE FROM documents WHERE id=?", (bid,))
+        c.commit()
+        c.close()
+        assert api._seiten_aus_wortindex(bid) is None, \
+            "muss None sein (nicht leer), sonst wird 'keine Seiten' festgeschrieben"
+        tbf.FakeClient.gelesen = 0
+        assert api._seiten_kennungen(bid, titel, autor) == erwartet
+        assert tbf.FakeClient.gelesen >= 1, "Qdrant wurde nicht befragt"
+        print("ok  test_rueckfall_auf_qdrant_bei_unbekanntem_buch")
+    _mit_index(pruef)
+
+
+def test_rueckfall_ohne_wortindex():
+    """Fehlt fts.db ganz, läuft alles weiter wie früher."""
+    def pruef():
+        titel, autor, bid = _ein_buch()
+        erwartet = api._seiten_aus_qdrant(titel, autor)
+        alt = api.FTS_DB
+        try:
+            api.FTS_DB = os.path.join(os.path.dirname(alt), "gibt-es-nicht.db")
+            assert api._seiten_aus_wortindex(bid) is None
+            assert api._seiten_kennungen(bid, titel, autor) == erwartet
+        finally:
+            api.FTS_DB = alt
+        print("ok  test_rueckfall_ohne_wortindex")
+    _mit_index(pruef)
+
+
+def test_leere_seitenkennung_faellt_weg():
+    """Eine leere Seitenkennung darf die Blattnummern nicht verschieben."""
+    def pruef():
+        import sqlite3
+        titel, autor, bid = _ein_buch()
+        vorher = api._seiten_aus_wortindex(bid)
+        c = sqlite3.connect(api.FTS_DB)
+        c.execute("INSERT INTO chunk_meta (passage_id,book_id,page_str,part,"
+                  "page_num,chunk_no) VALUES (?,?,'',NULL,NULL,?)",
+                  (999001, bid, 99))
+        c.commit()
+        c.close()
+        assert api._seiten_aus_wortindex(bid) == vorher, \
+            "leere Seitenkennung ist in der Liste gelandet"
+        print("ok  test_leere_seitenkennung_faellt_weg")
+    _mit_index(pruef)
+
+
 if __name__ == "__main__":
     test_wurzelsuche_findet_beugung()
     test_vokalzeichen_egal()
@@ -466,4 +572,9 @@ if __name__ == "__main__":
     test_streifen_grenzen_decken_alles_ab()
     test_streifen_liefern_dieselbe_liste()
     test_streifen_abschaltbar()
+    test_seitenliste_stimmt_mit_qdrant_ueberein()
+    test_seitenindex_ohne_qdrant()
+    test_rueckfall_auf_qdrant_bei_unbekanntem_buch()
+    test_rueckfall_ohne_wortindex()
+    test_leere_seitenkennung_faellt_weg()
     print("\nAlle Tests bestanden.")

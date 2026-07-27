@@ -98,6 +98,36 @@ def test_index_nur_einmal():
     print("ok  test_index_nur_einmal")
 
 
+def test_fehlschlag_wird_nicht_gemerkt():
+    """Scheitert das Beschaffen, darf nichts festgeschrieben werden.
+
+    Darauf verlässt sich die Rückfallebene in api.py: die Seitenliste kommt
+    aus dem Wortindex und nur ersatzweise aus Qdrant. Würde ein einzelner
+    Ausfall der Quelle als „Buch hat keine Seiten" gemerkt, bliebe das Buch
+    dauerhaft unöffenbar – ein stiller, nicht wieder heilender Schaden.
+    """
+    con = _mem_con()
+    bid = mi.book_id("Buch", "Autor")
+    mi.remember_book(con, bid, "Buch", "Autor", "shamela")
+    con.commit()
+
+    def kaputt(t, a):
+        raise RuntimeError("Quelle nicht erreichbar")
+
+    try:
+        mi.ensure_book_index(con, bid, fetch=kaputt)
+        raise AssertionError("Ausnahme wurde verschluckt")
+    except RuntimeError:
+        pass
+    zeile = con.execute("SELECT indexed FROM book_index WHERE book_id=?",
+                        (bid,)).fetchone()
+    assert not zeile["indexed"], "Fehlversuch wurde als fertig gemerkt"
+    # Ein späterer Versuch mit funktionierender Quelle muss normal aufbauen.
+    assert mi.ensure_book_index(con, bid,
+                                fetch=lambda t, a: ["V01P001", "V01P002"]) == 2
+    print("ok  test_fehlschlag_wird_nicht_gemerkt")
+
+
 def test_seite_findet_blattnummer():
     """Aus der Seitenkennung wird die interne Blattnummer gefunden."""
     con = _mem_con()
@@ -195,6 +225,7 @@ if __name__ == "__main__":
     test_sortierung_lesereihenfolge()
     test_index_dicht_und_vollstaendig()
     test_index_nur_einmal()
+    test_fehlschlag_wird_nicht_gemerkt()
     test_seite_findet_blattnummer()
     test_unbekanntes_buch()
     test_verzeichnis_suche()
