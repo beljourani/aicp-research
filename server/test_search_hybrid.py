@@ -386,6 +386,65 @@ def test_indexwechsel_liefert_keine_alten_zeilen():
     print("ok  test_indexwechsel_liefert_keine_alten_zeilen")
 
 
+def test_streifen_grenzen_decken_alles_ab():
+    """Die Bereiche müssen lückenlos und überschneidungsfrei sein.
+
+    Eine Lücke hieße: Treffer fehlen, ohne dass es auffällt.
+    """
+    for hoechste in (1, 7, 100, 11_488_400):
+        for anzahl in (1, 2, 3, 6, 8):
+            g = api._streifen_grenzen(hoechste, anzahl)
+            assert g[0][0] == 0, g
+            assert g[-1][1] >= hoechste, (hoechste, anzahl, g)
+            for (_, ende), (start, _) in zip(g, g[1:]):
+                assert start == ende + 1, (hoechste, anzahl, g)
+    print("ok  test_streifen_grenzen_decken_alles_ab")
+
+
+def test_streifen_liefern_dieselbe_liste():
+    """Gestreift und einfach gerechnet muss zeichengleich dasselbe ergeben."""
+    def pruef():
+        from echo_engine.search import parse_query, _group_expr
+        for wort in ("الصبر", "الصلاة", "كتب"):
+            g = parse_query(wort)
+            e = " OR ".join("(%s)" % x
+                            for x in (_group_expr(y) for y in g) if x)
+            con = api._fts()
+            einfach = api._fts_roh(con, e, 50)
+            con.close()
+            alt = api.STREIFEN
+            try:
+                for n in (2, 3, 6):
+                    api.STREIFEN = n
+                    api._streifen_platz = api.threading.BoundedSemaphore(n)
+                    gestreift = api._fts_roh_gestreift(e, 50)
+                    assert gestreift == einfach, (wort, n)
+            finally:
+                api.STREIFEN = alt
+                api._streifen_platz = api.threading.BoundedSemaphore(max(1, alt))
+        print("ok  test_streifen_liefern_dieselbe_liste")
+    _mit_index(pruef)
+
+
+def test_streifen_abschaltbar():
+    """STREIFEN=1 nimmt den einfachen Weg und liefert dasselbe."""
+    def pruef():
+        from echo_engine.search import parse_query, _group_expr
+        g = parse_query("الصبر")
+        e = " OR ".join("(%s)" % x for x in (_group_expr(y) for y in g) if x)
+        con = api._fts()
+        einfach = api._fts_roh(con, e, 50)
+        con.close()
+        alt = api.STREIFEN
+        try:
+            api.STREIFEN = 1
+            assert api._fts_roh_gestreift(e, 50) == einfach
+        finally:
+            api.STREIFEN = alt
+        print("ok  test_streifen_abschaltbar")
+    _mit_index(pruef)
+
+
 if __name__ == "__main__":
     test_wurzelsuche_findet_beugung()
     test_vokalzeichen_egal()
@@ -404,4 +463,7 @@ if __name__ == "__main__":
     test_blaettern_ist_zusammenhaengend()
     test_buchfilter_geht_am_speicher_vorbei()
     test_indexwechsel_liefert_keine_alten_zeilen()
+    test_streifen_grenzen_decken_alles_ab()
+    test_streifen_liefern_dieselbe_liste()
+    test_streifen_abschaltbar()
     print("\nAlle Tests bestanden.")

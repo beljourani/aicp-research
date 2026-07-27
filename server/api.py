@@ -125,6 +125,17 @@ def _ensure_book_index(con, book_id: int) -> int:
 FTS_DB = os.environ.get("FTS_DB", "/data/fts.db")
 RRF_K = 60          # wie offline in echo_engine.search.hybrid_search
 
+# Die Bewertung eines häufigen Wortes ist reine Rechenarbeit auf einem Kern,
+# während die übrigen sieben brachliegen. STREIFEN teilt den Index in
+# Zeilennummern-Abschnitte, die gleichzeitig bewertet werden. 1 schaltet das
+# ab, ohne dass am Code etwas geändert werden muss.
+STREIFEN = max(1, int(os.environ.get("STREIFEN", "6")))
+# Obergrenze über ALLE gleichzeitigen Suchen. Ohne sie könnten mehrere Nutzer
+# zusammen ein Vielfaches an Durchläufen über die 30-GB-Datei auslösen. Wer
+# keinen Platz bekommt, wartet kurz statt zu scheitern – die Suche wird dann
+# höchstens so langsam wie vorher, nie langsamer.
+_streifen_platz = threading.BoundedSemaphore(STREIFEN)
+
 
 def _fts():
     """Verbindung zum Wort-/Wurzel-Index (nur lesend)."""
@@ -181,7 +192,7 @@ def _fts_suche(con, q: str, limit: int, authors=None, book_ids=None):
             return []
 
     if docs is None:
-        rohe = _kandidaten(con, match_expr, limit)
+        rohe = _kandidaten(match_expr, limit)
     else:
         # Buchfilter: NICHT global suchen und danach filtern. Ein häufiges
         # Wort trifft Millionen Abschnitte; die Prüfung gegen die Buchliste
@@ -254,7 +265,11 @@ def _fts_roh(con, match_expr: str, limit: int, bereich=None, buch=None):
     # (14,57 s statt 14,70 s) und liefert dieselbe Liste wie bisher; er legt
     # nur eine bislang zufällige Reihenfolge innerhalb eines Gleichstands fest.
     sql += " ORDER BY score, rowid LIMIT ?"
-    params.append(limit * 4 if bereich else limit)
+    # Das Vierfache holt nur der Buchfilter: von den Zeilen eines
+    # rowid-Bereichs gehören nicht alle zum gesuchten Buch, und nach dem
+    # Aussieben unten sollen noch `limit` übrig bleiben. Beim Streifenlauf
+    # wird nichts ausgesiebt – dort wäre das Vierfache verschenkte Arbeit.
+    params.append(limit * 4 if buch is not None else limit)
     rohe = [{"rid": r["rid"], "score": r["score"]}
             for r in con.execute(sql, params)]
     if buch is not None and rohe:
@@ -264,6 +279,92 @@ def _fts_roh(con, match_expr: str, limit: int, bereich=None, buch=None):
             [buch] + [r["rid"] for r in rohe])}
         rohe = [r for r in rohe if r["rid"] in eigene][:limit]
     return rohe
+
+
+def _streifen_grenzen(hoechste: int, anzahl: int):
+    """Zeilennummern-Bereiche, die zusammen lückenlos alles abdecken.
+
+    Eine Lücke hieße: Treffer fehlen, ohne dass es auffällt. Leere Bereiche
+    entstehen bewusst keine – sonst würden Fäden gestartet, die nichts zu
+    tun haben (bei kleinen Indizes wäre das die Mehrzahl).
+    """
+    if anzahl < 2 or hoechste < anzahl:
+        return [(0, hoechste)]
+    breite = hoechste // anzahl + 1
+    grenzen, lo = [], 0
+    while lo <= hoechste:
+        grenzen.append((lo, min(lo + breite - 1, hoechste)))
+        lo += breite
+    return grenzen
+
+
+@lru_cache(maxsize=4)
+def _hoechste_zeile(kennung: str) -> int:
+    """Größte Zeilennummer des Index – Grundlage der Streifeneinteilung.
+
+    Der Fingerabdruck steht nur im Schlüssel, damit der Wert nach einem
+    Indexwechsel neu geholt wird; benutzt wird er hier nicht.
+    """
+    con = _fts()
+    try:
+        return con.execute("SELECT MAX(rowid) FROM passages_fts").fetchone()[0] or 0
+    finally:
+        con.close()
+
+
+def _fts_roh_gestreift(match_expr: str, limit: int):
+    """Dieselbe Bewertung, nur auf mehrere Kerne verteilt.
+
+    Warum die Reihenfolge erhalten bleibt: bm25 rechnet mit den Kennzahlen
+    des GANZEN Index, nicht des Streifens. Die Punktzahl einer Zeile hängt
+    also nicht davon ab, in welchem Streifen sie berechnet wurde – genau
+    darauf beruht der Buchfilter oben schon (siehe _fts_suche). Und eine
+    Zeile, die global unter die besten `limit` gehört, gehört erst recht in
+    ihrem eigenen Streifen dazu; die Vereinigung der Streifen-Bestenlisten
+    enthält die globale Bestenliste deshalb vollständig.
+
+    Gemessen mit 6 Streifen: „الله" 14,0 s -> 4,7 s, Liste zeichengleich.
+
+    Jeder Streifen braucht eine eigene Verbindung – SQLite-Verbindungen
+    lassen sich nicht gleichzeitig benutzen. Währenddessen gibt sqlite3 die
+    GIL frei, die Streifen rechnen also wirklich nebeneinander.
+    """
+    grenzen = _streifen_grenzen(_hoechste_zeile(_index_kennung()), STREIFEN)
+    if len(grenzen) < 2:
+        con = _fts()
+        try:
+            return _fts_roh(con, match_expr, limit)
+        finally:
+            con.close()
+
+    ergebnis, fehler, sperre = [], [], threading.Lock()
+
+    def teil(lo, hi):
+        try:
+            with _streifen_platz:
+                con = _fts()
+                try:
+                    r = _fts_roh(con, match_expr, limit, bereich=(lo, hi))
+                finally:
+                    con.close()
+            with sperre:
+                ergebnis.extend(r)
+        except Exception as e:                       # pragma: no cover
+            with sperre:
+                fehler.append(e)
+
+    faeden = [threading.Thread(target=teil, args=g, name="streifen")
+              for g in grenzen]
+    for f in faeden:
+        f.start()
+    for f in faeden:
+        f.join()
+    if fehler:
+        # Eine Teilliste wäre schlimmer als ein Fehler: sie sähe aus wie ein
+        # vollständiges Ergebnis, hätte aber Treffer verloren.
+        raise fehler[0]
+    ergebnis.sort(key=lambda r: (r["score"], r["rid"]))
+    return ergebnis[:limit]
 
 
 # Zwischenspeicher für die Bewertung. Gemerkt wird nur die Kandidatenliste
@@ -292,7 +393,7 @@ def _index_kennung() -> str:
         return "?"
 
 
-def _kandidaten(con, match_expr: str, limit: int):
+def _kandidaten(match_expr: str, limit: int):
     """Bewertete Kandidatenliste – aus dem Speicher, sonst frisch gerechnet.
 
     Schlüssel ist der MATCH-Ausdruck, nicht die eingetippte Anfrage: er ist
@@ -305,10 +406,14 @@ def _kandidaten(con, match_expr: str, limit: int):
     Nur der ungefilterte Zweig geht über den Speicher. Mit Buchfilter ist die
     Suche bereits schnell (gemessen 0,6–1,0 s), weil sie über rowid-Bereiche
     läuft; dort lohnt der Aufwand nicht.
+
+    Gerechnet wird gestreift, also über mehrere Kerne. Das wirkt – anders als
+    der Speicher – auch beim allerersten Mal. Eine Verbindung wird hier
+    deshalb nicht durchgereicht: jeder Streifen öffnet seine eigene.
     """
     schluessel = f"{_index_kennung()}\x00{match_expr}"
     return _speicher.hole(schluessel, limit,
-                          lambda n: _fts_roh(con, match_expr, n))
+                          lambda n: _fts_roh_gestreift(match_expr, n))
 
 
 def _hit_aus_fts(con, h) -> dict:
@@ -427,6 +532,7 @@ def health():
         # insgesamt langsamer geworden ist.
         return {"ok": True, "points": info.points_count,
                 "modell_geladen": _model.cache_info().currsize > 0,
+                "streifen": STREIFEN,
                 "speicher": _speicher.stand()}
     except Exception as e:
         return {"ok": False, "error": str(e)}
