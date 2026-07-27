@@ -25,8 +25,9 @@ These are product promises, not preferences. Breaking one silently is the worst 
    LibreOffice as a last resort. Word is exact; LibreOffice drifts (measured: +13 pages on a
    530-page book). Do not collapse this cascade down to LibreOffice.
 3. **Every hit carries a `reliability` value** — `sicher` (PDF), `exakt` (Word engine), `ungefähr`
-   (LibreOffice fallback) — and the UI shows it. Keep it flowing end to end; it is how the user knows
-   whether a page number is safe to cite.
+   (LibreOffice fallback), `shamela` (taken over from the online collection: the page number comes
+   from there unchanged and was never recomputed) — and the UI shows it. Keep it flowing end to end;
+   it is how the user knows whether a page number is safe to cite.
 4. **Fully offline, free, no accounts, no telemetry, no paid services.** The only network calls are the
    optional self-update check and one-time component downloads.
 5. **Identical behaviour on Windows and macOS.** A feature that works on only one platform is not done.
@@ -206,9 +207,23 @@ Shamela is an opt-in add-on the user connects once.
   `seq` only exists once the server has built that book's page index.
   Everything else (continuous scroll, prune/prefetch, arrow keys, page jump, progress, font, tashkil,
   in-book search, cite-with-source) works unchanged because it operates on abstract sheet numbers.
-- **Not yet done**: bookmarks for Shamela hits (the `bookmarks` table assumes a local integer
-  `document_id`; a source column + reader branch would be needed). The remote reader hides the bookmark
-  controls for now.
+- **Taking a book over into the local library** (`/book_info` + `/book` on the server,
+  `shamela_download` in the app): a whole book can be downloaded once and then lives in the offline
+  library like any other. The server reconstructs pages **blockwise** (500 sheets, hard cap
+  server-side) — the largest book has 231 MB of text and 90,751 sheets, so a single response is not
+  deliverable. `_reconstruct_pages` is the **only** place that stitches chunks; `/page` calls it too,
+  so the taken-over text cannot drift from what the online reader shows.
+  - **`pages.page_no` now has two meanings**: for PDF/Word/TXT it is the printed page; for a
+    taken-over book it is a dense, gapless sheet number, because a quarter of the Shamela books are
+    multi-volume and each volume restarts at page 1 (`UNIQUE(document_id, page_no)` would break).
+    The real printed page lives in `pages.page_label` (`ج1 ص441`). **Anything that displays or cites
+    a page number must check `page_label` first** — otherwise it prints a wrong page, which is
+    exactly what non-negotiable 1 forbids. Books without a label behave exactly as before.
+  - The reconversion helpers are in `echo_engine/shamela_import.py` (pure, no net, no DB, tested).
+  - Semantic vectors are **off by default** for taken-over books (`documents.embed_semantic`):
+    `semantic.vector_search` loads *all* vectors of the whole library on every query, so one large
+    book would slow down semantic search over the user's own books. `embed_passages` honours the
+    column, including the backfill at app start — without that the switch would be pointless.
 
 ## Frontend conventions (`app/ui/index.html`)
 

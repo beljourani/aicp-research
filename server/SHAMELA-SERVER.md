@@ -161,11 +161,33 @@ Token eintragen – einmalig.
 | `GET /health`  | Erreichbarkeit + Punktzahl (ohne Token)                   |
 | `POST /search` | Semantische Suche; Body: `q`, `limit`, `offset`, Filter   |
 | `GET /page`    | Ganze Seite + Nachbarseiten für den Leser                 |
+| `GET /book_info` | Umfang eines Buches (für die Rückfrage vor dem Übernehmen) |
+| `GET /book`    | Ein Block Blätter eines Buches, Text zusammengesetzt      |
 | `GET /categories` | Liste der Kategorien mit Buchzahl                      |
 | `GET /authors` | Autoren (optional gefiltert mit `?q=`)                    |
 
 Alle außer `/health` erfordern den Token im Header
 `X-API-Key: …` (oder `Authorization: Bearer …`).
+
+## Ein Buch in die lokale Bibliothek übernehmen
+
+Zwei Endpunkte liefern ganze Bücher, damit die App sie dauerhaft übernehmen
+kann:
+
+- `GET /book_info?book_id=…` – Umfang (Seitenzahl, Abschnitte, Blockgröße)
+  für die Rückfrage vor dem Übernehmen. Kostet nur das Seitenverzeichnis.
+- `GET /book?book_id=…&offset=…&limit=…` – ein Block Blätter mit bereits
+  zusammengesetztem Text, in Lesereihenfolge.
+
+**Blockweise, nicht am Stück.** Das größte Buch der Sammlung hat 231 MB Text
+und 90.751 Blätter; eine einzige Antwort dafür wäre in keiner Zeitgrenze
+zustellbar und läge auf Server wie App mehrfach im Speicher. Die Blockgröße
+ist serverseitig auf 500 Blätter gedeckelt – nicht nur in der App, sonst
+könnte eine einzelne Anfrage den Server in den Speicher treiben. Je Block
+genügt ein Qdrant-Durchlauf (~1 s).
+
+Der Text ist zeichengleich mit dem, was `/page` für dasselbe Blatt liefert:
+beide gehen durch dieselbe Zusammensetzung (`_reconstruct_pages`).
 
 ## Häufige Stolpersteine
 

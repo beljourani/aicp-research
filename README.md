@@ -48,6 +48,11 @@ einem selbst betriebenen kleinen Server durchsucht werden. Die Kern-App
 bleibt vollständig offline; die Online-Suche ist eine Erweiterung, die
 einmalig eingerichtet wird (siehe `server/SHAMELA-SERVER.md`).
 
+Ein Buch lässt sich von dort **einmal übernehmen** und liegt danach dauerhaft
+in der eigenen Bibliothek: durchsuchbar ohne Netz, lesbar, mit Lesezeichen
+und Zitat wie jedes andere Buch. Die echte Druckseite kommt mit (`ج1 ص441`),
+auch bei mehrbändigen Werken, damit die Fundstelle zitierfähig bleibt.
+
 ## Loslegen
 
 - **macOS:** siehe `START_HIER.md`
