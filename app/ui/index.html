@@ -348,6 +348,9 @@
     white-space: nowrap; cursor: help; }
   .rel.exact { background: var(--chip-bg); color: var(--chip-ink); }
   .rel.approx { background: var(--warn-bg); color: var(--warn-ink); }
+  /* Aus der Online-Sammlung uebernommen: ruhig, kein Warnton -- die
+     Angabe ist zitierfaehig, nur anderer Herkunft als eine PDF-Seite. */
+  .rel.src { background: var(--chip-bg); color: var(--muted); }
   .hit .text { line-height: 1.9; font-size: 14.5px; color: #2a332e;
     font-family: var(--arab); }
   mark { background: var(--hl); color: var(--hl-ink); font-weight: 600;
@@ -966,6 +969,8 @@ const T = {
     relExact: "exakt", relApprox: "ungefähr",
     relExactHint: "Seitenzahl stimmt mit dem Original überein – zitierfähig.",
     relApproxHint: "Seitenzahl per Näherung – kann bei langen Dokumenten leicht abweichen.",
+    relShamela: "Shamela",
+    relShamelaHint: "Seitenzahl aus der Maktaba Shamela – Band und Druckseite stammen unverändert aus der Quelle.",
     exportLabel: "Bibliothek exportieren", importLabel: "Bibliothek importieren",
     exportDone: "Exportiert", importDone: "Importiert",
     selAllLabel: "Alle", exportSel: "Auswahl exportieren",
@@ -1068,6 +1073,8 @@ const T = {
     relExact: "مطابق", relApprox: "تقريبي",
     relExactHint: "رقم الصفحة مطابق للأصل – صالح للاقتباس.",
     relApproxHint: "رقم الصفحة تقريبي – قد يختلف قليلاً في المستندات الطويلة.",
+    relShamela: "الشاملة",
+    relShamelaHint: "رقم الصفحة من المكتبة الشاملة – الجزء والصفحة كما في المصدر.",
     exportLabel: "تصدير المكتبة", importLabel: "استيراد مكتبة",
     exportDone: "تم التصدير", importDone: "تم الاستيراد",
     selAllLabel: "الكل", exportSel: "تصدير المحدد",
@@ -1218,9 +1225,18 @@ function showError(m){const e=$("#errbar");e.textContent=m;e.style.display="bloc
 function showToast(m){const e=$("#toast");e.textContent=m;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(()=>e.style.display="none",5000);}
 function relTag(rel){
   if(rel==="ungefähr") return `<span class="rel approx" title="${esc(t('relApproxHint'))}">${esc(t('relApprox'))}</span>`;
+  // Aus der Online-Sammlung übernommen: die Seitenzahl stammt unverändert
+  // von dort und wurde nie neu berechnet – das ist etwas anderes als eine
+  // selbst geprüfte PDF-Seite und soll im Treffer sichtbar sein.
+  if(rel==="shamela") return `<span class="rel src" title="${esc(t('relShamelaHint'))}">${esc(t('relShamela'))}</span>`;
   return `<span class="rel exact" title="${esc(t('relExactHint'))}">${esc(t('relExact'))}</span>`;
 }
-function pageStr(h){const p=t("pagePrefix");return h.page_from===h.page_to?`${p} ${h.page_from}`:`${p} ${h.page_from}–${h.page_to}`;}
+function pageStr(h){
+  // Trägt das Buch eine echte Druckseite, wird IMMER sie gezeigt –
+  // page_from ist bei übernommenen Büchern nur eine Blattnummer.
+  if(h.page_label) return esc(h.page_label);
+  const p=t("pagePrefix");return h.page_from===h.page_to?`${p} ${h.page_from}`:`${p} ${h.page_from}–${h.page_to}`;
+}
 
 /* ---------- Navigation ---------- */
 function setView(v){
@@ -2083,7 +2099,10 @@ async function refreshBookmarks(){
       // Online-Lesezeichen zeigen die echte Druckseite (ج.. ص..) plus Merkmal.
       const seite=(b.source==="shamela")
         ? (b.page_label||("ص"+b.page_no))+' <span class="onlineBadge">'+esc(t("onlineTag"))+'</span>'
-        : esc(t("pagePrefix"))+" "+b.page_no+(b.missing?" · "+esc(t("bmMissing")):"");
+        // Uebernommene Buecher tragen ebenfalls eine Druckseite; sie hat
+        // Vorrang, denn page_no ist dort nur die Blattnummer.
+        : (b.page_label?esc(b.page_label):esc(t("pagePrefix"))+" "+b.page_no)
+          +(b.missing?" · "+esc(t("bmMissing")):"");
       it.innerHTML=`
         <div class="bmMain">
           <div class="bmPage">${seite}</div>
@@ -2126,6 +2145,9 @@ let rTitleTxt="",rAuthorTxt="",rLoaded=new Set(),rHits=[],rHitIdx=-1,rFont=1,rRe
 // rPageStrs merkt zusätzlich die Seitenkennung ("V01P441") je Blatt – nötig,
 // um ein Online-Lesezeichen später wieder exakt aufzuschlagen.
 let rRemote=false,rBook=null,rPageLabels={},rPageStrs={};
+// Traegt das geoeffnete Buch echte Druckseiten? Bei lokalen Buechern
+// aus dem Netz uebernommen: ja. Steuert nur die Beschriftung.
+let rHasLabels=false;
 // Roh-Text + Marker je geladener Seite zwischenspeichern, damit Umschalten
 // (Vokalzeichen/Bild) ohne Server-Neuladen sofort neu darstellen kann.
 let rPageText={},rPageSpans={};
@@ -2195,7 +2217,9 @@ function pageAtOffset(y){
 function makeSheet(p){
   const s=document.createElement("div");
   s.className="pageSheet loading";s.id="pg"+p;s.dataset.page=p;
-  const lbl=rRemote?(rPageLabels[p]||"…"):`${esc(t("pagePrefix"))} ${p}`;
+  // Bücher mit Druckseiten zeigen erst "…", bis sie bekannt ist – sonst
+  // stünde dort kurz "Seite 5" und spränge dann auf "ج1 ص441" um.
+  const lbl=rPageLabels[p]||((rRemote||rHasLabels)?"…":`${esc(t("pagePrefix"))} ${p}`);
   s.innerHTML=`<div class="pageNum">${lbl}</div>`
     +`<div class="pageText" dir="auto"><span class="ring sm" style="margin:14px auto"></span></div>`;
   s.style.minHeight=Math.max(40,pageH(p)-GAP)+"px";
@@ -2354,7 +2378,7 @@ async function openShamelaReader(hit){
   }
   rRemote=true;rBook=hit.book_id;rDoc="shx:"+hit.book_id;
   rImg=false;rHasImg=false;rPassageText="";rReady=false;
-  rLoaded=new Set();rHits=[];rHitIdx=-1;rPageLabels={};rPageStrs={};rPageText={};rPageSpans={};
+  rLoaded=new Set();rHits=[];rHitIdx=-1;rPageLabels={};rPageStrs={};rPageText={};rPageSpans={};rHasLabels=false;
   setReaderRemoteUI(true);
   const q=hit._query||"";
   rWords=shamelaTerms(q);
@@ -2509,8 +2533,10 @@ async function ensurePages(from,to){
           }
           updateBookmarkBtn();})
       : api().pages(rDoc,a,b,readerTerms())
-          .then(res=>{for(const pg of (res.pages||[])){
+          .then(res=>{if(res.has_labels)rHasLabels=true;
+            for(const pg of (res.pages||[])){
             rPageText[pg.page_no]=pg.text||"";rPageSpans[pg.page_no]=pg.spans||null;
+            if(pg.page_label){rPageLabels[pg.page_no]=pg.page_label;setSheetLabel(pg.page_no,pg.page_label);}
             fillSheet(pg.page_no,pg.text,pg.spans);}}))
     .catch(()=>{need.forEach(p=>rLoaded.delete(p));});
   rInflight.add(job);
@@ -2870,8 +2896,9 @@ $("#citeBtn").onclick=async()=>{
   const sel=window.getSelection();const txt=sel?sel.toString().trim():"";
   if(!txt)return hideCite();
   const pg=$("#citeBtn").dataset.page||rPage;
-  // Remote: die lesbare Shamela-Seitenangabe (z. B. „ج2 ص45") zitieren.
-  const pgTxt=rRemote?(rPageLabels[pg]||("ص"+pg)):`${t("pagePrefix")} ${pg}`;
+  // Die echte Druckseite hat immer Vorrang – online wie bei einem
+  // uebernommenen Buch. Nur wo es keine gibt, wird die Seitenzahl zitiert.
+  const pgTxt=rPageLabels[pg]||(rRemote?("ص"+pg):`${t("pagePrefix")} ${pg}`);
   const au=($("#rAuthor").textContent||"").trim();
   const src=rRemote?`${rTitleTxt}${au?"، "+au:""} — الشاملة`:rTitleTxt;
   const cite=`„${txt}“ (${src}, ${pgTxt})`;
@@ -2938,7 +2965,9 @@ function readerBmData(){
             title:rTitleTxt,author:rAuthorTxt,snippet:snip,terms:terms};
   }
   return {source:"local",document_id:rDoc,passage_id:h?h.passage_id:null,
-          page_no:rPage,snippet:snip,terms:terms};
+          page_no:rPage,snippet:snip,terms:terms,
+          // Bei uebernommenen Buechern ist page_no nur die Blattnummer.
+          page_label:(rPageLabels&&rPageLabels[rPage])||""};
 }
 function updateBookmarkBtn(){
   const k=bmKeyOf(readerBmData());

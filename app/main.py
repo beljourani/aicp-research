@@ -1222,8 +1222,8 @@ class Core:
             con.close()
             return {"error": "Dokument nicht gefunden"}
         row = con.execute(
-            "SELECT text FROM pages WHERE document_id=? AND page_no=?",
-            (doc_id, page_no)).fetchone()
+            "SELECT text, page_label FROM pages WHERE document_id=? "
+            "AND page_no=?", (doc_id, page_no)).fetchone()
         lo, hi = con.execute(
             "SELECT MIN(page_no), MAX(page_no) FROM pages WHERE document_id=?",
             (doc_id,)).fetchone()
@@ -1233,7 +1233,7 @@ class Core:
         text = row["text"] if row else ""
         return {"title": doc["title"], "author": doc["author"],
                 "page_no": page_no, "first_page": lo, "last_page": hi,
-                "text": text,
+                "text": text, "page_label": row["page_label"] if row else None,
                 "spans": highlight_spans(text, (body or {}).get("terms")),
                 "has_image": has_image}
 
@@ -1252,17 +1252,24 @@ class Core:
         terms = (body or {}).get("terms")
         con = self._con()
         rows = con.execute(
-            "SELECT page_no, text FROM pages WHERE document_id=? "
+            "SELECT page_no, text, page_label FROM pages WHERE document_id=? "
             "AND page_no BETWEEN ? AND ? ORDER BY page_no",
             (doc_id, frm, to)).fetchall()
         lo, hi = con.execute(
             "SELECT MIN(page_no), MAX(page_no) FROM pages WHERE document_id=?",
             (doc_id,)).fetchone()
+        # Trägt das Buch überhaupt Druckseiten? Der Leser muss das wissen,
+        # bevor er das erste Blatt beschriftet – sonst stünde dort erst
+        # „Seite 5" und spränge dann auf „ج1 ص441" um.
+        hat_label = bool(con.execute(
+            "SELECT 1 FROM pages WHERE document_id=? AND page_label IS NOT NULL "
+            "LIMIT 1", (doc_id,)).fetchone())
         con.close()
         return {"pages": [{"page_no": r["page_no"], "text": r["text"],
+                           "page_label": r["page_label"],
                            "spans": highlight_spans(r["text"], terms)}
                           for r in rows],
-                "first_page": lo, "last_page": hi}
+                "first_page": lo, "last_page": hi, "has_labels": hat_label}
 
     # --- Merker (Leseposition, Schriftgröße) ------------------------------
     def meta_get(self, body):
@@ -1318,10 +1325,14 @@ class Core:
             return {"error": "Dokument nicht gefunden"}
         con.execute(
             "INSERT INTO bookmarks (document_id, passage_id, doc_title, "
-            "page_no, snippet, note, terms, source) VALUES (?,?,?,?,?,?,?,'local')",
+            "page_no, snippet, note, terms, source, page_label) "
+            "VALUES (?,?,?,?,?,?,?,'local',?)",
             (doc["id"], body.get("passage_id"), doc["title"],
              int(body.get("page_no") or 1), (body.get("snippet") or "")[:400],
-             (body.get("note") or "")[:2000], terms))
+             (body.get("note") or "")[:2000], terms,
+             # Bei übernommenen Büchern steht in page_no nur die Blattnummer;
+             # ohne die Druckseite wäre das Lesezeichen nicht zitierfähig.
+             (body.get("page_label") or "") or None))
         con.commit()
         con.close()
         return {"ok": True}
@@ -1424,6 +1435,7 @@ class Core:
                         "passage_id": pid, "doc_title": b["doc_title"],
                         "title": (doc["title"] if doc else b["doc_title"]),
                         "page_no": b["page_no"], "snippet": b["snippet"],
+                        "page_label": b["page_label"] or "",
                         "note": b["note"] or "", "terms": terms,
                         "missing": did is None})
         con.commit()
