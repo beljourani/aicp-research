@@ -237,27 +237,83 @@ keinem Verhältnis zum Risiko, Pascal-Code in die `.iss` zu schreiben, der hier 
 werden kann und im Fehlerfall den Installer-Bau **jedes** Releases bräche. Falls die App später
 weitergegeben werden soll, wäre der automatische Umzug erneut zu erwägen.
 
-### 9.2 Häufige Wörter online beschleunigen
+### 9.2 Häufige Wörter online beschleunigen — erledigt
 
-`الله` braucht 14–20 s. Drei Wege, mit Abwägung:
+**Entschieden und umgesetzt: Zwischenspeicher.** Die beiden anderen Wege wurden verworfen — eine
+Obergrenze für Kandidaten hätte die Trefferqualität angetastet, ein höheres Zeitlimit hätte nur
+das Symptom behandelt.
 
-| Weg | Gewinn | Preis |
-|---|---|---|
-| **Ergebnis-Zwischenspeicher** (letzte N Anfragen merken) | Wiederholte Anfragen sofort | Erste Anfrage bleibt langsam; Speicher auf dem Server |
-| **Obergrenze für Kandidaten** (nur die ersten X Treffer bewerten) | Deutlich schneller | Die Rangfolge stimmt nicht mehr exakt — ein sehr guter Treffer weit hinten könnte fehlen |
-| **Zeitgrenze anheben** (45 s → 90 s) | Weniger Abbrüche | Der Nutzer wartet länger, bevor etwas passiert |
+**Ursache, vorher vermessen statt vermutet.** Die Zeit steckt vollständig in einer einzigen Stelle:
+`الله` trifft 5.958.791 Abschnitte, und SQLite FTS5 muss für jeden davon eine bm25-Punktzahl
+rechnen, um die besten 90 zu finden — einen vorzeitigen Abbruch gibt es nicht. Das sind 14,4 s
+reine Rechenarbeit (warm genauso langsam wie kalt). Das anschließende Verbinden und die
+Ausschnittbildung kosten 0,00 s. Ohne die Trefferreihenfolge zu verändern lässt sich das nicht
+billiger machen — deshalb wird die Bewertung gemerkt statt beschnitten.
 
-Meine Empfehlung: **Zwischenspeicher** — er ändert die Ergebnisse nicht, nur die Wartezeit. Die
-Kandidaten-Obergrenze würde die Trefferqualität antasten, und daran würde ich ohne dein
-Einverständnis nichts ändern.
+Zwei weitere Messungen bestimmten den Entwurf: Die Bewertung kostet **unabhängig vom Limit**
+gleich viel (90 Zeilen 14,36 s, 1200 Zeilen 14,14 s) — einmal großzügig rechnen ist also gratis.
+Und das Einbettungsmodell wurde erst beim ersten Gebrauch geladen: **19,7 s**, die bisher eine
+echte Nutzeranfrage bezahlte. Zusammen mit einer langen Wortsuche waren das 34 s bei 45 s
+Zeitgrenze — das war die eigentliche Ursache der Abbrüche.
+
+**Was gebaut wurde** (`server/fts_cache.py`, eingehängt in `server/api.py`):
+
+- Gemerkt wird nur die Kandidatenliste (Zeilennummer + Punktzahl), nicht die fertige Antwort.
+  Ausschnitte, Markierung, semantische Umsortierung und das Merken der Bücher für den Leser laufen
+  unverändert bei jeder Anfrage — es kann also keine Anzeige veralten.
+- Es wird immer großzügig gerechnet (1200 Rangplätze) und für jeden Blätterschritt zugeschnitten.
+  Damit kommt auch „Weitere Treffer laden" aus dem Speicher statt in einen neuen 14-Sekunden-Lauf.
+- Gleichzeitige gleiche Anfragen rechnen nur einmal; die übrigen warten auf das Ergebnis.
+- Das Einbettungsmodell wird beim Start vorgeladen.
+- `/health` meldet jetzt Modell- und Speicherstand — sonst würde ein Zwischenspeicher still
+  verdecken, wenn die Suche insgesamt langsamer geworden wäre.
+
+**Gemessen am laufenden Dienst, so wie die App ihn ruft** (limit=40):
+
+| Anfrage | Semantik | erstmals | nochmal | weiterblättern |
+|---|---|---|---|---|
+| `الله` | an | 16,3 s | **0,80 s** | **2,6 s** |
+| `العلم` | an | 11,5 s | **0,98 s** | **1,7 s** |
+| `الصلاة` | an | 4,1 s | **0,79 s** | **1,8 s** |
+| `الرحمن` | aus | 4,6 s | **0,34 s** | **0,98 s** |
+| `الميراث` | aus | 1,1 s | **0,26 s** | **0,86 s** |
+
+Fünf gleichzeitige gleiche Anfragen brauchten zusammen 14,6 s statt fünfmal 14,6 s.
+
+**Nachgewiesen, dass sich nichts verändert hat** — das war der wichtigere Teil der Arbeit:
+
+1. Für 12 Anfragen liefert der Speicher zeichengleich dieselben Treffer, Ausschnitte und
+   `has_more`-Angaben wie die frische Rechnung, mit und ohne Semantik.
+2. Seitenweise Blättern ergibt dieselbe Folge wie ein Abruf am Stück.
+3. Dabei kam eine echte Falle zum Vorschein: bm25 erzeugt **massenhaft Gleichstände** (bis zu 467
+   von 1200 Zeilen). Ohne festen Zweitschlüssel darf SQLite bei `LIMIT 90` anders sortieren als
+   bei `LIMIT 1200` — dann wäre der Zuschnitt einer großen Liste auf eine kleine nicht mehr
+   dasselbe Ergebnis. Behoben mit `ORDER BY score, rowid`; gemessen kostet das nichts (14,57 s
+   statt 14,70 s) und liefert bei 12 geprüften Anfragen exakt dieselbe Liste wie bisher. Es legt
+   nur eine bislang zufällige Reihenfolge innerhalb eines Gleichstands fest.
+4. Elf Tests für die Speicherlogik (`server/test_fts_cache.py`, laufen ohne Server und ohne Daten)
+   und fünf neue Integrationstests in `server/test_search_hybrid.py`, darunter einer, der
+   sicherstellt, dass nach einem neu gebauten Index nichts aus dem alten durchschlägt.
+
+**Was bewusst nicht gemacht wurde:** Der Buchfilter geht weiter am Speicher vorbei — dort ist die
+Suche mit 0,6–1,0 s bereits schnell. Und die **erste** Suche nach einem seltenen Wort bleibt
+langsam; das ließe sich nur mit einer Parallelisierung über mehrere Kerne angehen (siehe 9.3).
 
 ### 9.3 Kleinere Vorschläge
 
 - **`app/shamela.py` abtrennen** (Punkt 5d) — reine Umstrukturierung, kein Verhaltenswechsel, aber
   ich verschiebe ungern Produktcode ohne dein OK.
-- **Fehler-Protokollierung statt stummer `catch`** (Punkt 5b) — Verhalten bleibt gleich, Fehler
-  würden auffindbar.
+- ~~**Fehler-Protokollierung statt stummer `catch`** (Punkt 5b)~~ — erledigt für die Online-Suche:
+  ein Fehler in der Wortsuche sah bisher aus wie „keine Treffer" und stand nirgends im Protokoll.
 - ~~**`docs/`-Probedateien** (Punkt 7)~~ — entschieden und erledigt: gelöscht (siehe Punkt 7).
+- **Auch die erste Suche beschleunigen** (neu, aus 9.2) — der Zwischenspeicher hilft ab dem
+  zweiten Mal. Die erste Suche nach einem häufigen Wort kostet weiter 14 s, weil ein einziger
+  Kern die Bewertung rechnet, während sieben brachliegen. Die Arbeit ließe sich über
+  Zeilennummern-Streifen auf mehrere Kerne verteilen; die Reihenfolge bliebe dabei erhalten, weil
+  bm25 mit den Kennzahlen des ganzen Index rechnet und nicht mit denen des Streifens — genau
+  darauf beruht der Buchfilter heute schon. Erwartung: 14 s → 3–4 s. Vorher zu messen wäre, ob
+  sechs gleichzeitige Durchläufe über die 29,8-GB-Datei den Arbeitsspeicher überlasten. Das ist
+  ein spürbarer Eingriff in den Suchpfad, deshalb erst nach deinem OK.
 
 ---
 
