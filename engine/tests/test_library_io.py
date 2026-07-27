@@ -143,9 +143,55 @@ def test_auswahl_exportieren():
     print("ok  test_auswahl_exportieren")
 
 
+def test_druckseite_ueberlebt_den_rundlauf():
+    """Ein übernommenes Online-Buch behält seine Druckseiten.
+
+    Sie sind der Grund, warum solche Bücher zitierfähig sind. Gingen sie
+    beim Verschieben auf einen anderen Rechner verloren, fiele das nicht
+    auf: das Buch wäre da, lesbar und durchsuchbar – nur zitierte es
+    plötzlich Blattnummern statt Druckseiten.
+    """
+    rumpf = ("هذا نص طويل بما يكفي كي لا يسقط المقطع من الفهرس. " * 4)
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        quelle = d / "quelle.db"
+        con = connect(str(quelle))
+        # Zwei Bände mit derselben Druckseite – der schwierige Fall.
+        index_pages(con, [(1, rumpf + " كلمة زنجبيل", "ج1 ص5", "V01P005"),
+                          (2, rumpf + " كلمة قرفة", "ج2 ص5", "V02P005")],
+                    "Übernommenes Werk", "Autor", file_type="shamela",
+                    reliability="shamela", source_key="shamela:42",
+                    embed_semantic=False)
+        con.close()
+
+        paket = d / "aus.echolib"
+        export_library(quelle, paket)
+        ziel = d / "ziel.db"
+        connect(str(ziel)).close()
+        import_library(ziel, paket, d / "dateien")
+
+        con = connect(str(ziel))
+        zeilen = con.execute("SELECT page_no, page_label, page_key FROM pages "
+                             "ORDER BY page_no").fetchall()
+        assert [z["page_label"] for z in zeilen] == ["ج1 ص5", "ج2 ص5"], \
+            f"Druckseiten verloren: {[z['page_label'] for z in zeilen]}"
+        assert [z["page_key"] for z in zeilen] == ["V01P005", "V02P005"]
+        d0 = con.execute("SELECT reliability, source_key, embed_semantic "
+                         "FROM documents").fetchone()
+        assert d0["reliability"] == "shamela", d0["reliability"]
+        assert d0["source_key"] == "shamela:42"
+        assert d0["embed_semantic"] == 0, "Semantik-Schalter ging verloren"
+        # Und die Suche muss das Buch finden und die Druckseite mitbringen.
+        treffer = search(con, "زنجبيل")
+        assert len(treffer) == 1 and treffer[0].page_label == "ج1 ص5"
+        con.close()
+    print("ok  test_druckseite_ueberlebt_den_rundlauf")
+
+
 if __name__ == "__main__":
     test_rundlauf_findet_wieder()
     test_mehrfach_autoren_bleiben()
     test_import_in_gefuellte_bibliothek()
     test_auswahl_exportieren()
+    test_druckseite_ueberlebt_den_rundlauf()
     print("\nAlle Tests bestanden.")

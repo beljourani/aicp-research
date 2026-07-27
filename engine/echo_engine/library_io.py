@@ -199,13 +199,22 @@ def import_library(db_path: Path, in_file: Path, files_target: Path,
                                 "(document_id, author_id) VALUES (?,?)",
                                 (new_id, aid["id"]))
 
-            # Seiten übernehmen
+            # Seiten übernehmen – samt Druckseiten-Bezeichnung, sonst verlöre
+            # ein übernommenes Online-Buch beim Verschieben auf einen anderen
+            # Rechner genau die Angabe, die es zitierfähig macht. Ältere
+            # Archivdateien kennen die Spalten noch nicht; deshalb wird
+            # geprüft, was tatsächlich vorhanden ist.
+            hat_label = {r[1] for r in src.execute(
+                "PRAGMA table_info(pages)")} >= {"page_label", "page_key"}
+            felder = ("page_no, text, page_label, page_key" if hat_label
+                      else "page_no, text, NULL, NULL")
             for pg in src.execute(
-                    "SELECT page_no, text FROM pages WHERE document_id=?",
+                    f"SELECT {felder} FROM pages WHERE document_id=?",
                     (old_id,)):
-                dst.execute("INSERT INTO pages (document_id, page_no, text) "
-                            "VALUES (?,?,?)", (new_id, pg["page_no"],
-                                               pg["text"]))
+                dst.execute(
+                    "INSERT INTO pages (document_id, page_no, text, "
+                    "page_label, page_key) VALUES (?,?,?,?,?)",
+                    (new_id, pg[0], pg[1], pg[2], pg[3]))
 
             # Passagen + Volltextindex + Vektoren übernehmen
             for ps in src.execute(
