@@ -234,8 +234,8 @@ def launch_installer(path: Path) -> bool:
     elif os.name == "nt":
         try:
             subprocess.Popen(
-                [str(path), "/SILENT", "/CLOSEAPPLICATIONS",
-                 "/RESTARTAPPLICATIONS", "/NORESTART"],
+                [str(path), "/VERYSILENT", "/SUPPRESSMSGBOXES",
+                 "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/NORESTART"],
                 close_fds=True)
         except Exception:
             os.startfile(str(path))  # type: ignore[attr-defined]
