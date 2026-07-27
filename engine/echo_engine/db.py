@@ -36,16 +36,28 @@ CREATE TABLE IF NOT EXISTS documents (
     needs_ocr INTEGER DEFAULT 0,
     status TEXT DEFAULT 'done',-- queued|processing|done|error
     error TEXT,
-    reliability TEXT DEFAULT 'sicher',  -- sicher|exakt|ungefähr
+    -- sicher (PDF) | exakt (Word) | ungefähr (Ersatzprogramm)
+    -- | shamela (aus der Online-Sammlung übernommen: die Seitenangabe stammt
+    --   unverändert von dort und wurde nie neu berechnet)
+    reliability TEXT DEFAULT 'sicher',
     engine TEXT DEFAULT '',
+    source_key TEXT,           -- Herkunft, z. B. "shamela:1234" (Dublettenprüfung)
+    embed_semantic INTEGER DEFAULT 1,  -- 0 = keine Vektoren für dieses Buch
     created_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS pages (
     id INTEGER PRIMARY KEY,
     document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    page_no INTEGER NOT NULL,   -- 1-basiert, wie im Dokument sichtbar
+    -- PDF/Word/TXT: die Druckseite selbst, 1-basiert wie im Dokument sichtbar.
+    -- Aus einer Online-Quelle übernommene Bücher: eine fortlaufende, LÜCKENLOSE
+    -- Blattnummer -- dort steht die echte Druckseite in page_label, weil sie
+    -- Bandangaben trägt und sich pro Band wiederholt. Wer eine Seitenzahl
+    -- anzeigt oder zitiert, muss deshalb IMMER zuerst page_label prüfen.
+    page_no INTEGER NOT NULL,
     text TEXT NOT NULL,
+    page_label TEXT,            -- angezeigte Druckseite, z. B. "ج1 ص441"
+    page_key TEXT,              -- Kennung der Quelle, z. B. "V01P441"
     UNIQUE(document_id, page_no)
 );
 
@@ -126,21 +138,35 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 
 # Spalten, die es in älteren Bibliotheken noch nicht gibt. CREATE TABLE IF NOT
 # EXISTS lässt bestehende Tabellen unverändert, daher werden sie hier ergänzt.
-_BOOKMARK_NEU = [
-    ("source", "TEXT DEFAULT 'local'"),
-    ("book_key", "INTEGER"),
-    ("page_str", "TEXT"),
-    ("page_label", "TEXT"),
-    ("doc_author", "TEXT"),
-]
+# Alle ohne NOT NULL und ohne beweglichen Vorgabewert – dann ist ALTER TABLE
+# in SQLite eine reine Schemaänderung und auch bei Millionen Zeilen sofort
+# fertig, statt die Tabelle umzuschreiben.
+_NEUE_SPALTEN = {
+    "bookmarks": [
+        ("source", "TEXT DEFAULT 'local'"),
+        ("book_key", "INTEGER"),
+        ("page_str", "TEXT"),
+        ("page_label", "TEXT"),
+        ("doc_author", "TEXT"),
+    ],
+    "pages": [
+        ("page_label", "TEXT"),
+        ("page_key", "TEXT"),
+    ],
+    "documents": [
+        ("source_key", "TEXT"),
+        ("embed_semantic", "INTEGER DEFAULT 1"),
+    ],
+}
 
 
 def _migrate(con: sqlite3.Connection) -> None:
     """Fehlende Spalten nachrüsten – ohne Datenverlust, ohne Neuaufbau."""
-    have = {r[1] for r in con.execute("PRAGMA table_info(bookmarks)")}
-    for name, ddl in _BOOKMARK_NEU:
-        if name not in have:
-            con.execute(f"ALTER TABLE bookmarks ADD COLUMN {name} {ddl}")
+    for tabelle, neu in _NEUE_SPALTEN.items():
+        have = {r[1] for r in con.execute(f"PRAGMA table_info({tabelle})")}
+        for name, ddl in neu:
+            if name not in have:
+                con.execute(f"ALTER TABLE {tabelle} ADD COLUMN {name} {ddl}")
     con.commit()
 
 
