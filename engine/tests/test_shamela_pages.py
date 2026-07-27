@@ -213,6 +213,33 @@ def test_uebernommene_buecher_bleiben_wortwoertlich():
     print("ok  test_uebernommene_buecher_bleiben_wortwoertlich")
 
 
+def test_treffer_tragen_die_druckseite():
+    """Ein Suchtreffer muss die echte Druckseite mitbringen."""
+    from echo_engine.shamela_import import blaetter_zu_seiten
+
+    blaetter = [{"seq": 1, "part": 3, "page_num": 441, "page_str": "V03P441",
+                 "text": RUMPF + " كلمة زنجبيل"},
+                {"seq": 2, "part": 3, "page_num": 442, "page_str": "V03P442",
+                 "text": RUMPF + " كلمة قرفة"}]
+    con = connect(":memory:")
+    index_pages(con, blaetter_zu_seiten(blaetter), "Übernommen", "Autor",
+                file_type="shamela", reliability="shamela")
+    treffer = search(con, "زنجبيل")
+    assert len(treffer) == 1
+    assert treffer[0].page_label == "ج3 ص441", treffer[0].page_label
+    assert treffer[0].reliability == "shamela"
+    # Blättern ohne Suchbegriff muss die Bezeichnung ebenfalls tragen.
+    blaettern = search(con, "")
+    assert blaettern and blaettern[0].page_label == "ج3 ص441"
+
+    # Ein normales Buch daneben bleibt ohne Bezeichnung.
+    index_pages(con, [(1, RUMPF + " كلمة هيل")], "Eigenes Buch")
+    eigen = search(con, "هيل")
+    assert len(eigen) == 1 and eigen[0].page_label is None
+    assert eigen[0].reliability == "sicher"
+    print("ok  test_treffer_tragen_die_druckseite")
+
+
 if __name__ == "__main__":
     test_bestehende_buecher_unveraendert()
     test_migration_alter_bibliothek()
@@ -222,4 +249,5 @@ if __name__ == "__main__":
     test_lueckenpruefung()
     test_blockweise_anhaengen()
     test_uebernommene_buecher_bleiben_wortwoertlich()
+    test_treffer_tragen_die_druckseite()
     print("\nAlle Tests bestanden.")

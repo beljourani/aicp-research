@@ -154,7 +154,11 @@ class SearchHit:
     snippet: str
     score: float
     matched_words: list[str]
-    reliability: str = "sicher"    # sicher | exakt | ungefähr
+    reliability: str = "sicher"    # sicher | exakt | ungefähr | shamela
+    # Angezeigte Druckseite, falls das Buch eine trägt (übernommene Bücher:
+    # „ج1 ص441"). Ist sie gesetzt, MUSS sie statt page_from angezeigt und
+    # zitiert werden – dort steht dann nur eine interne Blattnummer.
+    page_label: str | None = None
 
 
 def structured_search(con: sqlite3.Connection,
@@ -262,11 +266,13 @@ def _search_groups(con: sqlite3.Connection, groups: list[QueryGroup],
 
     sql = """
         SELECT p.id, p.document_id, p.page_from, p.page_to, p.text,
-               d.title, d.author, d.reliability,
+               d.title, d.author, d.reliability, pg.page_label,
                bm25(passages_fts, 2.0, 1.0) AS score
         FROM passages_fts f
         JOIN passages p ON p.id = f.rowid
         JOIN documents d ON d.id = p.document_id
+        LEFT JOIN pages pg ON pg.document_id = p.document_id
+                          AND pg.page_no = p.page_from
         WHERE passages_fts MATCH ?
     """
     params: list = [match_expr]
@@ -290,7 +296,8 @@ def _search_groups(con: sqlite3.Connection, groups: list[QueryGroup],
             snippet=_make_snippet(row["text"], matched, formen=formen,
                                   je_begriff=je_begriff),
             score=row["score"], matched_words=matched,
-            reliability=row["reliability"] or "sicher"))
+            reliability=row["reliability"] or "sicher",
+            page_label=row["page_label"]))
     return hits
 
 
@@ -350,8 +357,10 @@ def _browse(con: sqlite3.Connection, limit: int, author,
             offset: int = 0) -> list[SearchHit]:
     """Ohne Suchbegriff: Passagen in Dokumentreihenfolge (Blättern)."""
     sql = ("SELECT p.id, p.document_id, p.page_from, p.page_to, p.text, "
-           "d.title, d.author, d.reliability FROM passages p "
-           "JOIN documents d ON d.id = p.document_id WHERE 1=1")
+           "d.title, d.author, d.reliability, pg.page_label FROM passages p "
+           "JOIN documents d ON d.id = p.document_id "
+           "LEFT JOIN pages pg ON pg.document_id = p.document_id "
+           "AND pg.page_no = p.page_from WHERE 1=1")
     params: list = []
     ac, ap = _author_clause(author)
     sql += ac; params += ap
@@ -365,7 +374,8 @@ def _browse(con: sqlite3.Connection, limit: int, author,
     return [SearchHit(row["id"], row["document_id"], row["title"],
                       row["author"], row["page_from"], row["page_to"],
                       row["text"][:200], 0.0, [],
-                      reliability=row["reliability"] or "sicher")
+                      reliability=row["reliability"] or "sicher",
+                      page_label=row["page_label"])
             for row in con.execute(sql, params)]
 
 
