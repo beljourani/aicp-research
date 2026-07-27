@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests für die Zusammenführung von Wort- und Bedeutungssuche (offline).
+"""Tests für die Zusammenführung von Wort- und semantischer Suche (offline).
 
 Kernregel: Die Wort-Treffer sind die EINZIGE Ergebnismenge. Die semantische
 Suche darf ihre Reihenfolge ändern, aber niemals eine Stelle hinzufügen –
@@ -149,7 +149,7 @@ def test_abgewaehlte_buecher_werden_nicht_vektorisiert():
     Beim App-Start wird embed_passages OHNE document_id gerufen. Ohne die
     Bedingung waere der Schalter wirkungslos: ein grosses uebernommenes
     Buch wuerde am naechsten Morgen doch vektorisiert vorliegen und jede
-    Bedeutungssuche verlangsamen.
+    semantische Suche verlangsamen.
     """
     from echo_engine import connect
     from echo_engine.indexer import index_pages

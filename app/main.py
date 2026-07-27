@@ -962,7 +962,7 @@ class Core:
             con.commit()
 
             if semantik and self._embedder is not None:
-                job["state"] = "berechnet die Bedeutungssuche"
+                job["state"] = "berechnet die semantische Suche"
                 embed_passages(con, self._embedder, document_id=doc_id)
             con.close()
             con = None

@@ -47,7 +47,7 @@ def test_bestehende_buecher_unveraendert():
                     "FROM documents WHERE id=?", (doc,)).fetchone()
     assert d["reliability"] == "sicher", d["reliability"]
     assert d["source_key"] is None
-    assert d["embed_semantic"] == 1, "Bedeutungssuche darf nicht abgeschaltet sein"
+    assert d["embed_semantic"] == 1, "semantische Suche darf nicht abgeschaltet sein"
     treffer = search(con, "زنجبيل")
     assert len(treffer) == 1 and treffer[0].page_from == 1
     print("ok  test_bestehende_buecher_unveraendert")

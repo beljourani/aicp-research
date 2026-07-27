@@ -56,7 +56,7 @@ Arabisch ist mit 15 px genauso groß wie Deutsch, nicht größer. Enter in Begri
 Ausschlussfeld wird abgefangen (kein macOS-Fehlton), Escape ebenso.
 
 **Online/Offline identisch** — über neun Anfragearten geprüft: beide Quellen liefern Treffer, und
-die Bedeutungssuche ändert in **keinem** Fall die Treffermenge, nur die Reihenfolge.
+die semantische Suche ändert in **keinem** Fall die Treffermenge, nur die Reihenfolge.
 
 ---
 
@@ -417,9 +417,9 @@ Vorhaben.
 - **Blockweise herunterladen** (500 Blätter je Anfrage, serverseitig gedeckelt). Das grösste Buch
   hat 231 MB Text und 90.751 Blätter — eine einzige Antwort wäre in keiner Zeitgrenze zustellbar.
   Je Block genügt ein Qdrant-Durchlauf; seitenweise hätte ein grosses Buch 1.171 s gebraucht.
-- **Bedeutungssuche standardmässig aus** für übernommene Bücher. Grund: `vector_search` lädt bei
+- **Semantische Suche standardmässig aus** für übernommene Bücher. Grund: `vector_search` lädt bei
   **jeder** Anfrage alle Vektoren der ganzen Bibliothek. Ein einziges grosses Buch (≈322 MB je
-  Suche) hätte die Bedeutungssuche über die eigenen Bücher dauerhaft verlangsamt — ein Schaden am
+  Suche) hätte die semantische Suche über die eigenen Bücher dauerhaft verlangsamt — ein Schaden am
   Bestehenden. Abwählbar im Vorschaudialog.
 
 **Nebenwirkung zum Guten:** Weil Seiten jetzt in einem Durchlauf zusammengesetzt werden, kostet das

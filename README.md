@@ -15,7 +15,7 @@ auf dem eigenen Rechner.
 - Suchfelder statt Syntax: eine UND-Gruppe je Feld, ODER-Gruppen per Knopf,
   ein eigenes rot umrandetes Feld für Ausschlüsse, Wortgruppen in
   Anführungszeichen
-- Optional zusätzlich sinnverwandte Treffer (Bedeutungssuche); sie ändert
+- Optional zusätzlich sinnverwandte Treffer (semantische Suche); sie ändert
   nur die Reihenfolge, nie die Treffermenge
 - Der Ausschnitt eines Treffers zeigt zu jedem Suchbegriff eine Fundstelle
 
