@@ -227,6 +227,14 @@ wissen, bevor du ein Release baust:
 die UAC-Abfrage behalten. Dann bleibt alles wie bisher — ein Klick pro Update. Ich halte den Umzug
 für die bessere Lösung, aber es ist deine Entscheidung.
 
+**Entschieden (27.07.):** Der Umzug bleibt **manuell**. Ein automatischer Umzug wäre technisch
+möglich — der Installer kann die Altinstallation über `HKLM\…\Uninstall\{AppId}_is1` finden —,
+aber ihr Entfernen braucht Administratorrechte und damit **eine** UAC-Abfrage; wegzaubern lässt die
+sich nicht. Für einen einzelnen Rechner und einen einmaligen Vorgang von zwei Minuten steht das in
+keinem Verhältnis zum Risiko, Pascal-Code in die `.iss` zu schreiben, der hier nicht kompiliert
+werden kann und im Fehlerfall den Installer-Bau **jedes** Releases bräche. Falls die App später
+weitergegeben werden soll, wäre der automatische Umzug erneut zu erwägen.
+
 ### 9.2 Häufige Wörter online beschleunigen
 
 `الله` braucht 14–20 s. Drei Wege, mit Abwägung:
