@@ -7,13 +7,16 @@
   /* Arabische Leseschriften (SIL OFL 1.1, siehe app/ui/fonts/OFL-*.txt).
      Mitgeliefert und über /fonts/ ausgeliefert – offline, gleich auf jedem
      System. Es wird nur die tatsächlich gewählte Schrift geladen. */
-  @font-face{font-family:"Scheherazade New";font-style:normal;font-weight:400;font-display:swap;src:url("/fonts/ScheherazadeNew-Regular.woff2") format("woff2");}
-  @font-face{font-family:"Scheherazade New";font-style:normal;font-weight:700;font-display:swap;src:url("/fonts/ScheherazadeNew-Bold.woff2") format("woff2");}
-  @font-face{font-family:"Amiri";font-style:normal;font-weight:400;font-display:swap;src:url("/fonts/Amiri-Regular.woff2") format("woff2");}
-  @font-face{font-family:"Amiri";font-style:normal;font-weight:700;font-display:swap;src:url("/fonts/Amiri-Bold.woff2") format("woff2");}
-  @font-face{font-family:"Noto Naskh Arabic";font-style:normal;font-weight:100 900;font-display:swap;src:url("/fonts/NotoNaskhArabic.woff2") format("woff2");}
-  @font-face{font-family:"Noto Sans Arabic";font-style:normal;font-weight:400;font-display:swap;src:url("/fonts/NotoSansArabic-Regular.woff2") format("woff2");}
-  @font-face{font-family:"Noto Sans Arabic";font-style:normal;font-weight:700;font-display:swap;src:url("/fonts/NotoSansArabic-Bold.woff2") format("woff2");}
+  /* unicode-range begrenzt jede arabische Schrift auf arabische Zeichen. Dadurch fallen
+     lateinische Buchstaben/Ziffern (auch im Arabisch-Modus) auf --sans zurück – dieselbe
+     Schrift wie im Deutschen, statt in die Serifen von Amiri zu rutschen. */
+  @font-face{font-family:"Scheherazade New";font-style:normal;font-weight:400;font-display:swap;src:url("/fonts/ScheherazadeNew-Regular.woff2") format("woff2");unicode-range:U+0600-06FF,U+0750-077F,U+0870-088E,U+0898-08E1,U+08E3-08FF,U+200C-200E,U+2010-2011,U+204F,U+2E41,U+FB50-FDFF,U+FE70-FEFF;}
+  @font-face{font-family:"Scheherazade New";font-style:normal;font-weight:700;font-display:swap;src:url("/fonts/ScheherazadeNew-Bold.woff2") format("woff2");unicode-range:U+0600-06FF,U+0750-077F,U+0870-088E,U+0898-08E1,U+08E3-08FF,U+200C-200E,U+2010-2011,U+204F,U+2E41,U+FB50-FDFF,U+FE70-FEFF;}
+  @font-face{font-family:"Amiri";font-style:normal;font-weight:400;font-display:swap;src:url("/fonts/Amiri-Regular.woff2") format("woff2");unicode-range:U+0600-06FF,U+0750-077F,U+0870-088E,U+0898-08E1,U+08E3-08FF,U+200C-200E,U+2010-2011,U+204F,U+2E41,U+FB50-FDFF,U+FE70-FEFF;}
+  @font-face{font-family:"Amiri";font-style:normal;font-weight:700;font-display:swap;src:url("/fonts/Amiri-Bold.woff2") format("woff2");unicode-range:U+0600-06FF,U+0750-077F,U+0870-088E,U+0898-08E1,U+08E3-08FF,U+200C-200E,U+2010-2011,U+204F,U+2E41,U+FB50-FDFF,U+FE70-FEFF;}
+  @font-face{font-family:"Noto Naskh Arabic";font-style:normal;font-weight:100 900;font-display:swap;src:url("/fonts/NotoNaskhArabic.woff2") format("woff2");unicode-range:U+0600-06FF,U+0750-077F,U+0870-088E,U+0898-08E1,U+08E3-08FF,U+200C-200E,U+2010-2011,U+204F,U+2E41,U+FB50-FDFF,U+FE70-FEFF;}
+  @font-face{font-family:"Noto Sans Arabic";font-style:normal;font-weight:400;font-display:swap;src:url("/fonts/NotoSansArabic-Regular.woff2") format("woff2");unicode-range:U+0600-06FF,U+0750-077F,U+0870-088E,U+0898-08E1,U+08E3-08FF,U+200C-200E,U+2010-2011,U+204F,U+2E41,U+FB50-FDFF,U+FE70-FEFF;}
+  @font-face{font-family:"Noto Sans Arabic";font-style:normal;font-weight:700;font-display:swap;src:url("/fonts/NotoSansArabic-Bold.woff2") format("woff2");unicode-range:U+0600-06FF,U+0750-077F,U+0870-088E,U+0898-08E1,U+08E3-08FF,U+200C-200E,U+2010-2011,U+204F,U+2E41,U+FB50-FDFF,U+FE70-FEFF;}
   :root {
     --bg: #ffffff;
     --surface: #f7f8f8;
@@ -185,6 +188,14 @@
     color: #fff; font-weight: 600; }
   .btn.primary:hover { background: var(--accent-ink); }
   .btn.sm { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
+  /* „In die Bibliothek übernehmen": klare Aktion, abgesetzt von den Anzeige-
+     Umschaltern der Leser-Leiste (Akzent, etwas Abstand, Icon + Text). */
+  .btn.sm.rAdopt { margin-inline-start: 10px; border-color: var(--accent);
+    color: var(--accent-ink); background: var(--accent-weak); font-weight: 600; }
+  .btn.sm.rAdopt:hover:not(:disabled) { background: #dfeee7; }
+  .btn.sm.rAdopt .ic { width: 15px; height: 15px; }
+  .btn:disabled, .iconBtn:disabled { opacity: .55; cursor: default; }
+  .btn.rAdopt .spin { border: 2px solid #cbdfd6; border-top-color: var(--accent); }
   .btn.ghost { border-color: transparent; background: none; color: var(--muted); }
   .btn.ghost:hover { background: var(--surface); color: var(--ink); }
   .btn.danger { border-color: #e6c3bd; color: var(--err); }
@@ -759,7 +770,7 @@
       </span>
       <button class="btn sm" id="rTashkil"></button>
       <button class="btn sm" id="rImgToggle" style="display:none"></button>
-      <button class="btn sm" id="rDownloadBook" style="display:none"></button>
+      <button class="btn sm rAdopt" id="rDownloadBook" style="display:none"><span class="ci" data-ic="download"></span><span id="rDownloadBookLbl"></span></button>
       <span class="pageJump">
         <input id="rPageInput" inputmode="numeric" autocomplete="off">
         <span id="rPageTotal"></span>
@@ -1006,6 +1017,10 @@ const T = {
     dlSemanticHint: (n)=>`Dauert zusätzlich etwa ${n} Minuten und verlangsamt die semantische Suche in der ganzen Bibliothek.`,
     dlStart: "Übernehmen", dlCancel: "Abbrechen",
     dlBookDone: "Buch übernommen",
+    dlChecking: "prüfe Buch …",
+    dlNoBook: "Kein Buch geöffnet.",
+    dlErrNet: "Server nicht erreichbar. Bitte Verbindung und Zugangsdaten prüfen (Einstellungen).",
+    errGeneric: "Etwas ist schiefgelaufen. Bitte erneut versuchen.",
     dlHave: "Dieses Buch ist bereits in der Bibliothek.",
     dlAboutMin: (n)=>`etwa ${n} Minuten`,
     dlAboutSec: (n)=>`etwa ${n} Sekunden`,
@@ -1121,6 +1136,10 @@ const T = {
     dlSemanticHint: (n)=>`يستغرق ${n} دقيقة إضافية ويبطئ البحث الدلالي في المكتبة كلها.`,
     dlStart: "إضافة", dlCancel: "إلغاء",
     dlBookDone: "تمت إضافة الكتاب",
+    dlChecking: "جارٍ التحقق من الكتاب …",
+    dlNoBook: "لا يوجد كتاب مفتوح.",
+    dlErrNet: "تعذّر الوصول إلى الخادم. تحقّق من الاتصال وبيانات الدخول (الإعدادات).",
+    errGeneric: "حدث خطأ ما. حاول مرة أخرى.",
     dlHave: "هذا الكتاب موجود في المكتبة بالفعل.",
     dlAboutMin: (n)=>`نحو ${n} دقيقة`,
     dlAboutSec: (n)=>`نحو ${n} ثانية`,
@@ -1165,7 +1184,9 @@ function applyLang(l) {
   set("navUpload", d.navUpload); set("titleSearch", d.titleSearch);
   set("navBookmarks", d.navBookmarks); set("titleBookmarks", d.titleBookmarks);
   set("citeLabel", d.cite);
-  set("rDownloadBook", d.dlBook); set("dlHead", d.dlHead);
+  set("rDownloadBookLbl", d.dlBook);
+  { const _db=$("#rDownloadBook"); if(_db)_db.title=d.dlBook; }
+  set("dlHead", d.dlHead);
   set("dlPagesLbl", d.dlPagesLbl); set("dlSizeLbl", d.dlSizeLbl);
   set("dlTimeLbl", d.dlTimeLbl); set("dlSemanticLbl", d.dlSemantic);
   set("dlStart", d.dlStart); set("dlCancel", d.dlCancel);
@@ -1487,7 +1508,9 @@ async function refreshDocs(){
       const act=box&&box.dataset&&box.dataset.act;
       // Klick auf die Reihe (kein Aktions-Button, keine Checkbox) öffnet das Buch
       if(!act){ openReader(d.id); return; }
-      if(act==="del"){ if(confirm(t("confirmDelete")+d.title)) api().delete_document(d.id).then(refreshDocs); }
+      if(act==="del"){ if(confirm(t("confirmDelete")+d.title)) api().delete_document(d.id)
+          .then(r=>{ if(r&&r.error)return showError(r.error); refreshDocs(); showToast("1 "+t("deletedN")); })
+          .catch(()=>showError(t("errGeneric"))); }
       else if(act==="rescan"){ api().reindex_document(d.id,false).then(r=>{if(r&&r.error)showError(r.error);refreshStatus();}); }
       else if(act==="edit"){ openEditDialog(d); }
       else if(act==="download"){ api().download_document(d.id).then(r=>{
@@ -1813,7 +1836,19 @@ function refreshStatusLabel(){
   $("#navStatusText").textContent=T[lang].sem[s]||"";
   el.classList.toggle("off",s!=="bereit"&&s!=="lädt");
 }
-function jobLabel(j){return j.error||T[lang].jobs[j.state]||j.state;}
+function jobLabel(j){
+  if(j.error)return j.error;
+  const s=j.state||"";
+  const direct=T[lang].jobs[s]; if(direct)return direct;
+  if(lang==="ar"){  // dynamische Zustände der Online-Buch-Übernahme (kein fester Schlüssel)
+    const m=s.match(/^lädt … (\d+)\/(\d+)/);
+    if(m)return `يُحمّل … ${m[1]}/${m[2]} صفحة`;
+    if(s==="Buch wird vorbereitet")return "يُجهّز الكتاب";
+    if(s==="wird eingeordnet")return "يُدرج في المكتبة";
+    if(s==="berechnet die semantische Suche")return "يحسب البحث الدلالي";
+  }
+  return s;
+}
 async function refreshStatus(){
   try{
     const st=await api().status();_lastStatus=st;refreshStatusLabel();
@@ -3206,7 +3241,7 @@ $("#rAddGroup").onclick=()=>panelAddGroup(READER);
 $("#rToggleExclude").onclick=()=>panelToggleExclude(READER);
 wireExcludeInput(MAIN);
 wireExcludeInput(READER);
-$("#langBtn").onclick=async()=>{const n=lang==="de"?"ar":"de";applyLang(n);api().set_settings(n);};
+$("#langBtn").onclick=async()=>{const n=lang==="de"?"ar":"de";applyLang(n);api().set_settings(n).catch(()=>{});};
 $("#updateBtn").onclick=async()=>{
   const up=(_lastStatus&&_lastStatus.update)||{};
   const v=up.latest||"";
@@ -3257,11 +3292,33 @@ function dlDauerText(sek){
 function dlGroesseText(bytes){
   return bytes>=1e6?`${(bytes/1e6).toFixed(1)} MB`:`${Math.max(1,Math.round(bytes/1e3))} kB`;
 }
+// Ladezustand direkt am Übernehmen-Knopf: gesperrt + Spinner + Text, damit ein
+// Klick nie „tot" wirkt, während die Buch-Info vom Server geholt wird.
+function setAdoptLoading(on,msg){
+  const b=$("#rDownloadBook"); if(!b)return;
+  if(on){
+    if(b._orig==null)b._orig=b.innerHTML;
+    b.disabled=true;
+    b.innerHTML=`<span class="spin"></span><span>${esc(msg||t("dlChecking"))}</span>`;
+  }else{
+    b.disabled=false;
+    if(b._orig!=null){b.innerHTML=b._orig;b._orig=null;}
+  }
+}
 async function openDownloadDialog(){
-  if(!rRemote||!rBook)return;
-  const info=await api().shamela_book_info({book_id:rBook,title:rTitleTxt,author:rAuthorTxt});
-  if(info&&info.error)return showError(info.error);
-  if(info&&info.vorhanden){
+  if(!rRemote||!rBook)return showError(t("dlNoBook"));
+  setAdoptLoading(true,t("dlChecking"));
+  let info;
+  try{
+    info=await api().shamela_book_info({book_id:rBook,title:rTitleTxt,author:rAuthorTxt});
+  }catch(err){
+    setAdoptLoading(false);
+    return showError(t("dlErrNet"));
+  }
+  setAdoptLoading(false);
+  if(!info)return showError(t("dlErrNet"));
+  if(info.error)return showError(info.error);
+  if(info.vorhanden){
     // Schon da: lieber die lokale Fassung öffnen als ein zweites Mal laden.
     showToast(t("dlHave"));
     return;
@@ -3283,8 +3340,12 @@ async function startDownload(){
   const body={book_id:dlBook.book_id,title:dlBook.title,author:dlBook.author,
               semantic:$("#dlSemantic").checked};
   closeDownloadDialog();
-  const r=await api().shamela_download(body);
-  if(r&&r.error)return showError(r.error);
+  // Sofort sichtbar, dass etwas läuft – bevor der Server-Job im Statuspoll auftaucht.
+  showProgress(t("dlBookDone")+" …");
+  let r;
+  try{ r=await api().shamela_download(body); }
+  catch(err){ hideProgress(); return showError(t("dlErrNet")); }
+  if(r&&r.error){ hideProgress(); return showError(r.error); }
   trackJob("Buchübernahme",t("dlBookDone"));
 }
 $("#rDownloadBook").onclick=e=>{e.preventDefault();openDownloadDialog();};
