@@ -141,6 +141,18 @@ Token eintragen – einmalig.
   `docker compose build api && docker compose up -d`
 - **Token wechseln:** in `.env` ändern, dann `docker compose up -d api`
   (danach den neuen Token in der App eintragen).
+- **Nach einem Neubau des Wortindex (`fts.db`) die Seitenverzeichnisse
+  zurücksetzen:**
+
+  ```bash
+  sqlite3 data/meta.db "DELETE FROM page_index; UPDATE book_index SET indexed=0;"
+  ```
+
+  Die Blattnummern eines Buches werden beim ersten Öffnen aus `fts.db`
+  abgeleitet und dauerhaft gemerkt. Ein neu gebauter Index vergibt andere
+  Zeilennummern; ohne das Zurücksetzen behielten bereits geöffnete Bücher die
+  Nummerierung des alten Index. Die Verzeichnisse bauen sich danach beim
+  nächsten Öffnen von selbst neu auf (Sekundenbruchteile bis wenige Sekunden).
 
 ## Endpunkte (Kurzreferenz)
 
@@ -167,5 +179,11 @@ Alle außer `/health` erfordern den Token im Header
 - **Platte voll während des Imports:** Nach erfolgreichem Import den
   Hugging-Face-Zwischenspeicher freigeben: `docker volume rm server_hf_cache`
   (bzw. `docker compose down` und dann das `hf_cache`-Volume entfernen).
-- **Suche langsam beim ersten Aufruf:** Das Einbettungsmodell wird beim ersten
-  Request in den Speicher geladen; danach ist es schnell.
+- **Suche langsam beim ersten Aufruf:** Das Einbettungsmodell wird beim Start
+  im Hintergrund geladen (rund 20 s). `GET /health` meldet unter
+  `modell_geladen`, ob es steht.
+- **`/health` als Zustandsanzeige:** Neben `points` meldet es `modell_geladen`,
+  `streifen` (auf wie viele Kerne die Bewertung verteilt wird), `speicher`
+  (Zwischenspeicher der Suche) und `rueckfall_qdrant`. Letzteres zählt, wie oft
+  ein Seitenverzeichnis über den langsamen Qdrant-Weg gebaut werden musste –
+  steht dort dauerhaft 0, arbeitet alles wie vorgesehen.

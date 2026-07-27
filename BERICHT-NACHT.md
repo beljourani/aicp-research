@@ -320,6 +320,69 @@ gleichzeitige **verschiedene** teure Anfragen liefen in 12,8 s alle durch, ohne 
   ihn nicht, lieferte die Suche **fremde Textstellen** statt nur veralteter. Das Verhältnis stimmt
   nicht. Der Speicher füllt sich nach einem Neustart beim Suchen von selbst wieder.
 
+### 9.2b Die größten Bücher ließen sich gar nicht öffnen — behoben
+
+Auf die Frage, ob aus dem Server noch mehr herauszuholen sei, habe ich ihn systematisch
+vermessen. Dabei kam ein Fehler zum Vorschein, der weit schwerer wog als alles, wonach ich
+gesucht hatte.
+
+**Der Fund.** Beim ersten Öffnen eines Buches baute der Server dessen Seitenverzeichnis, indem
+er *alle* Abschnitte des Buches aus Qdrant scrollte. Gemessen:
+
+| Buch | Abschnitte | vorher | nachher |
+|---|---|---|---|
+| فتاوى الشبكة الإسلامية | 135.241 | **195,2 s** | **0,83 s** |
+| خزانة التراث | 124.383 | **130,8 s** | **0,84 s** |
+| مجلة الرسالة | 100.221 | **78,6 s** | **0,53 s** |
+
+Die App bricht nach 60 s ab. **Die größten Bücher der Sammlung waren damit unerreichbar** — sie
+liefen jedes Mal in die Zeitüberschreitung. Betroffen waren die 240 Bücher mit über 10.000
+Abschnitten (2,8 % der Sammlung), also gerade die großen Nachschlagewerke. Die Projektdoku
+vermerkte „~3 s je Buch"; das galt nur für ein durchschnittliches Buch (246 Abschnitte).
+
+**Die Lösung lag schon bereit.** Dieselbe Angabe steht in `chunk_meta` im Wortindex und kommt
+dort über einen abdeckenden Index in unter einer Sekunde. Qdrant bleibt als Rückfallebene; der
+Wortindex antwortet mit „weiß nicht" statt mit einer leeren Liste, denn eine leere Liste würde
+als „Buch hat keine Seiten" festgeschrieben und das Buch dauerhaft unöffenbar machen.
+
+**Nachgewiesen, dass sich nichts verändert hat:**
+
+1. Die **54 bereits gebauten Verzeichnisse** stammen noch aus dem Qdrant-Weg. Sie passen Blatt
+   für Blatt zur neuen Quelle — null Abweichungen. Ohne diese Prüfung hinge die Blattnummer
+   davon ab, wann ein Buch zum ersten Mal geöffnet wurde.
+2. Zusätzlich 48 Bücher aller Größenklassen (von 8 bis 135.241 Abschnitten) aus beiden Quellen
+   verglichen: **null Abweichungen**.
+3. Die 1.163 Zeilen, die `chunk_meta` gegenüber Qdrant fehlen, sind restlos erklärt: das
+   Bauprotokoll meldet exakt `1.163 doppelte Kennungen`. Doppelte tragen per Definition dieselbe
+   Seitenkennung wie eine vorhandene Zeile — eine Seite kann dadurch nicht verlorengehen. Damit
+   ist das Restrisiko null, nicht bloß klein.
+4. Fünf neue Tests, darunter einer, der Qdrant beim Aufbau **verbietet** (er schlägt fehl, sobald
+   jemand den langsamen Weg wieder zum Normalfall macht), und einer in `test_meta.py`, der die
+   Zusage festhält, auf der die Rückfallebene beruht: ein gescheiterter Aufbau darf nicht
+   festgeschrieben werden.
+5. Ein großes, nie geöffnetes Buch (فتح الباري, 59.109 Abschnitte) über den echten Weg
+   aufgeschlagen: **9,6 s** einschließlich Schreiben der Blattnummern, danach 0,3 s.
+   `rueckfall_qdrant` steht auf 0.
+
+**Was ich geprüft und verworfen habe** — damit es niemand erneut versucht:
+
+- **Mehr Kerne für die Suche.** 6 Streifen bringen 2,6× — 8 Streifen 2,4×, 16 Streifen 1,7×,
+  64 Streifen 0,8× (langsamer als ohne). Die Arbeiter sind zu 90 % ausgelastet, die Streifen also
+  gut ausbalanciert; aber die Gesamtarbeit wächst mit jedem Streifen. 6 ist bereits das Optimum.
+- **Mehr Arbeitsspeicher.** Eine Suche liest **0 MB** von der Platte; die Trefferlisten liegen
+  längst im Zwischenspeicher des Betriebssystems. Die Suche ist reine Rechenarbeit.
+- **Den Seitentext ebenfalls aus dem Wortindex holen.** Geht nicht: die Abschnitte einer Seite
+  überlappen sich (12 von 12 geprüften Seiten), und die dafür nötigen Zeichenpositionen stehen
+  nur in Qdrant. Bloßes Aneinanderhängen ergäbe doppelten Text.
+- **Qdrant nachstellen.** Bereits sauber eingestellt: Originalvektoren und Nutzdaten auf Platte,
+  quantisierte Vektoren im Arbeitsspeicher, Status grün.
+
+**Nebenbei auf dem Weg zur App:** Die Antworten kamen unkomprimiert, obwohl der Server es längst
+kann — eine Trefferliste mit 40 Einträgen war 28,5 KB statt 8,1 KB. Und beim Umschalten auf
+„Online" wurden jedes Mal die Kategorien abgefragt, die es in den Shamela-Daten gar nicht gibt.
+Beides behoben. Nicht gemacht: Verbindungen wiederverwenden — das spart rund 60 ms je Anfrage,
+verlangt aber Zustandshaltung über Fäden hinweg; das Verhältnis stimmt nicht.
+
 ### 9.3 Kleinere Vorschläge
 
 - **`app/shamela.py` abtrennen** (Punkt 5d) — reine Umstrukturierung, kein Verhaltenswechsel, aber

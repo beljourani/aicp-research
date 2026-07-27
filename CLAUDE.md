@@ -176,8 +176,14 @@ Shamela is an opt-in add-on the user connects once.
     Two genuinely different books sharing title *and* author would merge; no such case seen so far.
   - Reading order comes from the `page` string (`V01P441` = part 1, page 441; also `P032`, `43:1`
     for Quran, `المقدمة_P005`). `meta_index.parse_page()` decodes it; `page_sort_key()` orders it.
-  - `seq` is an **internal** sheet number (dense 1..N per book) built lazily on first open by scrolling
-    Qdrant filtered by title+author (~3 s per book) and cached in `meta.db` (`book_index`/`page_index`).
+  - `seq` is an **internal** sheet number (dense 1..N per book) built lazily on first open and cached
+    in `meta.db` (`book_index`/`page_index`). The page list comes from `chunk_meta` in `fts.db`
+    (`_seiten_aus_wortindex`), **not** from Qdrant: scrolling Qdrant took 45–195 s for the large books
+    and blew the app's 60 s limit, so they could not be opened at all. Qdrant remains as a fallback
+    (`_seiten_aus_qdrant`), and `_seiten_aus_wortindex` returns `None` — never `[]` — when it cannot
+    answer, because an empty list would be written as "book has no pages" and make the book
+    permanently unopenable. `/health` counts how often the fallback fired (`rueckfall_qdrant`).
+    After rebuilding `fts.db`, reset `page_index`/`book_index.indexed` (see `SHAMELA-SERVER.md`).
     The **displayed** page label stays the real printed page (`part`/`page_num`) — decoded from the
     source, never re-numbered. `/search` therefore returns `seq: null`; the reader opens via `page`.
   - `meta_index.py` holds this logic free of FastAPI/Qdrant so `server/test_meta.py` can run anywhere.
