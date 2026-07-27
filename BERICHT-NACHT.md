@@ -176,9 +176,11 @@ Alle vier Dateien stehen jetzt in `.gitignore`, damit sie nicht wieder hineinrut
 ## 7. Unnütz herumliegend (bräuchte deine Entscheidung)
 
 - **`docs/`** — `kitab-tajriba.txt`, `kitab-word-test.docx`, `multi/buch-a.txt`, `multi/buch-b.txt`.
-  Von keinem Test und keinem Skript referenziert. Vermutlich deine Probedateien zum Ausprobieren
-  des Imports. **Nicht angefasst** — falls du sie noch brauchst, sollen sie bleiben; sonst können
-  sie weg (zusammen ~50 KB).
+  **Entschieden: gelöscht.** Nachgeprüft ergab sich, dass sie aus dem allerersten Commit (`42ce43c`)
+  stammen, seitdem nie angefasst wurden und von nichts referenziert werden; die Engine-Tests legen
+  ihre Prüfdaten selbst an (`connect(":memory:")`, `tempfile.TemporaryDirectory()`). Über die
+  Git-Historie bleiben sie wiederherstellbar. Für eine Prüfung der Word-Kaskade ist ohnehin ein
+  echtes Buch mit bekannten Seitenzahlen aussagekräftiger als eine Kunstdatei.
 - **`build/echoarchive.spec`** — trägt noch den alten Namen und wird an vier Stellen referenziert
   (beide Build-Skripte, beide CI-Abläufe). Umbenennen wäre kosmetisch, berührt aber den
   Auslieferungsweg, den ich hier nicht testen kann. **Empfehlung:** so lassen.
@@ -255,7 +257,7 @@ Einverständnis nichts ändern.
   ich verschiebe ungern Produktcode ohne dein OK.
 - **Fehler-Protokollierung statt stummer `catch`** (Punkt 5b) — Verhalten bleibt gleich, Fehler
   würden auffindbar.
-- **`docs/`-Probedateien** (Punkt 7) — löschen oder behalten?
+- ~~**`docs/`-Probedateien** (Punkt 7)~~ — entschieden und erledigt: gelöscht (siehe Punkt 7).
 
 ---
 
