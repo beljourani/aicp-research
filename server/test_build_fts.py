@@ -56,12 +56,18 @@ class FakeClient:
         Verallgemeinerung liesse sich die Rückfallebene nicht prüfen.
         """
         FakeClient.gelesen += 1
-        bed = {c.key: c.match.value for c in (scroll_filter.must or [])}
-        autoren = [bed["author"]] if "author" in bed else list(self.DATEN)
+        # Bedingungen können auf einen Wert oder auf eine Liste prüfen
+        # (MatchValue / MatchAny) – der Block-Abruf eines Buches braucht die
+        # Listenform, sonst liesse er sich nicht testen.
+        bed = {}
+        for c in (scroll_filter.must or []):
+            werte = getattr(c.match, "any", None)
+            bed[c.key] = list(werte) if werte is not None else [c.match.value]
+        autoren = bed["author"] if "author" in bed else list(self.DATEN)
         raus = []
         for a in autoren:
             for p in self.DATEN.get(a, []):
-                if all(p.get(k) == v for k, v in bed.items() if k != "author"):
+                if all(p.get(k) in v for k, v in bed.items() if k != "author"):
                     raus.append(_Punkt(p))
         return raus, None
 

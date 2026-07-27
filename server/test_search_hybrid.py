@@ -551,6 +551,139 @@ def test_leere_seitenkennung_faellt_weg():
     _mit_index(pruef)
 
 
+# ------------------------------------------- Ganze Buecher ausliefern --------
+# /book liefert dieselben Seiten wie /page, nur blockweise. Weicht auch nur
+# ein Zeichen ab, waere der uebernommene Text nicht mehr der, den der Leser
+# online zeigt - und dasselbe Zitat saehe je nach Herkunft anders aus.
+
+# Ein Buch mit UEBERLAPPENDEN Abschnitten, sonst prueft der Test die
+# Zusammensetzung gar nicht. Die Abschnitte werden aus dem echten Seitentext
+# abgeleitet - Zeichenpositionen von Hand zu setzen ist zu fehleranfaellig,
+# und ein falsches Fixture wuerde hier wie ein Fehler im Code aussehen.
+BUCH_TITEL, BUCH_AUTOR = "إحياء علوم الدين", "الغزالي"
+SEITENTEXTE = {
+    "V01P001": "بسم الله الرحمن الرحيم وبه نستعين على أمور الدنيا والدين",
+    "V01P002": "الحمد لله رب العالمين والصلاة على نبينا محمد وآله وصحبه",
+    "V02P001": "الجزء الثاني من الكتاب يبدأ هنا بفصل في آداب طلب العلم",
+}
+
+
+def _zerlege(seite: str, text: str, schnitt: int, ueberlappung: int):
+    """Zerlegt einen Seitentext in zwei ueberlappende Abschnitte."""
+    a_ende = schnitt
+    b_start = schnitt - ueberlappung
+    for nr, (start, ende) in enumerate([(0, a_ende), (b_start, len(text))]):
+        yield {"title": BUCH_TITEL, "author": BUCH_AUTOR, "page": seite,
+               "chunk_no": nr, "char_start": start, "char_end": ende,
+               "text": text[start:ende], "source": "shamela"}
+
+
+UEBERLAPPT = {BUCH_AUTOR: [
+    stueck
+    for seite, text in SEITENTEXTE.items()
+    for stueck in _zerlege(seite, text, schnitt=30, ueberlappung=8)
+]}
+
+
+def _mit_ueberlappendem_buch(fn):
+    with tempfile.TemporaryDirectory() as d:
+        api.API_TOKEN = "T"
+        api.META_DB = os.path.join(d, "meta.db")
+        _index(os.path.join(d, "fts.db"))          # baut DATEN, setzt FTS_DB
+        tbf.FakeClient.DATEN = UEBERLAPPT          # danach das Testbuch
+        api._speicher.leeren()
+        import meta_index as mi
+        titel, autor = BUCH_TITEL, BUCH_AUTOR
+        bid = mi.book_id(titel, autor)
+        con = api._meta()
+        mi.ensure_schema(con)
+        mi.remember_book(con, bid, titel, autor, None)
+        con.commit()
+        con.close()
+        fn(bid, titel, autor)
+
+
+def _hole_buch(bid, titel, autor, **kw):
+    return api.book(bid, title=titel, author=autor, x_api_key="T",
+                    authorization=None, **kw)
+
+
+def test_buchblock_ist_zeichengleich_mit_page():
+    """Jedes Blatt aus /book muss zeichengleich dem aus /page sein."""
+    def pruef(bid, titel, autor):
+        block = _hole_buch(bid, titel, autor)
+        assert block["pages"], "kein Blatt geliefert"
+        for blatt in block["pages"]:
+            einzeln = api._reconstruct_page(titel, autor, blatt["page_str"])
+            assert blatt["text"] == einzeln, (blatt["page_str"], blatt["text"],
+                                              einzeln)
+        # Und die Ueberlappung wurde wirklich abgeschnitten: zusammengesetzt
+        # muss wieder genau der urspruengliche Seitentext herauskommen.
+        for blatt in block["pages"]:
+            assert blatt["text"] == SEITENTEXTE[blatt["page_str"]], \
+                (blatt["page_str"], blatt["text"])
+        print("ok  test_buchblock_ist_zeichengleich_mit_page")
+    _mit_ueberlappendem_buch(pruef)
+
+
+def test_bloecke_decken_alles_lueckenlos_ab():
+    """Blockweise abgerufen ergeben die Blaetter lueckenlos 1..N."""
+    def pruef(bid, titel, autor):
+        gesamt = _hole_buch(bid, titel, autor)["page_count"]
+        gesehen, offset, runden = [], 0, 0
+        while True:
+            runden += 1
+            assert runden < 20, "Endlosschleife"
+            b = _hole_buch(bid, titel, autor, offset=offset, limit=2)
+            gesehen += [p["seq"] for p in b["pages"]]
+            if not b["has_more"]:
+                break
+            offset += len(b["pages"])
+        assert gesehen == list(range(1, gesamt + 1)), gesehen
+        print("ok  test_bloecke_decken_alles_lueckenlos_ab")
+    _mit_ueberlappendem_buch(pruef)
+
+
+def test_buchblock_kostet_einen_durchlauf():
+    """Ein Block ueber mehrere Blaetter darf nur EINEN Qdrant-Durchlauf kosten.
+
+    Nagelt fest, dass niemand versehentlich wieder seitenweise abruft -
+    gemessen war das der Unterschied zwischen 20 s und 1.171 s je Buch.
+    """
+    def pruef(bid, titel, autor):
+        _hole_buch(bid, titel, autor)          # Seitenverzeichnis aufbauen
+        tbf.FakeClient.gelesen = 0
+        b = _hole_buch(bid, titel, autor)
+        assert len(b["pages"]) >= 3, b["pages"]
+        assert tbf.FakeClient.gelesen == 1, \
+            f"{tbf.FakeClient.gelesen} Durchlaeufe statt einem"
+        print("ok  test_buchblock_kostet_einen_durchlauf")
+    _mit_ueberlappendem_buch(pruef)
+
+
+def test_buchumfang_stimmt_mit_verzeichnis():
+    """/book_info meldet denselben Umfang wie das Seitenverzeichnis."""
+    def pruef(bid, titel, autor):
+        info = api.book_info(bid, title=titel, author=autor, x_api_key="T",
+                             authorization=None)
+        assert info["page_count"] == _hole_buch(bid, titel, autor)["page_count"]
+        assert info["title"] == titel and info["author"] == autor
+        assert info["block"] == api.BLOCK_BLAETTER
+        print("ok  test_buchumfang_stimmt_mit_verzeichnis")
+    _mit_ueberlappendem_buch(pruef)
+
+
+def test_blockgroesse_ist_serverseitig_gedeckelt():
+    """Ein zu grosses Limit muss der Server selbst begrenzen."""
+    def pruef(bid, titel, autor):
+        b = _hole_buch(bid, titel, autor, limit=999999)
+        assert b["limit"] == api.BLOCK_BLAETTER, b["limit"]
+        b = _hole_buch(bid, titel, autor, limit=0)
+        assert b["limit"] == 1, b["limit"]
+        print("ok  test_blockgroesse_ist_serverseitig_gedeckelt")
+    _mit_ueberlappendem_buch(pruef)
+
+
 if __name__ == "__main__":
     test_wurzelsuche_findet_beugung()
     test_vokalzeichen_egal()
@@ -577,4 +710,9 @@ if __name__ == "__main__":
     test_rueckfall_auf_qdrant_bei_unbekanntem_buch()
     test_rueckfall_ohne_wortindex()
     test_leere_seitenkennung_faellt_weg()
+    test_buchblock_ist_zeichengleich_mit_page()
+    test_bloecke_decken_alles_lueckenlos_ab()
+    test_buchblock_kostet_einen_durchlauf()
+    test_buchumfang_stimmt_mit_verzeichnis()
+    test_blockgroesse_ist_serverseitig_gedeckelt()
     print("\nAlle Tests bestanden.")

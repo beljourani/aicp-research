@@ -710,22 +710,13 @@ def search(req: SearchReq,
             "offset": req.offset, "limit": req.limit}
 
 
-@app.get("/page")
-def page(book_id: int,
-         seq: int | None = Query(None, description="interne Blattnummer"),
-         page: str | None = Query(None, description="Seitenkennung, z. B. V01P441"),
-         before: int = 0, after: int = 0,
-         title: str | None = None, author: str | None = None,
-         x_api_key: str | None = Header(None),
-         authorization: str | None = Header(None)):
-    """Liefert eine Seite (und optional Nachbarseiten) für den Leser.
+def _buch_aufloesen(con, book_id: int, title: str | None, author: str | None):
+    """Buchzeile zur Kennung – oder aus Titel/Autor angelegt.
 
-    Aufgeschlagen wird über `seq` (Blättern) oder `page` (erstes Öffnen aus
-    der Trefferliste). Der Seitenindex des Buches entsteht beim ersten Zugriff.
+    Schliesst die Verbindung und wirft 404, wenn das Buch nicht zu ermitteln
+    ist. Gemeinsam genutzt von /page, /book und /book_info, damit alle drei
+    dieselbe Rückfallebene und dieselben Meldungen haben.
     """
-    _auth(x_api_key, authorization)
-    con = _meta()
-    mi.ensure_schema(con)
     book = mi.book_row(con, book_id)
     if book:
         # Aus dem Verzeichnis geöffnete Bücher zuerst vormerken, damit der
@@ -744,6 +735,26 @@ def page(book_id: int,
     if not book:
         con.close()
         raise HTTPException(404, "Buch nicht gefunden – bitte erneut suchen.")
+    return book
+
+
+@app.get("/page")
+def page(book_id: int,
+         seq: int | None = Query(None, description="interne Blattnummer"),
+         page: str | None = Query(None, description="Seitenkennung, z. B. V01P441"),
+         before: int = 0, after: int = 0,
+         title: str | None = None, author: str | None = None,
+         x_api_key: str | None = Header(None),
+         authorization: str | None = Header(None)):
+    """Liefert eine Seite (und optional Nachbarseiten) für den Leser.
+
+    Aufgeschlagen wird über `seq` (Blättern) oder `page` (erstes Öffnen aus
+    der Trefferliste). Der Seitenindex des Buches entsteht beim ersten Zugriff.
+    """
+    _auth(x_api_key, authorization)
+    con = _meta()
+    mi.ensure_schema(con)
+    book = _buch_aufloesen(con, book_id, title, author)
 
     total = _ensure_book_index(con, book_id)
     if not total:
@@ -770,43 +781,109 @@ def page(book_id: int,
     btitle, bauthor = book["title"], book["author"]
     con.close()
 
+    # Alle angeforderten Blätter in EINEM Durchlauf zusammensetzen statt in
+    # einem je Blatt. Beim Vorausladen des Lesers sind das bis zu 14 Blätter,
+    # also 14 Runden weniger.
+    texte = _reconstruct_pages(btitle, bauthor, [r["page_str"] for r in rows])
     pages = []
     for r in rows:
         pages.append({
             "seq": r["seq"], "page_id": None,
             "part": r["part"], "page_num": r["page_num"], "page_str": r["page_str"],
-            "text": _reconstruct_page(btitle, bauthor, r["page_str"]),
+            "text": texte.get(r["page_str"], ""),
         })
     return {"book_id": book_id, "title": btitle, "author": bauthor,
             "first_seq": lo, "last_seq": hi, "page_count": total,
             "seq": seq, "pages": pages}
 
 
-def _reconstruct_page(title: str, author: str | None, page_str: str) -> str:
-    """Setzt den Seitentext aus den Abschnitten dieser Seite zusammen.
-    Abschnitte überlappen leicht (50 Token) – anhand der Zeichen-Offsets
-    (char_start/char_end innerhalb der Seite) wird sauber zusammengefügt."""
-    must = [
-        qm.FieldCondition(key="title", match=qm.MatchValue(value=title)),
-        qm.FieldCondition(key="page", match=qm.MatchValue(value=page_str)),
-    ]
-    if author:
-        must.append(qm.FieldCondition(key="author",
-                                      match=qm.MatchValue(value=author)))
-    flt = qm.Filter(must=must)
-    chunks, offset = [], None
-    while True:
-        res, offset = _client.scroll(
-            collection_name=COLLECTION, scroll_filter=flt,
-            with_payload=True, limit=64, offset=offset)
-        chunks.extend(res)
-        if offset is None:
-            break
-    parts = []
-    for pt in chunks:
-        pl = pt.payload or {}
-        parts.append((pl.get("char_start") or 0, pl.get("char_end") or 0,
-                      pl.get("text") or ""))
+# Ein Buch wird blockweise übernommen, nicht am Stück. Gründe: das grösste
+# Buch hat 231 MB Text und 90.751 Blätter – eine einzige Antwort dafür wäre
+# in keiner Zeitgrenze zustellbar und läge auf Server wie App mehrfach im
+# Speicher. Ein Block ist dagegen wiederholbar: bricht einer ab, wird genau
+# er nachgeholt. Je Block genügt EIN Qdrant-Durchlauf (~1 s), der gemessene
+# Vorteil gegenüber dem seitenweisen Abruf bleibt also erhalten.
+BLOCK_BLAETTER = 500
+
+
+@app.get("/book_info")
+def book_info(book_id: int, title: str | None = None, author: str | None = None,
+              x_api_key: str | None = Header(None),
+              authorization: str | None = Header(None)):
+    """Umfang eines Buches – für die Rückfrage vor dem Übernehmen.
+
+    Kostet nur das Seitenverzeichnis (unter einer Sekunde, siehe
+    `_seiten_aus_wortindex`), lädt also keinen Text.
+    """
+    _auth(x_api_key, authorization)
+    con = _meta()
+    mi.ensure_schema(con)
+    book = _buch_aufloesen(con, book_id, title, author)
+    total = _ensure_book_index(con, book_id)
+    btitle, bauthor = book["title"], book["author"]
+    con.close()
+    abschnitte = None
+    if _fts_verfuegbar():
+        try:
+            f = _fts()
+            try:
+                r = f.execute("SELECT COUNT(*) FROM chunk_meta WHERE book_id=?",
+                              (book_id,)).fetchone()
+                abschnitte = r[0] if r else None
+            finally:
+                f.close()
+        except Exception:
+            traceback.print_exc()
+    return {"book_id": book_id, "title": btitle, "author": bauthor,
+            "page_count": total, "chunks": abschnitte,
+            "block": BLOCK_BLAETTER}
+
+
+@app.get("/book")
+def book(book_id: int, offset: int = 0, limit: int = BLOCK_BLAETTER,
+         title: str | None = None, author: str | None = None,
+         x_api_key: str | None = Header(None),
+         authorization: str | None = Header(None)):
+    """Ein Block Blätter eines Buches, Text bereits zusammengesetzt.
+
+    Geliefert werden die Blätter `offset+1` bis `offset+limit` in
+    Lesereihenfolge. Der Text ist zeichengleich mit dem, was /page für
+    dasselbe Blatt liefert – beide gehen durch `_reconstruct_pages`.
+
+    Die Obergrenze wird hier erzwungen, nicht nur in der App: sonst könnte
+    eine einzige Anfrage den Server in den Speicher treiben.
+    """
+    _auth(x_api_key, authorization)
+    limit = max(1, min(int(limit), BLOCK_BLAETTER))
+    offset = max(0, int(offset))
+    con = _meta()
+    mi.ensure_schema(con)
+    book_row = _buch_aufloesen(con, book_id, title, author)
+    total = _ensure_book_index(con, book_id)
+    if not total:
+        con.close()
+        raise HTTPException(404, "Zu diesem Buch sind keine Seiten auffindbar.")
+    rows = con.execute(
+        "SELECT seq, page_str, part, page_num FROM page_index "
+        "WHERE book_id=? AND seq BETWEEN ? AND ? ORDER BY seq",
+        (book_id, offset + 1, offset + limit)).fetchall()
+    btitle, bauthor = book_row["title"], book_row["author"]
+    con.close()
+    texte = _reconstruct_pages(btitle, bauthor, [r["page_str"] for r in rows])
+    pages = [{"seq": r["seq"], "part": r["part"], "page_num": r["page_num"],
+              "page_str": r["page_str"], "text": texte.get(r["page_str"], "")}
+             for r in rows]
+    return {"book_id": book_id, "title": btitle, "author": bauthor,
+            "page_count": total, "offset": offset, "limit": limit,
+            "has_more": (offset + len(pages)) < total, "pages": pages}
+
+
+def _fuegen(parts: list) -> str:
+    """Fügt die Abschnitte EINER Seite zum Seitentext zusammen.
+
+    Abschnitte überlappen leicht (50 Token); anhand der Zeichen-Offsets
+    innerhalb der Seite wird die Überlappung abgeschnitten.
+    """
     parts.sort(key=lambda x: x[0])
     text, covered = "", 0
     for cs, ce, tx in parts:
@@ -818,6 +895,52 @@ def _reconstruct_page(title: str, author: str | None, page_str: str) -> str:
             text += tx[covered - cs:]
         covered = max(covered, ce)
     return text.strip()
+
+
+def _reconstruct_pages(title: str, author: str | None,
+                       page_strs: list) -> dict:
+    """Setzt MEHRERE Seiten in einem Durchlauf zusammen.
+
+    Ein einziger Qdrant-Filter über alle gewünschten Seitenkennungen statt
+    einer Runde je Seite. Für den Leser (bis zu 14 Blätter) und erst recht
+    für das Übernehmen ganzer Bücher ist das der Unterschied zwischen
+    Sekunden und Minuten: seitenweise kostete ein mittleres Buch gemessen
+    87 s, ein grosses 1.171 s.
+
+    Es gibt bewusst nur DIESE eine Zusammensetzung. Die Zusage „der
+    übernommene Text ist derselbe wie in der Online-Ansicht" liesse sich
+    mit zwei Fassungen nicht halten – sie würden getrennt altern, und der
+    Unterschied fiele erst auf, wenn jemand ein Zitat vergleicht.
+    """
+    if not page_strs:
+        return {}
+    must = [qm.FieldCondition(key="title", match=qm.MatchValue(value=title)),
+            qm.FieldCondition(key="page",
+                              match=qm.MatchAny(any=list(page_strs)))]
+    if author:
+        must.append(qm.FieldCondition(key="author",
+                                      match=qm.MatchValue(value=author)))
+    flt = qm.Filter(must=must)
+    teile: dict = {}
+    offset = None
+    while True:
+        res, offset = _client.scroll(
+            collection_name=COLLECTION, scroll_filter=flt,
+            with_payload=["page", "char_start", "char_end", "text"],
+            with_vectors=False, limit=1000, offset=offset)
+        for pt in res:
+            pl = pt.payload or {}
+            teile.setdefault(str(pl.get("page") or ""), []).append(
+                (pl.get("char_start") or 0, pl.get("char_end") or 0,
+                 pl.get("text") or ""))
+        if offset is None:
+            break
+    return {pg: _fuegen(parts) for pg, parts in teile.items()}
+
+
+def _reconstruct_page(title: str, author: str | None, page_str: str) -> str:
+    """Eine einzelne Seite – über denselben Weg wie beim Übernehmen."""
+    return _reconstruct_pages(title, author, [page_str]).get(page_str, "")
 
 
 @app.get("/categories")
