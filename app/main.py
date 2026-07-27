@@ -58,8 +58,9 @@ def join_authors(names) -> str | None:
 
 from echo_engine import connect, index_document, hybrid_search  # noqa: E402
 from echo_engine import highlight_spans  # noqa: E402
-from echo_engine.indexer import (ensure_index_version,  # noqa: E402
-                                 ensure_text_layout_version)
+from echo_engine.indexer import (  # noqa: E402
+    delete_documents as engine_delete_documents, ensure_index_version,
+    ensure_text_layout_version)
 from echo_engine.semantic import Embedder, embed_passages, ensure_vector_schema  # noqa: E402
 
 def _resource_base() -> Path:
@@ -1344,8 +1345,10 @@ class Core:
 
     def delete(self, body):
         con = self._con()
-        con.execute("DELETE FROM documents WHERE id=?", (body["id"],))
-        con.commit()
+        # Über die Engine löschen, damit auch der Volltextindex mitaufgeräumt
+        # wird – sonst erbt das nächste eingelesene Buch die Wörter des
+        # gelöschten (siehe indexer.delete_documents).
+        engine_delete_documents(con, [body["id"]])
         con.close()
         return {"ok": True}
 
@@ -1355,11 +1358,7 @@ class Core:
         if not ids:
             return {"ok": True, "deleted": 0}
         con = self._con()
-        marks = ",".join("?" for _ in ids)
-        cur = con.execute(
-            f"DELETE FROM documents WHERE id IN ({marks})", ids)
-        con.commit()
-        deleted = cur.rowcount
+        deleted = engine_delete_documents(con, ids)
         con.close()
         return {"ok": True, "deleted": deleted}
 

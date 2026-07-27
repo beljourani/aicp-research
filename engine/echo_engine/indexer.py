@@ -29,17 +29,66 @@ def ensure_index_version(con: sqlite3.Connection) -> bool:
         "SELECT value FROM meta WHERE key='stem_version'").fetchone()
     if row and row[0] == str(STEM_VERSION):
         return False
-    # Spezialbefehl: contentless FTS5-Tabellen komplett leeren
+    rebuild_fts(con)
+    con.execute("INSERT OR REPLACE INTO meta (key, value) "
+                "VALUES ('stem_version', ?)", (str(STEM_VERSION),))
+    con.commit()
+    return True
+
+
+def rebuild_fts(con: sqlite3.Connection) -> None:
+    """Baut den Volltextindex vollständig aus den gespeicherten Passagen neu."""
     con.execute("INSERT INTO passages_fts (passages_fts) VALUES ('delete-all')")
     for pid, text in con.execute("SELECT id, text FROM passages"):
         norm, stems = to_index_forms(text)
         con.execute(
             "INSERT INTO passages_fts (rowid, norm, stems) VALUES (?,?,?)",
             (pid, norm, stems))
-    con.execute("INSERT OR REPLACE INTO meta (key, value) "
-                "VALUES ('stem_version', ?)", (str(STEM_VERSION),))
+
+
+def delete_documents(con: sqlite3.Connection, doc_ids) -> int:
+    """Löscht Dokumente – samt ihrer Spuren im Volltextindex.
+
+    Der Volltextindex ist inhaltslos (`content=''`) und hat keinen Auslöser:
+    ein `DELETE FROM documents` räumt über die Fremdschlüssel zwar `passages`
+    ab, lässt die zugehörigen Indexzeilen aber stehen. Passagen-Nummern
+    werden von SQLite wiederverwendet, das nächste eingelesene Buch erbt sie
+    also – und mit ihnen die Wörter des gelöschten Buches. Ergebnis waren
+    Treffer, deren angezeigter Text das gesuchte Wort gar nicht enthält
+    (nachgestellt und bestätigt).
+
+    Deshalb wird jede Passage vor dem Löschen ausdrücklich aus dem Index
+    ausgetragen. Der Spezialbefehl 'delete' verlangt dieselben Werte, mit
+    denen die Zeile eingefügt wurde – sie werden aus dem gespeicherten Text
+    neu berechnet, was genau dieselben Formen ergibt (`ensure_index_version`
+    baut den Index bei geänderter Stemming-Logik ohnehin aus derselben
+    Quelle neu auf).
+    """
+    ids = [int(i) for i in doc_ids if i is not None]
+    if not ids:
+        return 0
+    marks = ",".join("?" * len(ids))
+    zeilen = con.execute(
+        f"SELECT id, text FROM passages WHERE document_id IN ({marks})",
+        ids).fetchall()
+    try:
+        for pid, text in zeilen:
+            norm, stems = to_index_forms(text)
+            con.execute(
+                "INSERT INTO passages_fts (passages_fts, rowid, norm, stems) "
+                "VALUES ('delete', ?, ?, ?)", (pid, norm, stems))
+    except sqlite3.DatabaseError:
+        # Sollten Index und Text wider Erwarten auseinanderliegen, ist ein
+        # vollständiger Neuaufbau die sichere Rettung – lieber einmal
+        # langsam als dauerhaft falsche Treffer.
+        con.rollback()
+        cur = con.execute(f"DELETE FROM documents WHERE id IN ({marks})", ids)
+        rebuild_fts(con)
+        con.commit()
+        return cur.rowcount
+    cur = con.execute(f"DELETE FROM documents WHERE id IN ({marks})", ids)
     con.commit()
-    return True
+    return cur.rowcount
 
 
 def ensure_text_layout_version(con: sqlite3.Connection) -> int:

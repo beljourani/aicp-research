@@ -80,8 +80,61 @@ def test_search_with_pages():
     print("OK  Blättern ohne Suchbegriff")
 
 
+def test_loeschen_hinterlaesst_keine_geistertreffer():
+    """Ein gelöschtes Buch darf im Volltextindex nichts zurücklassen.
+
+    Der Index ist inhaltslos und hat keinen Auslöser; SQLite vergibt
+    Passagen-Nummern erneut. Ohne ausdrückliches Austragen erbte das nächste
+    Buch die Wörter des gelöschten – die Suche lieferte dann Treffer, deren
+    angezeigter Text das gesuchte Wort gar nicht enthält.
+    """
+    from echo_engine.indexer import delete_documents
+
+    con = connect(":memory:")
+    alt = index_pages(con, [(1, "كتاب الأول فيه كلمة زنجبيل نادرة جدا")],
+                      "Erstes Buch")
+    assert len(search(con, "زنجبيل")) == 1
+
+    delete_documents(con, [alt])
+    assert con.execute("SELECT COUNT(*) FROM passages_fts").fetchone()[0] == 0, \
+        "Indexzeile des gelöschten Buches ist stehengeblieben"
+
+    index_pages(con, [(1, "كتاب الثاني موضوعه مختلف تماما عن سابقه")],
+                "Zweites Buch")
+    geister = search(con, "زنجبيل")
+    assert not geister, \
+        f"Geistertreffer: {[(h.title, h.snippet) for h in geister]}"
+    # Das neue Buch muss dabei ganz normal auffindbar bleiben.
+    assert len(search(con, "موضوعه")) == 1
+    print("OK  Löschen hinterlässt keine Geistertreffer")
+
+
+def test_loeschen_mehrerer_buecher():
+    """Auch das Löschen einer Auswahl räumt den Index vollständig auf."""
+    from echo_engine.indexer import delete_documents
+
+    # Lang genug, damit der Chunker die Seite nicht als Fragment verwirft.
+    rumpf = ("هذا نص طويل بما يكفي كي لا يسقط المقطع من الفهرس، وفيه كلام "
+             "معاد لبلوغ الطول المطلوب. " * 4)
+    con = connect(":memory:")
+    a = index_pages(con, [(1, rumpf + " وفيه كلمة زنجبيل")], "A")
+    b = index_pages(con, [(1, rumpf + " وفيه كلمة كركديه")], "B")
+    index_pages(con, [(1, rumpf + " وفيه كلمة قرفة")], "C")
+    assert len(search(con, "زنجبيل")) == 1 and len(search(con, "قرفة")) == 1
+
+    assert delete_documents(con, [a, b]) == 2
+    assert not search(con, "زنجبيل"), "Wort des gelöschten Buches noch auffindbar"
+    assert not search(con, "كركديه")
+    assert len(search(con, "قرفة")) == 1, "verbliebenes Buch nicht mehr auffindbar"
+    assert con.execute("SELECT COUNT(*) FROM passages_fts").fetchone()[0] == \
+        con.execute("SELECT COUNT(*) FROM passages").fetchone()[0]
+    print("OK  Löschen mehrerer Bücher")
+
+
 if __name__ == "__main__":
     test_normalize()
     test_stemming()
     test_search_with_pages()
+    test_loeschen_hinterlaesst_keine_geistertreffer()
+    test_loeschen_mehrerer_buecher()
     print("\nAlle Tests bestanden.")
