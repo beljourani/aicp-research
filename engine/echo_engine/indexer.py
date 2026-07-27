@@ -107,7 +107,14 @@ def ensure_text_layout_version(con: sqlite3.Connection) -> int:
     if row and row[0] == str(LAYOUT_VERSION):
         return 0
     geaendert = 0
-    for pid, alt in con.execute("SELECT id, text FROM pages").fetchall():
+    # Aus dem Netz übernommene Bücher bleiben wortwörtlich so, wie die Quelle
+    # sie geliefert hat. Sonst wäre ihr Text nach einer solchen Nachbesserung
+    # nicht mehr zeichengleich mit der Online-Ansicht, und dasselbe Zitat
+    # sähe je nach Herkunft anders aus.
+    for pid, alt in con.execute(
+            "SELECT p.id, p.text FROM pages p "
+            "JOIN documents d ON d.id = p.document_id "
+            "WHERE COALESCE(d.reliability, 'sicher') != 'shamela'").fetchall():
         neu = join_wrapped_lines(alt or "")
         if neu == (alt or ""):
             continue
@@ -142,29 +149,66 @@ def index_document(con: sqlite3.Connection, path: str | Path,
     return doc_id
 
 
-def index_pages(con: sqlite3.Connection, pages: list[tuple[int, str]],
-                title: str, author: str | None = None) -> int:
-    """Indexiert bereits extrahierte Seiten (z.B. für Tests)."""
+def index_pages(con: sqlite3.Connection, pages: list[tuple],
+                title: str, author: str | None = None, *,
+                file_type: str = "raw", reliability: str = "sicher",
+                source_key: str | None = None,
+                embed_semantic: bool = True) -> int:
+    """Indexiert bereits vorliegende Seiten (Tests, Übernahme aus dem Netz).
+
+    `pages` ist entweder `[(page_no, text)]` wie bisher oder
+    `[(page_no, text, page_label, page_key)]` – dann wird die angezeigte
+    Druckseite mitgespeichert (siehe shamela_import.py).
+    """
     cur = con.execute(
-        "INSERT INTO documents (title, author, file_type, page_count) "
-        "VALUES (?,?,?,?)", (title, author, "raw", len(pages)))
+        "INSERT INTO documents (title, author, file_type, page_count, "
+        "reliability, source_key, embed_semantic) VALUES (?,?,?,?,?,?,?)",
+        (title, author, file_type, len(pages), reliability, source_key,
+         1 if embed_semantic else 0))
     doc_id = cur.lastrowid
     _index_pages(con, doc_id, pages)
     con.commit()
     return doc_id
 
 
+def append_pages(con: sqlite3.Connection, doc_id: int,
+                 pages: list[tuple]) -> int:
+    """Hängt weitere Seiten an ein bestehendes Dokument an.
+
+    Für das blockweise Übernehmen aus dem Netz: jeder Block wird sofort
+    weggeschrieben, damit weder Speicher noch Schreibprotokoll anwachsen.
+    Liefert die Zahl der Seiten des Dokuments nach dem Anhängen.
+    """
+    _index_pages(con, doc_id, pages)
+    con.commit()
+    return con.execute("SELECT COUNT(*) FROM pages WHERE document_id=?",
+                       (doc_id,)).fetchone()[0]
+
+
 def _index_pages(con: sqlite3.Connection, doc_id: int,
-                 pages: list[tuple[int, str]]) -> None:
+                 pages: list[tuple]) -> None:
+    # Zwei- und Vierertupel zusammenführen: ohne Bezeichnung bleiben die
+    # beiden neuen Spalten leer, und das Dokument verhält sich wie bisher.
+    voll = []
+    for p in pages:
+        voll.append((p[0], p[1], None, None) if len(p) == 2 else tuple(p[:4]))
     con.executemany(
-        "INSERT INTO pages (document_id, page_no, text) VALUES (?,?,?)",
-        [(doc_id, no, text) for no, text in pages])
-    for passage in chunk_pages(pages):
+        "INSERT INTO pages (document_id, page_no, text, page_label, page_key) "
+        "VALUES (?,?,?,?,?)",
+        [(doc_id, no, text, lbl, key) for no, text, lbl, key in voll])
+    # Die Passagen kennen weiterhin nur Blattnummern; der Chunker bleibt
+    # unangetastet. Der Versatz sorgt dafür, dass die laufende Nummer über
+    # mehrere Blöcke hinweg weiterzählt statt je Block wieder bei 0 zu
+    # beginnen.
+    versatz = con.execute(
+        "SELECT COALESCE(MAX(idx) + 1, 0) FROM passages WHERE document_id=?",
+        (doc_id,)).fetchone()[0]
+    for passage in chunk_pages([(no, text) for no, text, _l, _k in voll]):
         norm, stems = to_index_forms(passage.text)
         cur = con.execute(
             "INSERT INTO passages (document_id, idx, page_from, page_to, text) "
             "VALUES (?,?,?,?,?)",
-            (doc_id, passage.idx, passage.page_from, passage.page_to,
+            (doc_id, versatz + passage.idx, passage.page_from, passage.page_to,
              passage.text))
         con.execute(
             "INSERT INTO passages_fts (rowid, norm, stems) VALUES (?,?,?)",
