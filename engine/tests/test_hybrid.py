@@ -143,10 +143,45 @@ def test_boolesche_anfrage_bleibt_wortsuche():
     print("ok  test_boolesche_anfrage_bleibt_wortsuche")
 
 
+def test_abgewaehlte_buecher_werden_nicht_vektorisiert():
+    """Der Schalter muss auch beim Nachholen ohne Buchangabe greifen.
+
+    Beim App-Start wird embed_passages OHNE document_id gerufen. Ohne die
+    Bedingung waere der Schalter wirkungslos: ein grosses uebernommenes
+    Buch wuerde am naechsten Morgen doch vektorisiert vorliegen und jede
+    Bedeutungssuche verlangsamen.
+    """
+    from echo_engine import connect
+    from echo_engine.indexer import index_pages
+    from echo_engine.semantic import embed_passages, ensure_vector_schema
+
+    rumpf = "هذا نص طويل بما يكفي كي لا يسقط المقطع من الفهرس. " * 4
+    con = connect(":memory:")
+    ensure_vector_schema(con)
+    mit = index_pages(con, [(1, rumpf + " كلمة زنجبيل")], "Mit Semantik")
+    ohne = index_pages(con, [(1, rumpf + " كلمة قرفة")], "Ohne Semantik",
+                       file_type="shamela", reliability="shamela",
+                       embed_semantic=False)
+
+    class Attrappe:
+        def embed(self, texte):
+            import numpy as np
+            return np.zeros((len(texte), 4), dtype=np.float32)
+
+    embed_passages(con, Attrappe())          # wie beim App-Start: ohne Filter
+    hat = {r[0] for r in con.execute(
+        "SELECT DISTINCT p.document_id FROM passages p "
+        "JOIN passage_vectors v ON v.passage_id = p.id")}
+    assert mit in hat, "Buch mit Semantik wurde nicht vektorisiert"
+    assert ohne not in hat, "abgewaehltes Buch wurde doch vektorisiert"
+    print("ok  test_abgewaehlte_buecher_werden_nicht_vektorisiert")
+
+
 if __name__ == "__main__":
     test_semantik_fuegt_nichts_hinzu()
     test_keine_doppelungen()
     test_semantik_sortiert_um()
     test_ohne_embedder_reine_wortsuche()
     test_boolesche_anfrage_bleibt_wortsuche()
+    test_abgewaehlte_buecher_werden_nicht_vektorisiert()
     print("\nAlle Tests bestanden.")

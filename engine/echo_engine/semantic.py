@@ -91,9 +91,15 @@ def embed_passages(con: sqlite3.Connection, embedder: Embedder,
                    batch_size: int = 64) -> int:
     """Berechnet Vektoren für alle Passagen ohne Vektor. Liefert Anzahl."""
     ensure_vector_schema(con)
+    # Bücher, für die die Bedeutungssuche abgewählt wurde, bleiben aussen vor
+    # - auch beim Nachholen ohne document_id, das beim App-Start läuft. Ohne
+    # diese Bedingung wäre der Schalter wirkungslos: der nächste Start würde
+    # ein grosses übernommenes Buch doch vektorisieren, und jede spätere
+    # Bedeutungssuche müsste dessen Vektoren mitladen.
     sql = ("SELECT p.id, p.text FROM passages p "
+           "JOIN documents d ON d.id = p.document_id "
            "LEFT JOIN passage_vectors v ON v.passage_id = p.id "
-           "WHERE v.passage_id IS NULL")
+           "WHERE v.passage_id IS NULL AND COALESCE(d.embed_semantic,1)=1")
     params: list = []
     if document_id:
         sql += " AND p.document_id = ?"

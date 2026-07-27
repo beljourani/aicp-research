@@ -196,6 +196,7 @@ class Core:
             con.close()
         except Exception:
             traceback.print_exc()
+        self._raeume_halbe_uebernahmen()
         # Im Hintergrund nach einem Update sehen (scheitert leise ohne Netz)
         try:
             from echo_engine import updater
@@ -380,6 +381,9 @@ class Core:
         rows = con.execute(
             "SELECT d.*, COUNT(p.id) AS passage_count FROM documents d "
             "LEFT JOIN passages p ON p.document_id = d.id "
+            # Angefangene Übernahmen aus dem Netz gehören noch nicht in die
+            # Liste – sie sind erst vollständig, wenn der Status 'done' ist.
+            "WHERE COALESCE(d.status,'done') = 'done' "
             "GROUP BY d.id ORDER BY d.created_at DESC").fetchall()
         cats: dict = {}
         for r in con.execute(
@@ -830,6 +834,173 @@ class Core:
                 except Exception:
                     pg["spans"] = None      # lieber ohne Marker als ohne Seite
         return res
+
+    # --- Online-Buch dauerhaft in die Bibliothek übernehmen ---------------
+    # Fester Schlüssel wie bei Export/Import; das Frontend verfolgt den
+    # Fortschritt darüber.
+    DL_JOB = "Buchübernahme"
+
+    def _shamela_vorhanden(self, book_id: int, titel: str | None):
+        """Liegt dieses Buch schon lokal? Zuerst über die Herkunft, dann
+        über den Titel – ein von Hand hochgeladenes PDF desselben Werkes
+        trägt keine Herkunft, aber denselben Titel."""
+        con = self._con()
+        try:
+            row = con.execute(
+                "SELECT id, title FROM documents WHERE source_key=?",
+                (f"shamela:{book_id}",)).fetchone()
+            if not row and titel:
+                row = con.execute("SELECT id, title FROM documents "
+                                  "WHERE title=?", (titel,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            con.close()
+
+    def shamela_book_info(self, body):
+        """Umfang eines Online-Buches – für die Rückfrage vor dem Übernehmen."""
+        body = body or {}
+        try:
+            book_id = int(body.get("book_id"))
+        except (TypeError, ValueError):
+            return {"error": "Diesem Buch fehlt die Buchkennung."}
+        params = {"book_id": book_id}
+        for k in ("title", "author"):
+            if body.get(k):
+                params[k] = body[k]
+        try:
+            info = self._shamela_request("GET", "/book_info", params=params,
+                                         timeout=60)
+        except Exception as e:
+            return {"error": str(e)}
+        info["vorhanden"] = self._shamela_vorhanden(book_id, body.get("title"))
+        return info
+
+    def shamela_download(self, body):
+        """Startet die Übernahme eines Online-Buches in die Bibliothek."""
+        body = body or {}
+        try:
+            book_id = int(body.get("book_id"))
+        except (TypeError, ValueError):
+            return {"error": "Diesem Buch fehlt die Buchkennung."}
+        laeuft = self._jobs.get(self.DL_JOB, {}).get("state")
+        if laeuft not in (None, "fertig", "fehler"):
+            return {"error": "Es wird bereits ein Buch übernommen – bitte "
+                             "warten, bis es fertig ist."}
+        vorhanden = self._shamela_vorhanden(book_id, body.get("title"))
+        if vorhanden and not body.get("erneut"):
+            return {"error": f"„{vorhanden['title']}“ ist bereits in der "
+                             f"Bibliothek."}
+        titel = (body.get("title") or "").strip() or "Ohne Titel"
+        autor = (body.get("author") or "").strip() or None
+        semantik = bool(body.get("semantic"))
+        self._jobs[self.DL_JOB] = {"file": self.DL_JOB,
+                                   "state": "Buch wird vorbereitet"}
+        threading.Thread(target=self._shamela_download_work, daemon=True,
+                         args=(book_id, titel, autor, semantik)).start()
+        return {"ok": True}
+
+    def _shamela_download_work(self, book_id, titel, autor, semantik):
+        """Holt das Buch blockweise und legt es in der Bibliothek an.
+
+        Die Bibliothek enthält dabei nie ein halbes Buch, das aussieht wie
+        ein ganzes: die Dokumentzeile trägt bis zum Schluss `processing`,
+        die Bücherliste zeigt nur fertige Bücher, und bei jedem Fehler wird
+        die angefangene Zeile wieder gelöscht.
+        """
+        from echo_engine.indexer import append_pages, index_pages
+        from echo_engine.shamela_import import (blaetter_zu_seiten,
+                                                folge_ist_lueckenlos)
+
+        job = self._jobs[self.DL_JOB]
+        con = None
+        doc_id = None
+        try:
+            grund = {"book_id": book_id, "title": titel, "author": autor or ""}
+            info = self._shamela_request("GET", "/book_info", params=grund,
+                                         timeout=60)
+            gesamt = int(info.get("page_count") or 0)
+            if not gesamt:
+                raise RuntimeError("Zu diesem Buch sind keine Seiten "
+                                   "auffindbar.")
+            block = max(1, min(int(info.get("block") or 500), 500))
+
+            con = self._con()
+            geholt = 0
+            while geholt < gesamt:
+                job["state"] = f"lädt … {geholt}/{gesamt} Seiten"
+                res = self._shamela_request(
+                    "GET", "/book",
+                    params=dict(grund, offset=geholt, limit=block),
+                    timeout=180)
+                blaetter = res.get("pages") or []
+                if not blaetter:
+                    raise RuntimeError("Der Server hat einen leeren Block "
+                                       "geliefert – bitte später erneut "
+                                       "versuchen.")
+                if not folge_ist_lueckenlos(blaetter, versatz=geholt):
+                    raise RuntimeError("Die Seitenfolge des Servers hat eine "
+                                       "Lücke – das Buch wurde nicht "
+                                       "übernommen.")
+                seiten = blaetter_zu_seiten(blaetter, versatz=geholt)
+                if doc_id is None:
+                    doc_id = index_pages(
+                        con, seiten, titel, autor, file_type="shamela",
+                        reliability="shamela",
+                        source_key=f"shamela:{book_id}",
+                        embed_semantic=semantik)
+                    con.execute("UPDATE documents SET status='processing' "
+                                "WHERE id=?", (doc_id,))
+                    con.commit()
+                else:
+                    append_pages(con, doc_id, seiten)
+                geholt += len(blaetter)
+
+            job["state"] = "wird eingeordnet"
+            self._sync_document_authors(con, doc_id)
+            con.execute("UPDATE documents SET status='done', page_count=? "
+                        "WHERE id=?", (geholt, doc_id))
+            con.commit()
+
+            if semantik and self._embedder is not None:
+                job["state"] = "berechnet die Bedeutungssuche"
+                embed_passages(con, self._embedder, document_id=doc_id)
+            con.close()
+            con = None
+            self._jobs[self.DL_JOB] = {
+                "file": self.DL_JOB, "state": "fertig",
+                "result": f"„{titel}“ übernommen – {geholt} Seiten"}
+        except Exception as e:
+            traceback.print_exc()
+            if con is not None:
+                if doc_id is not None:
+                    try:
+                        engine_delete_documents(con, [doc_id])
+                    except Exception:
+                        traceback.print_exc()
+                con.close()
+            self._jobs[self.DL_JOB] = {"file": self.DL_JOB, "state": "fehler",
+                                       "error": str(e)}
+
+    def _raeume_halbe_uebernahmen(self):
+        """Beim Start: angefangene Übernahmen entfernen.
+
+        Wird die App mitten in einer Übernahme beendet, bliebe sonst ein
+        halbes Buch in der Datenbank – unsichtbar in der Liste, aber in der
+        Suche auffindbar.
+        """
+        try:
+            con = self._con()
+            try:
+                ids = [r[0] for r in con.execute(
+                    "SELECT id FROM documents WHERE file_type='shamela' "
+                    "AND COALESCE(status,'done') != 'done'")]
+                if ids:
+                    engine_delete_documents(con, ids)
+                    print(f"{len(ids)} angefangene Buchübernahme(n) entfernt")
+            finally:
+                con.close()
+        except Exception:
+            traceback.print_exc()
 
     def shamela_categories(self, _body=None):
         try:
@@ -1497,6 +1668,8 @@ ROUTES = {
     ("POST", "/api/shamela_clear"): CORE.shamela_clear,
     ("POST", "/api/shamela_search"): CORE.shamela_search,
     ("POST", "/api/shamela_page"): CORE.shamela_page,
+    ("POST", "/api/shamela_book_info"): CORE.shamela_book_info,
+    ("POST", "/api/shamela_download"): CORE.shamela_download,
     ("GET", "/api/shamela_categories"): CORE.shamela_categories,
     ("POST", "/api/shamela_books"): CORE.shamela_books,
     ("POST", "/api/shamela_authors"): CORE.shamela_authors,
