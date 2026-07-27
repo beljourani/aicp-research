@@ -180,7 +180,7 @@
   .inputWrap input { flex: 1; border: 0; outline: none; background: none;
     font-family: inherit; font-size: 15.5px; padding: 12px 0; color: var(--ink); }
   .btn { border: 1px solid var(--line-strong); background: var(--panel);
-    color: var(--ink); border-radius: var(--radius); padding: 0 16px;
+    color: var(--ink); border-radius: var(--radius); padding: 9px 16px;
     font-size: 14px; font-weight: 500; cursor: pointer; display: inline-flex;
     align-items: center; gap: 7px; transition: background .12s, border-color .12s; }
   .btn:hover { background: var(--surface); }
@@ -751,6 +751,7 @@
         <button class="iconBtn" id="rHitNext"><span class="ci" data-ic="next"></span></button>
       </span>
       <button class="iconBtn" id="rBookmark"><span class="ci" data-ic="bookmark"></span></button>
+      <button class="iconBtn" id="rDownloadBook" style="display:none" title=""><span class="ci" data-ic="download"></span></button>
       <span class="fontCtl">
         <button class="btn sm" id="rFontMinus">A−</button>
         <button class="btn sm" id="rFontPlus">A+</button>
@@ -765,7 +766,6 @@
       </span>
       <button class="btn sm" id="rTashkil"></button>
       <button class="btn sm" id="rImgToggle" style="display:none"></button>
-      <button class="iconBtn" id="rDownloadBook" style="display:none" title=""><span class="ci" data-ic="download"></span></button>
       <span class="pageJump">
         <input id="rPageInput" inputmode="numeric" autocomplete="off">
         <span id="rPageTotal"></span>
