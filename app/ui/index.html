@@ -2021,11 +2021,22 @@ function shamelaFilters(){
   b.semantic=sem?!!sem.checked:true;
   return b;
 }
+// Baut die Online-Anfrage aus den Pillen. Eine MEHRWÖRTIGE Pille wird zu einer
+// exakten Wortgruppe in Anführungszeichen – der Server behandelt sie dann als
+// Phrase (parse_query -> FTS5: zusammenhängend, in Reihenfolge), genau wie die
+// Offline-Suche. Einzelwort-Pillen bleiben unverändert (UND).
+function shamelaQuery(groups){
+  return (groups||[]).flat()
+    .map(c => (c||"").trim())
+    .filter(Boolean)
+    .map(c => /\s/.test(c) ? `"${c.replace(/"/g,'')}"` : c)
+    .join(" ").trim();
+}
 async function runShamelaSearch(){
   const st=await api().shamela_status().catch(()=>null);
   if(!st||!st.configured){ $("#results").innerHTML=emptyBox(t("shamelaNeedCfg")); $("#count").textContent=""; shQuery=null; return; }
   const { groups } = collectPanel(MAIN);
-  const q=groups.flat().filter(Boolean).join(" ").trim();
+  const q=shamelaQuery(groups);
   if(!q){ $("#results").innerHTML=emptyBox(t("shamelaQueryHint")); $("#count").textContent=""; shQuery=null; return; }
   shQuery=q; shOffset=0; shLoaded=0;
   $("#results").innerHTML=searchingBox(); $("#count").textContent=t("shamelaSearching");
@@ -2802,7 +2813,7 @@ async function runReaderSearch(autoSelect=true,force=false){
     showReaderHint();rHits=[];updateHitNav();return; }
   let res;
   if(rRemote){
-    const q=groups.flat().filter(Boolean).join(" ").trim();
+    const q=shamelaQuery(groups);
     if(!q){ showReaderHint();rHits=[];updateHitNav();return; }
     const sem=$("#semantic");
     const r=await api().shamela_search({q,limit:100,book_ids:[rBook],
