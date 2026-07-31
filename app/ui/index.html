@@ -1851,12 +1851,29 @@ function jobLabel(j){
   }
   return s;
 }
+// Update-Knopf datengetrieben aus dem Status setzen – wird vom Job-Poll UND vom
+// Heartbeat aufgerufen.
+function applyUpdateBadge(update){
+  const ub=$("#updateBtn"); if(!ub)return;
+  const up=update||{};
+  ub.style.display=up.available?"flex":"none";
+  if(up.available&&up.latest)ub.title=`${T[lang].updateAvail}: ${up.latest}`;
+}
+// Langsamer Heartbeat: hält die Update-Erkennung am Leben, auch wenn der
+// Job-Poll (refreshStatus) im Leerlauf stoppt. So erscheint „Update verfügbar"
+// OHNE Neustart, sobald der Hintergrund-Check des Servers es gefunden hat.
+let _updateHeartbeat=null;
+function startUpdateHeartbeat(){
+  if(_updateHeartbeat)return;
+  _updateHeartbeat=setInterval(async()=>{
+    try{ const st=await api().status(); _lastStatus=st; applyUpdateBadge(st.update); }
+    catch(e){}
+  }, 300000);   // alle 5 Minuten
+}
 async function refreshStatus(){
   try{
     const st=await api().status();_lastStatus=st;refreshStatusLabel();
-    const ub=$("#updateBtn");
-    if(ub){ const up=st.update||{}; ub.style.display=up.available?"flex":"none";
-      if(up.available&&up.latest)ub.title=`${T[lang].updateAvail}: ${up.latest}`; }
+    applyUpdateBadge(st.update);
     const jb=$("#uploadJobs");jb.innerHTML="";let active=false,doneCount=0;
     for(const j of st.jobs){
       if(j.file==="Export"||j.file==="Import"||j.file==="Update"||j.file==="Buchübernahme")continue;
@@ -3543,6 +3560,7 @@ paintIcons();
   catch(e){applyLang("de");}
   paintIcons();
   refreshStatus();refreshDocs();refreshCategorySources();refreshAuthorSources();
+  startUpdateHeartbeat();   // Update auch ohne Neustart erkennen
   try{const v=await api().version();if(v&&v.version)$("#versionLabel").textContent="v"+v.version;}catch(e){}
   // gespeicherte Schriftgröße für den Leser übernehmen
   try{const f=await api().meta_get("font_scale");const n=parseFloat(f.value||"");

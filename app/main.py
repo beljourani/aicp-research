@@ -36,6 +36,10 @@ AUTHOR_SEP = " ؛ "
 # 'update_repo' in der meta-Tabelle). Format: "benutzer/repository".
 UPDATE_REPO = "beljourani/aicp-research"
 
+# Wie oft die laufende App im Hintergrund nach einem neuen Release sieht, damit
+# ein Update auch OHNE Neustart erscheint. Der erste Check läuft schon beim Start.
+UPDATE_CHECK_INTERVAL = 3 * 60 * 60   # 3 Stunden
+
 
 def split_authors(value) -> list[str]:
     """Zerlegt einen gespeicherten Autoren-String in einzelne Namen."""
@@ -116,6 +120,22 @@ class Core:
         for _ in range(MAX_WORKERS):
             threading.Thread(target=self._worker, daemon=True).start()
         threading.Thread(target=self._startup, daemon=True).start()
+        # Regelmäßig nach einem neuen Release sehen, damit ein Update auch OHNE
+        # Neustart auftaucht (der erste Check läuft bereits in _startup).
+        threading.Thread(target=self._update_watcher, daemon=True).start()
+
+    def _update_watcher(self):
+        """Prüft alle UPDATE_CHECK_INTERVAL Sekunden auf ein neues Release und
+        aktualisiert self._update. Ohne Netz still. Das Frontend liest das über
+        /api/status und blendet den Update-Knopf ein – auch im Leerlauf."""
+        import time
+        while True:
+            time.sleep(UPDATE_CHECK_INTERVAL)
+            try:
+                from echo_engine import updater
+                self._update = updater.check(self.update_repo())
+            except Exception:
+                pass
 
     # --- Warteschlange ---------------------------------------------------
     def _enqueue(self, path: str, job_id: str, **opts):
