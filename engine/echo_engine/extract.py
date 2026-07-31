@@ -18,7 +18,11 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import fitz  # PyMuPDF
+# PyMuPDF (fitz) wird ERST BEI BEDARF geladen (~100 ms Importkosten). Es wird nur
+# beim Einlesen/OCR gebraucht, nie beim App-Start – so erscheint das Fenster früher.
+def _fitz():
+    import fitz  # PyMuPDF
+    return fitz
 
 from .textlayout import (clean_text, join_wrapped_lines,
                          paragraphs_from_boxes, paragraphs_from_groups)
@@ -118,7 +122,7 @@ def extract_pdf(path: Path, force_ocr: bool = False) -> ExtractResult:
     res = ExtractResult()
     res.reliability = "sicher"      # PDF = feste, gedruckte Seiten
     res.engine = "PDF"
-    with fitz.open(path) as doc:
+    with _fitz().open(path) as doc:
         empty_pages = 0
         for i, page in enumerate(doc, start=1):
             text = _pdf_page_text(page)
@@ -412,7 +416,7 @@ def _ocr_pdf_vision(pdf_path: Path) -> list[tuple[int, str]]:
     from Foundation import NSData
 
     pages: list[tuple[int, str]] = []
-    with fitz.open(pdf_path) as doc:
+    with _fitz().open(pdf_path) as doc:
         for i, page in enumerate(doc, start=1):
             pix = page.get_pixmap(dpi=200)
             png = pix.tobytes("png")
@@ -498,7 +502,7 @@ def _ocr_pdf_tesseract(pdf_path: Path) -> list[tuple[int, str]]:
     # ab (ein Virenscanner verschärft das). Aufräumen ist hier nie fatal.
     tmpdir = Path(tempfile.mkdtemp(prefix="aicp-ocr-"))
     try:
-        with fitz.open(pdf_path) as doc:
+        with _fitz().open(pdf_path) as doc:
             for i, page in enumerate(doc, start=1):
                 pix = page.get_pixmap(dpi=300)
                 png = tmpdir / f"seite-{i}.png"

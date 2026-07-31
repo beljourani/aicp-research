@@ -11,11 +11,24 @@ from __future__ import annotations
 
 import re
 
-try:
-    from nltk.stem.isri import ISRIStemmer
-    _ISRI = ISRIStemmer()
-except ImportError:  # Fallback: leichter Präfix/Suffix-Stemmer
-    _ISRI = None
+# nltk (ISRI-Stemmer) wird ERST BEI BEDARF geladen. Der Import kostet ~350 ms
+# und würde sonst den App-Start verzögern (das Modul wird beim Start importiert,
+# gestemmt wird aber erst bei der ersten Suche/Indexierung). _light_stem bleibt
+# als Rückfall, falls nltk fehlt.
+_ISRI = None
+_isri_versucht = False
+
+
+def _isri_stemmer():
+    global _ISRI, _isri_versucht
+    if not _isri_versucht:
+        _isri_versucht = True
+        try:
+            from nltk.stem.isri import ISRIStemmer
+            _ISRI = ISRIStemmer()
+        except ImportError:  # Fallback: leichter Präfix/Suffix-Stemmer
+            _ISRI = None
+    return _ISRI
 
 # Diakritika (Tashkil) + Koran-Zeichen + Tatweel
 _TASHKIL = re.compile(r"[ؐ-ًؚ-ٰٟۖ-ۭـ]")
@@ -70,7 +83,8 @@ def stem(word: str) -> str:
     # Nicht-arabische Tokens (Zahlen, lateinische Wörter) unverändert lassen
     if not re.search(r"[ء-ي]", word):
         return word.lower()
-    out = _ISRI.stem(word) if _ISRI is not None else _light_stem(word)
+    stemmer = _isri_stemmer()
+    out = stemmer.stem(word) if stemmer is not None else _light_stem(word)
     # Akkusativ-/End-Alif konsistent kappen (نصا -> نص). Wichtig ist nur,
     # dass Index und Anfrage identisch behandelt werden.
     if len(out) >= 3 and out.endswith("ا"):

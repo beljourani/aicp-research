@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import sqlite3
 
-import numpy as np
+# numpy wird ERST BEI BEDARF geladen (~100 ms Importkosten), nur bei Einbettung/
+# Vektorsuche – nicht beim App-Start. Annotationen sind dank
+# „from __future__ import annotations" reine Strings und brauchen numpy nicht.
 
 MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 DIM = 384
@@ -74,7 +76,8 @@ class Embedder:
                 self.model_name, cache_dir=str(model_cache_dir()))
         return self._model
 
-    def embed(self, texts: list[str]) -> np.ndarray:
+    def embed(self, texts: list[str]) -> "np.ndarray":
+        import numpy as np
         model = self._ensure()
         vecs = np.array(list(model.embed(texts)), dtype=np.float32)
         norms = np.linalg.norm(vecs, axis=1, keepdims=True)
@@ -125,6 +128,7 @@ def vector_search(con: sqlite3.Connection, query_vec: np.ndarray,
                   category=None,
                   min_similarity: float = 0.25) -> list[tuple[int, float]]:
     """Liefert [(passage_id, cosinus-ähnlichkeit)] absteigend sortiert."""
+    import numpy as np
     from .search import _author_clause, _doc_clause, _category_clause
     ensure_vector_schema(con)
     sql = ("SELECT v.passage_id, v.vec FROM passage_vectors v "
