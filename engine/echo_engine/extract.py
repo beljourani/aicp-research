@@ -492,17 +492,24 @@ def _ocr_pdf_tesseract(pdf_path: Path) -> list[tuple[int, str]]:
     # Ob diese Tesseract-Installation die TSV-Ausgabe beherrscht, wird an der
     # ersten Seite entschieden – sonst liefe die (teure) Erkennung doppelt.
     tsv_moeglich = True
-    with fitz.open(pdf_path) as doc:
-        for i, page in enumerate(doc, start=1):
-            pix = page.get_pixmap(dpi=300)
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-                pix.save(f.name)
+    # Eigener Temp-Ordner: die Seiten-PNG wird unter einem FRISCHEN Pfad
+    # geschrieben, den Python NICHT offen hält. Sonst sperrt Windows die Datei,
+    # und PyMuPDFs pix.save() bricht mit „cannot remove file … Permission denied"
+    # ab (ein Virenscanner verschärft das). Aufräumen ist hier nie fatal.
+    tmpdir = Path(tempfile.mkdtemp(prefix="aicp-ocr-"))
+    try:
+        with fitz.open(pdf_path) as doc:
+            for i, page in enumerate(doc, start=1):
+                pix = page.get_pixmap(dpi=300)
+                png = tmpdir / f"seite-{i}.png"
+                pix.save(str(png))          # frischer Pfad, kein offenes Handle
+                png_name = str(png)
                 text = None
                 # Bevorzugt TSV: enthält die Absätze der OCR-Engine selbst
                 if tsv_moeglich:
                     try:
                         out = subprocess.run(
-                            [cmd, f.name, "stdout", "-l", "ara+deu+eng",
+                            [cmd, png_name, "stdout", "-l", "ara+deu+eng",
                              "tsv"], capture_output=True, text=True,
                             timeout=120, env=env)
                         if out.returncode == 0:
@@ -518,9 +525,15 @@ def _ocr_pdf_tesseract(pdf_path: Path) -> list[tuple[int, str]]:
                 if text is None:
                     # Rückfall: reiner Text, Absätze über die Zeilenlängen
                     out = subprocess.run(
-                        [cmd, f.name, "stdout", "-l", "ara+deu+eng"],
+                        [cmd, png_name, "stdout", "-l", "ara+deu+eng"],
                         capture_output=True, text=True, timeout=120, env=env)
                     text = join_wrapped_lines(out.stdout)
-            pages.append((i, text))
-            print(f"OCR Seite {i}/{len(doc)}", flush=True)
+                pages.append((i, text))
+                try:
+                    png.unlink()            # sofort aufräumen …
+                except OSError:
+                    pass                    # … aber nie den Upload abbrechen
+                print(f"OCR Seite {i}/{len(doc)}", flush=True)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
     return pages
