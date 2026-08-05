@@ -1870,7 +1870,17 @@ function startUpdateHeartbeat(){
     catch(e){}
   }, 300000);   // alle 5 Minuten
 }
+// Genau EINE Poll-Schleife. Früher startete jeder Aufrufer (Start, Drop, Pick,
+// Rescan) seine eigene, sich selbst neu planende Schleife – mehrere parallele
+// Schleifen bauten die Job-Liste mehrmals pro Sekunde neu auf (Flackern).
+// _statusBusy verhindert parallele Läufe, ein einziger Timer-Handle sorgt für
+// genau eine geplante Fortsetzung, _statusAgain fängt Aufrufe während eines
+// laufenden Fetches ab (damit ein frisch eingereihter Job sicher erscheint).
+let _statusTimer=null,_statusBusy=false,_statusAgain=false;
+function scheduleStatus(ms){ clearTimeout(_statusTimer); _statusTimer=setTimeout(refreshStatus,ms); }
 async function refreshStatus(){
+  if(_statusBusy){ _statusAgain=true; return; }
+  _statusBusy=true; clearTimeout(_statusTimer); _statusTimer=null;
   try{
     const st=await api().status();_lastStatus=st;refreshStatusLabel();
     applyUpdateBadge(st.update);
@@ -1886,9 +1896,13 @@ async function refreshStatus(){
       else active=true;
     }
     $("#jobsBar").style.display=doneCount?"flex":"none";
-    if(active||st.semantik==="lädt")setTimeout(refreshStatus,1200);
+    if(active||st.semantik==="lädt")scheduleStatus(1200);
     if(!active)refreshDocs();
-  }catch(e){setTimeout(refreshStatus,500);}
+  }catch(e){scheduleStatus(500);}
+  finally{
+    _statusBusy=false;
+    if(_statusAgain){_statusAgain=false;scheduleStatus(150);}
+  }
 }
 
 /* ---------- Upload ---------- */

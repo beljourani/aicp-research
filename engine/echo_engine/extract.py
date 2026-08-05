@@ -138,7 +138,11 @@ def extract_pdf(path: Path, force_ocr: bool = False) -> ExtractResult:
     if force_ocr or is_scan or broken:
         res.needs_ocr = True
         ocr_pages = _try_ocr(path)
-        if ocr_pages is not None:
+        # Die Textschicht NUR ersetzen, wenn OCR wirklich Text geliefert hat.
+        # Sonst (OCR nicht verfügbar oder ohne Ergebnis) die vorhandene – ggf.
+        # verstümmelte – Textschicht behalten. NIE leere Seiten speichern, wenn
+        # eine Textschicht existiert (sonst zeigt der Leser nur „—").
+        if ocr_pages is not None and any((t or "").strip() for _, t in ocr_pages):
             # Sicherheitsnetz: hier läuft jedes OCR-Ergebnis noch einmal durch
             # dieselbe Zeichen-/Leerraum-Bereinigung wie die Textschicht.
             res.pages = [(no, clean_text(t)) for no, t in ocr_pages]
@@ -146,7 +150,7 @@ def extract_pdf(path: Path, force_ocr: bool = False) -> ExtractResult:
             res.warnings.append("Text per OCR (Texterkennung) erfasst.")
         else:
             res.warnings.append(
-                "OCR nicht verfügbar (weder Apple Vision noch Tesseract).")
+                "OCR ohne Ergebnis – vorhandene Textschicht beibehalten.")
     return res
 
 
@@ -460,6 +464,8 @@ def _tesseract_tsv_to_text(tsv: str) -> str:
     Text. Spalten: level, page, block, par, line, word, left, top, width,
     height, conf, text.
     """
+    if not tsv:
+        return ""
     gruppen: dict[tuple[int, int], dict[int, list[str]]] = {}
     reihenfolge: list[tuple[int, int]] = []
     for row in tsv.splitlines()[1:]:
@@ -484,15 +490,25 @@ def _tesseract_tsv_to_text(tsv: str) -> str:
     return paragraphs_from_groups(absaetze)
 
 
-def _ocr_pdf_tesseract(pdf_path: Path) -> list[tuple[int, str]]:
+def _ocr_pdf_tesseract(pdf_path: Path) -> "list[tuple[int, str]] | None":
     import os as _os
     cmd = _tesseract_cmd()
     env = dict(_os.environ)
-    # Mitgelieferte Sprachdaten benutzen (liegen neben der Binärdatei)
+    # Mitgelieferte Sprachdaten liegen im Unterordner "tessdata" neben der
+    # Binärdatei. WICHTIG: Tesseract 5 will TESSDATA_PREFIX bzw. --tessdata-dir
+    # DIREKT auf diesen Ordner (nicht auf den Elternordner wie noch bei v4) –
+    # sonst findet es die *.traineddata nicht und liefert leeren Text
+    # ("Error opening data file … ara.traineddata"). --tessdata-dir ist
+    # versionsunabhängig und eindeutig.
     tessdata = Path(cmd).parent / "tessdata"
+    tdata_args: list[str] = []
     if tessdata.exists():
-        env["TESSDATA_PREFIX"] = str(tessdata.parent)
+        env["TESSDATA_PREFIX"] = str(tessdata)
+        tdata_args = ["--tessdata-dir", str(tessdata)]
+    # eng weggelassen: fügt auf arabischen Seiten nur lateinisches Rauschen hinzu.
+    lang = ["-l", "ara+deu"]
     pages: list[tuple[int, str]] = []
+    hat_text = False       # mindestens eine Seite mit echtem Text erkannt?
     # Ob diese Tesseract-Installation die TSV-Ausgabe beherrscht, wird an der
     # ersten Seite entschieden – sonst liefe die (teure) Erkennung doppelt.
     tsv_moeglich = True
@@ -513,8 +529,9 @@ def _ocr_pdf_tesseract(pdf_path: Path) -> list[tuple[int, str]]:
                 if tsv_moeglich:
                     try:
                         out = subprocess.run(
-                            [cmd, png_name, "stdout", "-l", "ara+deu+eng",
+                            [cmd, *tdata_args, png_name, "stdout", *lang,
                              "tsv"], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace",
                             timeout=120, env=env)
                         if out.returncode == 0:
                             text = _tesseract_tsv_to_text(out.stdout)
@@ -527,12 +544,17 @@ def _ocr_pdf_tesseract(pdf_path: Path) -> list[tuple[int, str]]:
                         import traceback
                         traceback.print_exc()
                 if text is None:
-                    # Rückfall: reiner Text, Absätze über die Zeilenlängen
+                    # Rückfall: reiner Text, Absätze über die Zeilenlängen.
                     out = subprocess.run(
-                        [cmd, png_name, "stdout", "-l", "ara+deu+eng"],
-                        capture_output=True, text=True, timeout=120, env=env)
-                    text = join_wrapped_lines(out.stdout)
+                        [cmd, *tdata_args, png_name, "stdout", *lang],
+                        capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", timeout=120, env=env)
+                    # Scheitert Tesseract (z. B. Sprachdaten nicht gefunden), ist
+                    # die Ausgabe leer – dann keinen leeren Text erzwingen.
+                    text = join_wrapped_lines(out.stdout) if out.returncode == 0 else ""
                 pages.append((i, text))
+                if text.strip():
+                    hat_text = True
                 try:
                     png.unlink()            # sofort aufräumen …
                 except OSError:
@@ -540,4 +562,9 @@ def _ocr_pdf_tesseract(pdf_path: Path) -> list[tuple[int, str]]:
                 print(f"OCR Seite {i}/{len(doc)}", flush=True)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+    # Hat OCR NICHTS Brauchbares geliefert (z. B. Tesseract-Fehler), als
+    # Fehlschlag melden: der Aufrufer behält dann die vorhandene Textebene,
+    # statt leere Seiten zu speichern.
+    if not hat_text:
+        return None
     return pages
