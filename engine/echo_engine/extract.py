@@ -27,6 +27,12 @@ def _fitz():
 from .textlayout import (clean_text, join_wrapped_lines,
                          paragraphs_from_boxes, paragraphs_from_groups)
 
+# Windows: Unterprozesse (Tesseract, LibreOffice) OHNE aufpoppendes
+# Konsolenfenster starten. Ohne dieses Flag blitzt bei JEDEM Aufruf ein
+# schwarzes Fenster auf – beim seitenweisen OCR also fortlaufend, was das
+# Einlesen extrem störend macht. Auf macOS/Linux ist das Flag 0 (wirkungslos).
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 @dataclass
 class ExtractResult:
@@ -332,7 +338,7 @@ def convert_docx_to_pdf(path: Path, out_dir: Path, progress=None) -> Path | None
         [soffice, f"-env:UserInstallation={prof.as_uri()}",
          "--headless", "--convert-to", "pdf",
          "--outdir", str(out_dir), str(path)],
-        capture_output=True, timeout=1200)
+        capture_output=True, timeout=1200, creationflags=_NO_WINDOW)
     pdf = out_dir / (path.stem + ".pdf")
     if pdf.exists():
         return pdf
@@ -543,7 +549,8 @@ def _osd_sprache(pdf_path) -> str:
             doc[0].get_pixmap(dpi=300).save(str(png))
         out = subprocess.run([cmd, *tdata, "--psm", "0", str(png), "stdout"],
                              capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=60)
+                             encoding="utf-8", errors="replace", timeout=60,
+                             creationflags=_NO_WINDOW)
         m = re.search(r"Script:\s*(\w+)", out.stdout or "")
         skript = (m.group(1) if m else "").lower()
         if skript == "arabic":
@@ -692,7 +699,8 @@ def _ocr_pdf_tesseract(pdf_path: Path, lang: str = "ara") -> "list[tuple[int, st
                 out = subprocess.run(
                     [cmd, *tdata_args, str(png), "stdout", *sprache, "--psm", "6"],
                     capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=180, env=env)
+                    encoding="utf-8", errors="replace", timeout=180, env=env,
+                    creationflags=_NO_WINDOW)
                 # Scheitert Tesseract (z. B. Sprachdaten nicht gefunden), ist die
                 # Ausgabe leer – dann keinen leeren Text erzwingen.
                 text = join_wrapped_lines(out.stdout) if out.returncode == 0 else ""
