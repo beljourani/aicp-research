@@ -32,6 +32,7 @@ from .textlayout import (clean_text, join_wrapped_lines,
 class ExtractResult:
     pages: list[tuple[int, str]] = field(default_factory=list)
     needs_ocr: bool = False
+    used_ocr: bool = False     # wurde der Text tatsächlich per OCR erkannt?
     real_page_numbers: bool = True
     # Wie verlässlich sind die Seitenzahlen?
     #   "exakt"    – von Words eigener Engine (Word installiert oder Cloud)
@@ -149,6 +150,7 @@ def extract_pdf(path: Path, force_ocr: bool = False) -> ExtractResult:
             # dieselbe Zeichen-/Leerraum-Bereinigung wie die Textschicht.
             res.pages = [(no, clean_text(t)) for no, t in ocr_pages]
             res.needs_ocr = False
+            res.used_ocr = True
             res.warnings.append("Text per OCR (Texterkennung) erfasst.")
         else:
             res.warnings.append(
@@ -346,6 +348,21 @@ def extract_docx(path: Path, progress=None) -> ExtractResult:
     2. Cloud eingerichtet -> Microsofts Word-Engine online (exakt)
     3. sonst             -> LibreOffice (läuft überall, leichte Abweichung)
     """
+    def _plaintext_result() -> ExtractResult:
+        """Reiner python-docx-Text – perfekt, aber Seiten nur geschätzt.
+        Dient als Notlösung, wenn KEIN Word verfügbar ist ODER eine
+        Konvertierung insgeheim OCR bräuchte (defekte Textebene): OCR-Text
+        wäre schlechter als der saubere Word-XML-Text. DOCX wird so NIE OCR't."""
+        import docx  # python-docx
+        d = docx.Document(str(path))
+        # Word kennt die Absätze exakt – deshalb Leerzeile statt Umbruch und
+        # kein Zusammenfassen von Zeilen (das würde nur raten).
+        full = "\n\n".join(par.text for par in d.paragraphs)
+        r = _paginate_plain(full, join=False)
+        r.real_page_numbers = False
+        r.reliability = "ungefähr"
+        return r
+
     with tempfile.TemporaryDirectory() as tmp:
         tmpd = Path(tmp)
 
@@ -377,6 +394,14 @@ def extract_docx(path: Path, progress=None) -> ExtractResult:
                 pdf = convert_with_word(path, tmpd)
                 if pdf is not None:
                     res = extract_pdf(pdf)
+                    if res.used_ocr:
+                        # Defekte Textebene im gewandelten PDF – der saubere
+                        # Word-XML-Text ist besser als jede OCR.
+                        res = _plaintext_result()
+                        res.warnings.append(
+                            "Word-Text übernommen (PDF-Textebene defekt) – "
+                            "Seiten geschätzt.")
+                        return res
                     res.reliability = "exakt"
                     res.engine = "Word"
                     res.warnings.append(
@@ -396,6 +421,12 @@ def extract_docx(path: Path, progress=None) -> ExtractResult:
                 pdf = convert_via_cloud(path, tmpd)
                 if pdf is not None:
                     res = extract_pdf(pdf)
+                    if res.used_ocr:
+                        res = _plaintext_result()
+                        res.warnings.append(
+                            "Word-Text übernommen (PDF-Textebene defekt) – "
+                            "Seiten geschätzt.")
+                        return res
                     res.reliability = "exakt"
                     res.engine = "Word Cloud"
                     res.warnings.append(
@@ -410,6 +441,14 @@ def extract_docx(path: Path, progress=None) -> ExtractResult:
             pdf = convert_docx_to_pdf(path, tmpd, progress)
             if pdf is not None:
                 res = extract_pdf(pdf)
+                if res.used_ocr:
+                    # LibreOffice-PDF mit defekter Textebene → OCR liefe schlecht.
+                    # Sauberen Word-XML-Text nehmen, Seiten geschätzt.
+                    res = _plaintext_result()
+                    res.warnings.append(
+                        "Word-Text übernommen (PDF-Textebene defekt) – "
+                        "Seiten geschätzt.")
+                    return res
                 res.reliability = "ungefähr"
                 res.engine = "LibreOffice"
                 res.warnings.append(
@@ -420,15 +459,8 @@ def extract_docx(path: Path, progress=None) -> ExtractResult:
             import traceback
             traceback.print_exc()
 
-    # Allerletzte Notlösung: reiner Text, Seiten nur geschätzt.
-    import docx  # python-docx
-    d = docx.Document(str(path))
-    # Word kennt die Absätze exakt – deshalb hier Leerzeile statt Umbruch und
-    # kein Zusammenfassen von Zeilen (das würde nur raten).
-    full = "\n\n".join(par.text for par in d.paragraphs)
-    res = _paginate_plain(full, join=False)
-    res.real_page_numbers = False
-    res.reliability = "ungefähr"
+    # Allerletzte Notlösung: reiner python-docx-Text, Seiten nur geschätzt.
+    res = _plaintext_result()
     res.warnings.append(
         "Kein Konverter verfügbar – Text übernommen, Seiten nur geschätzt.")
     return res
@@ -642,9 +674,6 @@ def _ocr_pdf_tesseract(pdf_path: Path, lang: str = "ara") -> "list[tuple[int, st
     sprache = ["-l", lang]
     pages: list[tuple[int, str]] = []
     hat_text = False       # mindestens eine Seite mit echtem Text erkannt?
-    # Ob diese Tesseract-Installation die TSV-Ausgabe beherrscht, wird an der
-    # ersten Seite entschieden – sonst liefe die (teure) Erkennung doppelt.
-    tsv_moeglich = True
     # Eigener Temp-Ordner: die Seiten-PNG wird unter einem FRISCHEN Pfad
     # geschrieben, den Python NICHT offen hält. Sonst sperrt Windows die Datei,
     # und PyMuPDFs pix.save() bricht mit „cannot remove file … Permission denied"
@@ -653,38 +682,20 @@ def _ocr_pdf_tesseract(pdf_path: Path, lang: str = "ara") -> "list[tuple[int, st
     try:
         with _fitz().open(pdf_path) as doc:
             for i, page in enumerate(doc, start=1):
-                pix = page.get_pixmap(dpi=300)
+                pix = page.get_pixmap(dpi=400)   # höhere Auflösung = bessere OCR
                 png = tmpdir / f"seite-{i}.png"
                 pix.save(str(png))          # frischer Pfad, kein offenes Handle
-                png_name = str(png)
-                text = None
-                # Bevorzugt TSV: enthält die Absätze der OCR-Engine selbst
-                if tsv_moeglich:
-                    try:
-                        out = subprocess.run(
-                            [cmd, *tdata_args, png_name, "stdout", *sprache,
-                             "tsv"], capture_output=True, text=True,
-                            encoding="utf-8", errors="replace",
-                            timeout=120, env=env)
-                        if out.returncode == 0:
-                            text = _tesseract_tsv_to_text(out.stdout)
-                        else:
-                            tsv_moeglich = False
-                    except subprocess.TimeoutExpired:
-                        raise
-                    except Exception:
-                        tsv_moeglich = False
-                        import traceback
-                        traceback.print_exc()
-                if text is None:
-                    # Rückfall: reiner Text, Absätze über die Zeilenlängen.
-                    out = subprocess.run(
-                        [cmd, *tdata_args, png_name, "stdout", *sprache],
-                        capture_output=True, text=True,
-                        encoding="utf-8", errors="replace", timeout=120, env=env)
-                    # Scheitert Tesseract (z. B. Sprachdaten nicht gefunden), ist
-                    # die Ausgabe leer – dann keinen leeren Text erzwingen.
-                    text = join_wrapped_lines(out.stdout) if out.returncode == 0 else ""
+                # --psm 6 (ein Textblock) erkennt gemessen deutlich mehr als die
+                # Automatik (psm 3). Die TSV-Ausgabe verträgt sich NICHT mit
+                # --psm 6 (Tesseract liefert dann Plain-Text statt Spalten), daher
+                # direkt reiner Text + zeilenbasierte Absätze (join_wrapped_lines).
+                out = subprocess.run(
+                    [cmd, *tdata_args, str(png), "stdout", *sprache, "--psm", "6"],
+                    capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=180, env=env)
+                # Scheitert Tesseract (z. B. Sprachdaten nicht gefunden), ist die
+                # Ausgabe leer – dann keinen leeren Text erzwingen.
+                text = join_wrapped_lines(out.stdout) if out.returncode == 0 else ""
                 pages.append((i, text))
                 if text.strip():
                     hat_text = True
