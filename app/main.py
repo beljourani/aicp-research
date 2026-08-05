@@ -38,7 +38,7 @@ UPDATE_REPO = "beljourani/aicp-research"
 
 # Wie oft die laufende App im Hintergrund nach einem neuen Release sieht, damit
 # ein Update auch OHNE Neustart erscheint. Der erste Check läuft schon beim Start.
-UPDATE_CHECK_INTERVAL = 3 * 60 * 60   # 3 Stunden
+UPDATE_CHECK_INTERVAL = 30 * 60       # 30 Minuten
 
 
 def split_authors(value) -> list[str]:
