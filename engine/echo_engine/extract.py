@@ -176,6 +176,62 @@ def _word_installed() -> bool:
     return False
 
 
+def _word_range_to_text(roh: str) -> str:
+    """Word-Steuerzeichen ins Absatz-Format der App übersetzen: Absatzmarke \\r
+    und vertikaler Umbruch \\x0b trennen Absätze; Zellen-(\\x07)/Seiten-(\\x0c)/
+    sonstige Steuerzeichen raus. Jeder Absatz durch clean_text, Absätze durch
+    Leerzeile getrennt (= ein Absatz pro Zeile)."""
+    roh = (roh or "").replace("\x0b", "\r").replace("\x0c", "\r")
+    sauber = []
+    for a in roh.split("\r"):
+        a = clean_text(a.replace("\x07", " "))
+        if a.strip():
+            sauber.append(a)
+    return "\n\n".join(sauber)
+
+
+def _word_text_by_page(path: Path) -> "list[tuple[int, str]] | None":
+    """Liest den ECHTEN Word-Text SEITENWEISE über die Word-Automation (Windows).
+    So bekommen Word-Dokumente perfekten Text mit Words eigener, exakter
+    Paginierung – ohne Umweg über ein PDF und ohne OCR. None, wenn nicht
+    verfügbar/fehlgeschlagen (dann greift die bisherige Kaskade)."""
+    if os.name != "nt":
+        return None
+    try:
+        import win32com.client as win32
+    except Exception:
+        return None
+    WD_STAT_PAGES = 2       # wdStatisticPages
+    WD_GOTO_PAGE = 1        # wdGoToPage
+    WD_GOTO_ABSOLUTE = 1    # wdGoToAbsolute
+    word = None
+    try:
+        word = win32.DispatchEx("Word.Application")
+        word.Visible = False
+        word.DisplayAlerts = 0
+        doc = word.Documents.Open(str(path), ReadOnly=True)
+        try:
+            total = int(doc.ComputeStatistics(WD_STAT_PAGES)) or 1
+            starts = [word.Selection.GoTo(WD_GOTO_PAGE, WD_GOTO_ABSOLUTE, p).Start
+                      for p in range(1, total + 1)]
+            grenzen = starts + [doc.Content.End]
+            pages = [(i + 1, _word_range_to_text(doc.Range(grenzen[i], grenzen[i + 1]).Text))
+                     for i in range(total)]
+        finally:
+            doc.Close(False)
+        return pages if any(t.strip() for _, t in pages) else None
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return None
+    finally:
+        if word is not None:
+            try:
+                word.Quit()
+            except Exception:
+                pass
+
+
 def convert_with_word(path: Path, out_dir: Path) -> Path | None:
     """Wandelt eine Word-Datei mit WORDS EIGENER Engine nach PDF – dadurch
     exakt dieselben Seitenumbrüche wie in Word. Nur wenn Word installiert ist.
@@ -293,8 +349,28 @@ def extract_docx(path: Path, progress=None) -> ExtractResult:
     with tempfile.TemporaryDirectory() as tmp:
         tmpd = Path(tmp)
 
-        # Stufe 1: lokales Word (am genauesten, offline, kein Konto)
+        # Stufe 1: lokales Word (am genauesten, offline, kein Konto).
         if _word_installed():
+            # Bevorzugt den ECHTEN Word-Text seitenweise direkt lesen – perfekter
+            # Text mit Words eigener, exakter Paginierung, ohne PDF/OCR-Umweg.
+            try:
+                if progress:
+                    progress("wird aus Word gelesen …")
+                seiten = _word_text_by_page(path)
+                if seiten:
+                    res = ExtractResult()
+                    res.pages = seiten
+                    res.reliability = "exakt"
+                    res.engine = "Word"
+                    res.real_page_numbers = True
+                    res.warnings.append(
+                        "Text direkt aus Word gelesen – Seitenzahlen exakt wie in Word.")
+                    return res
+            except Exception:
+                import traceback
+                traceback.print_exc()
+            # Rückfall: Word -> PDF -> Extraktion (wie bisher), falls das
+            # direkte Lesen fehlschlägt.
             try:
                 if progress:
                     progress("wird mit Word umgewandelt …")
