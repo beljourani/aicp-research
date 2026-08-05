@@ -137,7 +137,9 @@ def extract_pdf(path: Path, force_ocr: bool = False) -> ExtractResult:
 
     if force_ocr or is_scan or broken:
         res.needs_ocr = True
-        ocr_pages = _try_ocr(path)
+        # Sprache automatisch aus dem Schriftsystem bestimmen (Textebene bzw.
+        # OSD) – kein Festnageln auf eine Sprache.
+        ocr_pages = _try_ocr(path, _ocr_sprache(res.pages, path))
         # Die Textschicht NUR ersetzen, wenn OCR wirklich Text geliefert hat.
         # Sonst (OCR nicht verfügbar oder ohne Ergebnis) die vorhandene – ggf.
         # verstümmelte – Textschicht behalten. NIE leere Seiten speichern, wenn
@@ -397,8 +399,60 @@ def _tesseract_cmd() -> str | None:
     return shutil.which("tesseract")
 
 
-def _try_ocr(pdf_path: Path) -> list[tuple[int, str]] | None:
-    """OCR-Kette: Apple Vision (macOS, eingebaut) -> Tesseract -> None."""
+def _ocr_sprache(pages, pdf_path) -> str:
+    """Bestimmt automatisch die OCR-Sprache eines Dokuments. Grundlage ist das
+    Schriftsystem der (ggf. verstümmelten) Textebene – die Zeichen stimmen auch
+    bei falscher Reihenfolge. Ohne brauchbare Textebene (echter Scan) entscheidet
+    Tesseracts OSD anhand der ersten Seite. Einzelschrift-Dokumente bekommen NUR
+    ihre Sprache (keine Kreuz-Artefakte): arabisch → 'ara', lateinisch →
+    'deu+eng'. Nur wenn wirklich beide Schriften vorkommen → 'ara+deu+eng'."""
+    txt = " ".join(t or "" for _, t in pages)
+    ar = len(re.findall(r"[؀-ۿ]", txt))
+    la = len(re.findall(r"[A-Za-z]", txt))
+    if ar + la >= 20:
+        anteil = ar / (ar + la)
+        if anteil >= 0.85:
+            return "ara"
+        if anteil <= 0.15:
+            return "deu+eng"
+        return "ara+deu+eng"
+    return _osd_sprache(pdf_path)
+
+
+def _osd_sprache(pdf_path) -> str:
+    """Schriftsystem der ersten Seite via Tesseract-OSD; Rückfall 'ara'."""
+    cmd = _tesseract_cmd()
+    if not cmd:
+        return "ara"
+    tessdata = Path(cmd).parent / "tessdata"
+    tdata = ["--tessdata-dir", str(tessdata)] if tessdata.exists() else []
+    tmp = Path(tempfile.mkdtemp(prefix="aicp-osd-"))
+    try:
+        with _fitz().open(pdf_path) as doc:
+            if len(doc) == 0:
+                return "ara"
+            png = tmp / "osd.png"
+            doc[0].get_pixmap(dpi=300).save(str(png))
+        out = subprocess.run([cmd, *tdata, "--psm", "0", str(png), "stdout"],
+                             capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=60)
+        m = re.search(r"Script:\s*(\w+)", out.stdout or "")
+        skript = (m.group(1) if m else "").lower()
+        if skript == "arabic":
+            return "ara"
+        if skript == "latin":
+            return "deu+eng"
+        return "ara"
+    except Exception:
+        return "ara"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _try_ocr(pdf_path: Path, lang: str = "ara") -> list[tuple[int, str]] | None:
+    """OCR-Kette: Apple Vision (macOS, eingebaut) -> Tesseract -> None.
+    `lang` ist die (automatisch erkannte) Sprache für Tesseract; Vision erkennt
+    die Sprache selbst und ignoriert den Parameter."""
     import sys
     if sys.platform == "darwin":
         try:
@@ -407,7 +461,7 @@ def _try_ocr(pdf_path: Path) -> list[tuple[int, str]] | None:
             import traceback
             traceback.print_exc()
     if _tesseract_cmd():
-        return _ocr_pdf_tesseract(pdf_path)
+        return _ocr_pdf_tesseract(pdf_path, lang)
     return None
 
 
@@ -490,7 +544,7 @@ def _tesseract_tsv_to_text(tsv: str) -> str:
     return paragraphs_from_groups(absaetze)
 
 
-def _ocr_pdf_tesseract(pdf_path: Path) -> "list[tuple[int, str]] | None":
+def _ocr_pdf_tesseract(pdf_path: Path, lang: str = "ara") -> "list[tuple[int, str]] | None":
     import os as _os
     cmd = _tesseract_cmd()
     env = dict(_os.environ)
@@ -505,8 +559,11 @@ def _ocr_pdf_tesseract(pdf_path: Path) -> "list[tuple[int, str]] | None":
     if tessdata.exists():
         env["TESSDATA_PREFIX"] = str(tessdata)
         tdata_args = ["--tessdata-dir", str(tessdata)]
-    # eng weggelassen: fügt auf arabischen Seiten nur lateinisches Rauschen hinzu.
-    lang = ["-l", "ara+deu"]
+    # Sprache kommt vom Aufrufer (automatisch erkannt). Wichtig: KEINE
+    # Schriftsysteme mischen, wo es nicht nötig ist – deu/eng auf rein arabischen
+    # Seiten erzeugen massenhaft lateinische Fehl-Lesungen und verschlechtern die
+    # arabische Erkennung (gemessen). Darum ara-Dokumente nur mit "ara".
+    sprache = ["-l", lang]
     pages: list[tuple[int, str]] = []
     hat_text = False       # mindestens eine Seite mit echtem Text erkannt?
     # Ob diese Tesseract-Installation die TSV-Ausgabe beherrscht, wird an der
@@ -529,7 +586,7 @@ def _ocr_pdf_tesseract(pdf_path: Path) -> "list[tuple[int, str]] | None":
                 if tsv_moeglich:
                     try:
                         out = subprocess.run(
-                            [cmd, *tdata_args, png_name, "stdout", *lang,
+                            [cmd, *tdata_args, png_name, "stdout", *sprache,
                              "tsv"], capture_output=True, text=True,
                             encoding="utf-8", errors="replace",
                             timeout=120, env=env)
@@ -546,7 +603,7 @@ def _ocr_pdf_tesseract(pdf_path: Path) -> "list[tuple[int, str]] | None":
                 if text is None:
                     # Rückfall: reiner Text, Absätze über die Zeilenlängen.
                     out = subprocess.run(
-                        [cmd, *tdata_args, png_name, "stdout", *lang],
+                        [cmd, *tdata_args, png_name, "stdout", *sprache],
                         capture_output=True, text=True,
                         encoding="utf-8", errors="replace", timeout=120, env=env)
                     # Scheitert Tesseract (z. B. Sprachdaten nicht gefunden), ist
