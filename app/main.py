@@ -1175,10 +1175,33 @@ class Core:
                    replace_id: int | None = None, title: str | None = None,
                    author: str | None = None):
         self._jobs[job_id] = {"file": job_id, "state":
-                              "OCR läuft …" if force_ocr else "verarbeite"}
+                              "ocr" if force_ocr else "verarbeite"}
+        # Läuft im Anschluss die Vektorisierung? Dann teilt sich der Balken:
+        # Texterkennung 0–60 %, Vektorisierung 60–100 %. Ohne Embedder erreicht
+        # schon die Texterkennung 100 %.
+        will_embed = self._embedder is not None
 
-        def progress(text: str):
-            self._jobs[job_id]["state"] = text
+        def progress(text, cur=None, total=None, phase=None):
+            """Meldet Fortschritt ins Job-Dict. `text` ist ein stabiler
+            Phasen-Schlüssel (verarbeite/ocr/vektorisiere) oder freier Text;
+            `cur`/`total` liefern – wo bekannt – einen echten Prozentwert `pct`
+            für den Balken. Ohne Zahlen bleibt `pct` None → unbestimmter Balken."""
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            job["state"] = text
+            job["phase"] = phase or text
+            if cur is not None and total:
+                job["cur"] = cur
+                job["total"] = total
+                anteil = max(0.0, min(1.0, cur / total))
+                if phase == "embed":
+                    job["pct"] = round(60 + anteil * 40)
+                else:   # Extraktion/OCR
+                    job["pct"] = round(anteil * (60 if will_embed else 100))
+            else:
+                # Kurze Phase ohne bekannte Gesamtmenge → unbestimmt.
+                job["cur"] = job["total"] = job["pct"] = None
 
         try:
             con = self._con()
@@ -1192,10 +1215,16 @@ class Core:
             self._sync_document_authors(con, doc_id)
             con.commit()
             if self._embedder is not None:
-                self._jobs[job_id]["state"] = "vektorisiere"
-                embed_passages(con, self._embedder, document_id=doc_id)
+                # Sauberer Übergang: Balken steht bei 60 %, bis der erste
+                # Embedding-Batch einen genauen Wert meldet (kein kurzes Blinken).
+                self._jobs[job_id].update(state="vektorisiere",
+                                          phase="vektorisiere", pct=60,
+                                          cur=None, total=None)
+                embed_passages(con, self._embedder, document_id=doc_id,
+                               progress=progress)
             con.close()
             self._jobs[job_id]["state"] = "fertig"
+            self._jobs[job_id]["pct"] = 100
         except Exception as e:
             traceback.print_exc()
             self._jobs[job_id] = {"file": job_id, "state": "fehler",

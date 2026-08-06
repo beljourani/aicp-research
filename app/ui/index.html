@@ -387,6 +387,10 @@
     overflow: hidden; text-overflow: ellipsis; }
   .docMain .dm { font-size: 12.5px; color: var(--muted); display: flex; gap: 10px;
     margin-top: 2px; }
+  /* Fortschritt beim „Neu einlesen" – direkt in der Dokumentzeile. */
+  .docProg { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; }
+  .docProg .rst { font-size: 12px; color: var(--accent-ink); font-weight: 600; }
+  .docRow.busy { background: var(--surface); }
   .docActions { display: flex; gap: 2px; flex: none; }
   .iconBtn { width: 32px; height: 32px; border: 0; background: none;
     border-radius: 8px; cursor: pointer; color: var(--muted);
@@ -408,14 +412,27 @@
   #uploadJobs { max-width: 900px; margin: 20px auto 0; display: flex;
     flex-direction: column; gap: 8px; }
   .ujob { background: var(--panel); border: 1px solid var(--line);
-    border-radius: 9px; padding: 11px 15px; display: flex; gap: 12px;
-    align-items: center; font-size: 13.5px; }
+    border-radius: 9px; padding: 11px 15px; display: flex;
+    flex-direction: column; gap: 8px; font-size: 13.5px; }
+  .ujobTop { display: flex; gap: 12px; align-items: center; }
   .ujob svg { stroke: var(--faint); }
   .ujob .st { margin-inline-start: auto; color: var(--muted); font-size: 12.5px;
     white-space: nowrap; }
   .ujob.done .st { color: var(--accent-ink); font-weight: 600; }
   .ujob.err .st { color: var(--err); font-weight: 600; }
   .ujob.skip { opacity: .6; }
+
+  /* ---------- Fortschrittsbalken (wiederverwendbar: Upload + Dokumentzeile) ---- */
+  .pbar { height: 5px; width: 100%; background: var(--line);
+    border-radius: 4px; overflow: hidden; }
+  .pfill { height: 100%; width: 0; background: var(--accent);
+    border-radius: 4px; transition: width .18s linear; }
+  /* Unbestimmt: kurze Phasen ohne bekannte Gesamtmenge (z. B. Word-Umwandlung).
+     margin-inline-start ist schreibrichtungssicher (RTL/LTR). */
+  .pfill.indet { width: 35%; transition: none;
+    animation: pindet 1.1s ease-in-out infinite; }
+  @keyframes pindet { 0% { margin-inline-start: -35%; }
+    100% { margin-inline-start: 100%; } }
 
   /* ---------- Reader (research view) ---------- */
   #reader { position: fixed; inset: 0; background: var(--bg); display: none;
@@ -1044,8 +1061,8 @@ const T = {
     hideTashkil: "Vokalzeichen aus", showTashkil: "Vokalzeichen an",
     typoFontLabel: "Schriftart", typoBold: "kräftiger", typoTitle: "Schrift & Stil",
     jobs: { wartet: "wartet", verarbeite: "wird verarbeitet",
-            vektorisiere: "wird vektorisiert", fertig: "fertig",
-            fehler: "Fehler", "übersprungen": "übersprungen" },
+            ocr: "Texterkennung", vektorisiere: "wird vektorisiert",
+            fertig: "fertig", fehler: "Fehler", "übersprungen": "übersprungen" },
     sem: { aus: "Semantik aus", "lädt": "Modell lädt …",
            bereit: "Semantik bereit", fehler: "Semantik n/a" },
   },
@@ -1164,7 +1181,7 @@ const T = {
     hideTashkil: "إخفاء التشكيل", showTashkil: "إظهار التشكيل",
     typoFontLabel: "الخط", typoBold: "أثقل", typoTitle: "الخط والنمط",
     jobs: { wartet: "في الانتظار", verarbeite: "قيد المعالجة",
-            vektorisiere: "حساب المتجهات", fertig: "تم",
+            ocr: "التعرّف الضوئي", vektorisiere: "حساب المتجهات", fertig: "تم",
             fehler: "خطأ", "übersprungen": "تم التخطي" },
     sem: { aus: "الدلالي معطل", "lädt": "يُحمّل النموذج …",
            bereit: "الدلالي جاهز", fehler: "غير متاح" },
@@ -1467,6 +1484,97 @@ async function refreshCategorySources(){
   if(searchSource==="shamela")return;   // Online-Modus nutzt Server-Filter
   try{ const cats=await api().list_categories(); fillCatSel(cats); }catch(e){}
 }
+// Dokumente, die gerade neu eingelesen werden: Dateiname -> gemerkte Doc-Daten.
+// So bleibt die Zeile im Dokumente-Tab an Ort und Stelle (mit Balken), auch
+// während der Reindex das Dokument in der DB kurz löscht und neu anlegt.
+const reindexing=new Map();
+function baseName(p){ return (p||"").split(/[\\/]/).pop()||""; }
+
+// Baut eine Dokumentzeile. `placeholder`=true für Zeilen, deren DB-Eintrag
+// gerade (mitten im Reindex) fehlt – dann nur Anzeige, keine Aktionen.
+function buildDocRow(d,placeholder){
+  const row=document.createElement("div");row.className="docRow";
+  const fn=baseName(d.file_path); if(fn)row.dataset.file=fn;
+  const acts=placeholder?"":`
+      <div class="docActions">
+        <button class="iconBtn" data-act="download" title="${esc(t("download"))}">${svg("download")}</button>
+        <button class="iconBtn" data-act="edit" title="${esc(t("edit"))}">${svg("edit")}</button>
+        <button class="iconBtn" data-act="rescan" title="${esc(t("rescan"))}">${svg("rescan")}</button>
+        <button class="iconBtn danger" data-act="del" title="${esc(t("del"))}">${svg("trash")}</button>
+      </div>`;
+  row.innerHTML=`
+      <input type="checkbox" class="selBox" data-id="${d.id}" ${!placeholder&&selectedForExport.has(d.id)?"checked":""} ${placeholder?"disabled":""}>
+      <div class="docMain">
+        <div class="dt">${esc(d.title)}</div>
+        <div class="dm"><span>${esc(authorText(d.author))}</span>
+          <span>${d.page_count||"?"} ${esc(t("pages"))}</span>
+          <span>${d.passage_count!=null?d.passage_count+" "+esc(t("passages")):""}</span></div>
+      </div>${acts}`;
+  if(!placeholder){
+    row.addEventListener("click",e=>{
+      const box=e.target.closest("[data-act],.selBox");
+      if(e.target.classList.contains("selBox")){
+        const id=+e.target.dataset.id;
+        e.target.checked?selectedForExport.add(id):selectedForExport.delete(id);
+        updateSelCount();return;
+      }
+      const act=box&&box.dataset&&box.dataset.act;
+      if(!act){ openReader(d.id); return; }
+      if(act==="del"){ if(confirm(t("confirmDelete")+d.title)) api().delete_document(d.id)
+          .then(r=>{ if(r&&r.error)return showError(r.error); refreshDocs(); showToast("1 "+t("deletedN")); })
+          .catch(()=>showError(t("errGeneric"))); }
+      else if(act==="rescan"){ startReindex(d); }
+      else if(act==="edit"){ openEditDialog(d); }
+      else if(act==="download"){ api().download_document(d.id).then(r=>{
+        if(r&&r.error)showError(r.error); else if(r&&r.path)showToast(t("downloadDone")); }); }
+    });
+  }
+  // Läuft für dieses Dokument gerade ein Reindex? Dann Balken in die Zeile.
+  if(fn&&reindexing.has(fn)){
+    row.classList.add("busy");
+    const dm=row.querySelector(".docMain");
+    const prog=document.createElement("div");prog.className="docProg";
+    prog.innerHTML=`<span class="rst">${esc(T[lang].jobs.wartet)}</span><div class="pbar"><div class="pfill indet"></div></div>`;
+    dm.appendChild(prog);
+  }
+  return row;
+}
+
+// „Neu einlesen" starten: Zeile sofort mit Balken zeigen, ohne Tab-Wechsel.
+function startReindex(d){
+  const fn=baseName(d.file_path);
+  if(fn)reindexing.set(fn,d);
+  refreshDocs();            // Zeile sofort mit Balken rendern
+  api().reindex_document(d.id,false).then(r=>{
+    if(r&&r.error){ if(fn)reindexing.delete(fn); showError(r.error); refreshDocs(); }
+    refreshStatus();
+  }).catch(e=>{ if(fn)reindexing.delete(fn); showError(String(e)); refreshDocs(); });
+}
+
+// Balken/Text der Reindex-Zeilen bei jedem Status-Poll aktualisieren.
+function updateReindexRows(jobs){
+  if(!reindexing.size)return;
+  const byFile={}; for(const j of (jobs||[]))byFile[j.file]=j;
+  let fertig=false;
+  for(const fn of [...reindexing.keys()]){
+    const j=byFile[fn];
+    if(j&&["fertig","fehler","übersprungen"].includes(j.state)){
+      reindexing.delete(fn); fertig=true; continue;
+    }
+    let row=null;
+    try{ row=document.querySelector(`.docRow[data-file="${(window.CSS&&CSS.escape)?CSS.escape(fn):fn}"]`); }catch(e){}
+    if(!j||!row)continue;
+    const rst=row.querySelector(".rst");if(rst)rst.textContent=jobLabel(j);
+    const fill=row.querySelector(".pfill");
+    if(fill){
+      if(typeof j.pct==="number"){ fill.classList.remove("indet"); fill.style.width=Math.max(0,Math.min(100,j.pct))+"%"; }
+      else { fill.classList.add("indet"); fill.style.width=""; }
+    }
+  }
+  // Ein fertiger Reindex: frische Zeile mit neuen Zahlen nachladen.
+  if(fertig)refreshDocs();
+}
+
 async function refreshDocs(){
   const docs=await api().list_documents();
   // Such-Filter (Autor/Buch) nur im lokalen Modus aus der Bibliothek füllen.
@@ -1484,42 +1592,17 @@ async function refreshDocs(){
   $("#docsEmpty").textContent=t("noDocs");
   const ids=new Set(docs.map(d=>d.id));
   selectedForExport=new Set([...selectedForExport].filter(i=>ids.has(i)));
-  for(const d of docs){
-    const row=document.createElement("div");row.className="docRow";
-    row.innerHTML=`
-      <input type="checkbox" class="selBox" data-id="${d.id}" ${selectedForExport.has(d.id)?"checked":""}>
-      <div class="docMain">
-        <div class="dt">${esc(d.title)}</div>
-        <div class="dm"><span>${esc(authorText(d.author))}</span>
-          <span>${d.page_count||"?"} ${esc(t("pages"))}</span>
-          <span>${d.passage_count} ${esc(t("passages"))}</span></div>
-      </div>
-      <div class="docActions">
-        <button class="iconBtn" data-act="download" title="${esc(t("download"))}">${svg("download")}</button>
-        <button class="iconBtn" data-act="edit" title="${esc(t("edit"))}">${svg("edit")}</button>
-        <button class="iconBtn" data-act="rescan" title="${esc(t("rescan"))}">${svg("rescan")}</button>
-        <button class="iconBtn danger" data-act="del" title="${esc(t("del"))}">${svg("trash")}</button>
-      </div>`;
-    row.addEventListener("click",e=>{
-      const box=e.target.closest("[data-act],.selBox");
-      if(e.target.classList.contains("selBox")){
-        const id=+e.target.dataset.id;
-        e.target.checked?selectedForExport.add(id):selectedForExport.delete(id);
-        updateSelCount();return;
-      }
-      const act=box&&box.dataset&&box.dataset.act;
-      // Klick auf die Reihe (kein Aktions-Button, keine Checkbox) öffnet das Buch
-      if(!act){ openReader(d.id); return; }
-      if(act==="del"){ if(confirm(t("confirmDelete")+d.title)) api().delete_document(d.id)
-          .then(r=>{ if(r&&r.error)return showError(r.error); refreshDocs(); showToast("1 "+t("deletedN")); })
-          .catch(()=>showError(t("errGeneric"))); }
-      else if(act==="rescan"){ api().reindex_document(d.id,false).then(r=>{if(r&&r.error)showError(r.error);refreshStatus();}); }
-      else if(act==="edit"){ openEditDialog(d); }
-      else if(act==="download"){ api().download_document(d.id).then(r=>{
-        if(r&&r.error)showError(r.error); else if(r&&r.path)showToast(t("downloadDone")); }); }
-    });
-    box.appendChild(row);
+  const vorhanden=new Set(docs.map(d=>baseName(d.file_path)));
+  for(const d of docs) box.appendChild(buildDocRow(d,false));
+  // Zeilen für Dokumente, die gerade neu eingelesen werden, aber (mitten im
+  // Reindex) nicht in der DB-Liste stehen: aus den gemerkten Daten als
+  // Platzhalter mit Balken oben anzeigen – so verschwindet die Zeile nie.
+  for(const [fn,info] of reindexing){
+    if(vorhanden.has(fn))continue;
+    box.insertBefore(buildDocRow(info,true),box.firstChild);
   }
+  if(reindexing.size){ box.style.display=""; $("#docsToolbar").style.display="flex";
+    $("#docsEmpty").style.display="none"; }
   updateSelCount();
   collDocs=docs;     // dieselben Daten für die Sammlungs-Index-Seiten nutzen
 }
@@ -1841,7 +1924,9 @@ function refreshStatusLabel(){
 function jobLabel(j){
   if(j.error)return j.error;
   const s=j.state||"";
-  const direct=T[lang].jobs[s]; if(direct)return direct;
+  const direct=T[lang].jobs[s];
+  // Messbare Phasen zeigen zusätzlich den Zähler (z. B. „Texterkennung 12/240").
+  if(direct)return (j.total?`${direct} ${j.cur}/${j.total}`:direct);
   if(lang==="ar"){  // dynamische Zustände der Online-Buch-Übernahme (kein fester Schlüssel)
     const m=s.match(/^lädt … (\d+)\/(\d+)/);
     if(m)return `يُحمّل … ${m[1]}/${m[2]} صفحة`;
@@ -1850,6 +1935,14 @@ function jobLabel(j){
     if(s==="berechnet die semantische Suche")return "يحسب البحث الدلالي";
   }
   return s;
+}
+// Balken-Markup für einen Job: fertige/fehlerhafte/übersprungene Jobs bekommen
+// keinen Balken. Mit Zahl (pct) ein gefüllter Balken, sonst unbestimmt (animiert).
+function jobBarHTML(j){
+  if(["fertig","fehler","übersprungen"].includes(j.state))return "";
+  if(typeof j.pct==="number")
+    return `<div class="pbar"><div class="pfill" style="width:${Math.max(0,Math.min(100,j.pct))}%"></div></div>`;
+  return `<div class="pbar"><div class="pfill indet"></div></div>`;
 }
 // Update-Knopf datengetrieben aus dem Status setzen – wird vom Job-Poll UND vom
 // Heartbeat aufgerufen.
@@ -1887,15 +1980,22 @@ async function refreshStatus(){
     const jb=$("#uploadJobs");jb.innerHTML="";let active=false,doneCount=0;
     for(const j of st.jobs){
       if(j.file==="Export"||j.file==="Import"||j.file==="Update"||j.file==="Buchübernahme")continue;
+      const erledigt=["fertig","fehler","übersprungen"].includes(j.state);
+      // „Neu einlesen"-Jobs gehören in den Dokumente-Tab, nicht unter Hochladen.
+      // Trotzdem als aktiv zählen, damit das Polling (und damit der Balken in
+      // der Dokumentzeile) weiterläuft.
+      if(reindexing.has(j.file)){ if(!erledigt)active=true; continue; }
       const el=document.createElement("div");
       el.className="ujob"+(j.state==="fehler"?" err":j.state==="fertig"?" done":j.state==="übersprungen"?" skip":"");
       const label=j.state==="übersprungen"?`${t("jobs")&&T[lang].jobs["übersprungen"]} – ${esc(j.error||"")}`:esc(jobLabel(j));
-      el.innerHTML=`${svg("page")}<span>${esc(j.file)}</span><span class="st">${label}</span>`;
+      el.innerHTML=`<div class="ujobTop">${svg("page")}<span>${esc(j.file)}</span><span class="st">${label}</span></div>${jobBarHTML(j)}`;
       jb.appendChild(el);
       if(["fertig","fehler","übersprungen"].includes(j.state))doneCount++;
       else active=true;
     }
     $("#jobsBar").style.display=doneCount?"flex":"none";
+    // Fortschritt der „Neu einlesen"-Zeilen im Dokumente-Tab live aktualisieren.
+    updateReindexRows(st.jobs);
     if(active||st.semantik==="lädt")scheduleStatus(1200);
     if(!active)refreshDocs();
   }catch(e){scheduleStatus(500);}
@@ -1914,7 +2014,7 @@ dz.addEventListener("drop",async e=>{
   for(const f of files){
     if(!/\.(pdf|docx|txt)$/i.test(f.name)){showError(f.name+" – ?");continue;}
     const el=document.createElement("div");el.className="ujob";
-    el.innerHTML=`${svg("page")}<span>${esc(f.name)}</span><span class="st">${esc(t("uploading"))}</span>`;
+    el.innerHTML=`<div class="ujobTop">${svg("page")}<span>${esc(f.name)}</span><span class="st">${esc(t("uploading"))}</span></div><div class="pbar"><div class="pfill indet"></div></div>`;
     $("#uploadJobs").prepend(el);
     try{const r=await api().upload(f);if(r&&r.error)showError(r.error);}catch(err){showError(String(err));}
   }

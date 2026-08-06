@@ -91,8 +91,12 @@ def ensure_vector_schema(con: sqlite3.Connection) -> None:
 
 def embed_passages(con: sqlite3.Connection, embedder: Embedder,
                    document_id: int | None = None,
-                   batch_size: int = 64) -> int:
-    """Berechnet Vektoren für alle Passagen ohne Vektor. Liefert Anzahl."""
+                   batch_size: int = 64, progress=None) -> int:
+    """Berechnet Vektoren für alle Passagen ohne Vektor. Liefert Anzahl.
+
+    `progress(text, cur, total, phase)` – optional – meldet den Fortschritt
+    (verarbeitete/gesamte Passagen) für den Fortschrittsbalken. Ohne Callback
+    (z. B. beim Nachholen am App-Start) verhält sich alles wie bisher."""
     ensure_vector_schema(con)
     # Bücher, für die die semantische Suche abgewählt wurde, bleiben aussen vor
     # - auch beim Nachholen ohne document_id, das beim App-Start läuft. Ohne
@@ -108,8 +112,11 @@ def embed_passages(con: sqlite3.Connection, embedder: Embedder,
         sql += " AND p.document_id = ?"
         params.append(document_id)
     rows = con.execute(sql, params).fetchall()
+    gesamt = len(rows)
     done = 0
-    for i in range(0, len(rows), batch_size):
+    if progress and gesamt:
+        progress("vektorisiere", 0, gesamt, "embed")
+    for i in range(0, gesamt, batch_size):
         batch = rows[i:i + batch_size]
         vecs = embedder.embed([r["text"] for r in batch])
         con.executemany(
@@ -118,6 +125,8 @@ def embed_passages(con: sqlite3.Connection, embedder: Embedder,
             [(r["id"], v.tobytes()) for r, v in zip(batch, vecs)])
         con.commit()
         done += len(batch)
+        if progress:
+            progress("vektorisiere", done, gesamt, "embed")
     return done
 
 

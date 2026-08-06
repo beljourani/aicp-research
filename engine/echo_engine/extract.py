@@ -54,7 +54,7 @@ def extract(path: str | Path, force_ocr: bool = False,
     p = Path(path)
     suffix = p.suffix.lower()
     if suffix == ".pdf":
-        return extract_pdf(p, force_ocr=force_ocr)
+        return extract_pdf(p, force_ocr=force_ocr, progress=progress)
     if suffix == ".docx":
         return extract_docx(p, progress=progress)
     if suffix == ".txt":
@@ -125,18 +125,22 @@ def _pdf_page_text(page) -> str:
     return clean_text(page.get_text("text", sort=True))
 
 
-def extract_pdf(path: Path, force_ocr: bool = False) -> ExtractResult:
+def extract_pdf(path: Path, force_ocr: bool = False,
+                progress=None) -> ExtractResult:
     res = ExtractResult()
     res.reliability = "sicher"      # PDF = feste, gedruckte Seiten
     res.engine = "PDF"
     with _fitz().open(path) as doc:
+        gesamt = len(doc)
         empty_pages = 0
         for i, page in enumerate(doc, start=1):
             text = _pdf_page_text(page)
             if not text:
                 empty_pages += 1
             res.pages.append((i, text))
-        is_scan = len(doc) > 0 and empty_pages / len(doc) > 0.5
+            if progress:
+                progress("verarbeite", i, gesamt, "verarbeite")
+        is_scan = gesamt > 0 and empty_pages / gesamt > 0.5
     broken = _text_layer_broken(res.pages)
     if broken:
         res.warnings.append(
@@ -146,7 +150,8 @@ def extract_pdf(path: Path, force_ocr: bool = False) -> ExtractResult:
         res.needs_ocr = True
         # Sprache automatisch aus dem Schriftsystem bestimmen (Textebene bzw.
         # OSD) – kein Festnageln auf eine Sprache.
-        ocr_pages = _try_ocr(path, _ocr_sprache(res.pages, path))
+        ocr_pages = _try_ocr(path, _ocr_sprache(res.pages, path),
+                             progress=progress)
         # Die Textschicht NUR ersetzen, wenn OCR wirklich Text geliefert hat.
         # Sonst (OCR nicht verfügbar oder ohne Ergebnis) die vorhandene – ggf.
         # verstümmelte – Textschicht behalten. NIE leere Seiten speichern, wenn
@@ -564,23 +569,25 @@ def _osd_sprache(pdf_path) -> str:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _try_ocr(pdf_path: Path, lang: str = "ara") -> list[tuple[int, str]] | None:
+def _try_ocr(pdf_path: Path, lang: str = "ara",
+             progress=None) -> list[tuple[int, str]] | None:
     """OCR-Kette: Apple Vision (macOS, eingebaut) -> Tesseract -> None.
     `lang` ist die (automatisch erkannte) Sprache für Tesseract; Vision erkennt
-    die Sprache selbst und ignoriert den Parameter."""
+    die Sprache selbst und ignoriert den Parameter. `progress` meldet – wo
+    vorhanden – die OCR-Seite (i/N) für den Fortschrittsbalken."""
     import sys
     if sys.platform == "darwin":
         try:
-            return _ocr_pdf_vision(pdf_path)
+            return _ocr_pdf_vision(pdf_path, progress=progress)
         except Exception:
             import traceback
             traceback.print_exc()
     if _tesseract_cmd():
-        return _ocr_pdf_tesseract(pdf_path, lang)
+        return _ocr_pdf_tesseract(pdf_path, lang, progress=progress)
     return None
 
 
-def _ocr_pdf_vision(pdf_path: Path) -> list[tuple[int, str]]:
+def _ocr_pdf_vision(pdf_path: Path, progress=None) -> list[tuple[int, str]]:
     """Arabische Texterkennung über das in macOS eingebaute Vision-Framework.
 
     Braucht: pip install pyobjc-framework-Vision (steht in requirements.txt).
@@ -590,6 +597,7 @@ def _ocr_pdf_vision(pdf_path: Path) -> list[tuple[int, str]]:
 
     pages: list[tuple[int, str]] = []
     with _fitz().open(pdf_path) as doc:
+        gesamt = len(doc)
         for i, page in enumerate(doc, start=1):
             pix = page.get_pixmap(dpi=200)
             png = pix.tobytes("png")
@@ -621,7 +629,9 @@ def _ocr_pdf_vision(pdf_path: Path) -> list[tuple[int, str]]:
                               bx * pix.width, (1.0 - by - bh) * pix.height,
                               (bx + bw) * pix.width, (1.0 - by) * pix.height))
             pages.append((i, paragraphs_from_boxes(lines)))
-            print(f"OCR Seite {i}/{len(doc)}", flush=True)
+            print(f"OCR Seite {i}/{gesamt}", flush=True)
+            if progress:
+                progress("ocr", i, gesamt, "ocr")
     return pages
 
 
@@ -659,7 +669,8 @@ def _tesseract_tsv_to_text(tsv: str) -> str:
     return paragraphs_from_groups(absaetze)
 
 
-def _ocr_pdf_tesseract(pdf_path: Path, lang: str = "ara") -> "list[tuple[int, str]] | None":
+def _ocr_pdf_tesseract(pdf_path: Path, lang: str = "ara",
+                       progress=None) -> "list[tuple[int, str]] | None":
     import os as _os
     cmd = _tesseract_cmd()
     env = dict(_os.environ)
@@ -712,6 +723,8 @@ def _ocr_pdf_tesseract(pdf_path: Path, lang: str = "ara") -> "list[tuple[int, st
                 except OSError:
                     pass                    # … aber nie den Upload abbrechen
                 print(f"OCR Seite {i}/{len(doc)}", flush=True)
+                if progress:
+                    progress("ocr", i, len(doc), "ocr")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
     # Hat OCR NICHTS Brauchbares geliefert (z. B. Tesseract-Fehler), als
