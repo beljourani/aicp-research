@@ -2673,11 +2673,23 @@ function setSheetLabel(seq,label){
   const n=s.querySelector(".pageNum");if(n)n.textContent=label||"…";
 }
 // Lesbare Seitenangabe für eine Shamela-Seite: „ج2 ص45" bzw. „ص45".
+// EINE Beschriftung fuer Trefferliste und Leser. Beide Stellen hatten bisher
+// je eine eigene, wortgleiche Fassung – zwei Kopien derselben Regel, die
+// auseinanderlaufen koennen, ohne dass es auffaellt. Genau das waere der
+// schlimmste Fall: dieselbe Fundstelle mit zwei verschiedenen Seitenangaben,
+// und der Nutzer sieht nicht, welche stimmt.
+//
+// Regel: Band = `part`, Seite = `page_num`, beide unveraendert aus der
+// Seitenkennung der Quelle dekodiert (V57P011 = Band 57, Seite 11). Fehlt die
+// Seitennummer, wird die Rohkennung gezeigt – lieber die als gar nichts.
+function shamelaLabel(part,num,ersatz){
+  const n=(num!=null&&num!=="")?num:ersatz;
+  if(n==null||n==="")return null;
+  const b=(part!=null&&String(part).trim()!=="")?String(part).trim():"";
+  return b?`ج${b} ص${n}`:`ص${n}`;
+}
 function shamelaPageLabel(pg){
-  const num=(pg.page_num!=null&&pg.page_num!=="")?pg.page_num:pg.page_str;
-  if(num==null||num==="")return "…";
-  const part=(pg.part!=null&&String(pg.part).trim()!=="")?String(pg.part).trim():"";
-  return part?`ج${part} ص${num}`:`ص${num}`;
+  return shamelaLabel(pg.part,pg.page_num,pg.page_str)||"…";
 }
 
 // Aktive Include-Begriffe des Lesers (für wurzelbewusste Server-Markierung)
@@ -2999,10 +3011,7 @@ function sortHitsByPage(hits){
 // Zerlegt die Freitext-Anfrage grob in Wörter für die literale Hervorhebung.
 function shamelaTerms(q){return (q||"").split(/\s+/).map(s=>s.trim()).filter(w=>w.length>1);}
 function shamelaHitLabel(h){
-  const num=(h.page_num!=null&&h.page_num!=="")?h.page_num:h.page;
-  if(num==null||num==="")return null;
-  const part=(h.part!=null&&String(h.part).trim()!=="")?String(h.part).trim():"";
-  return part?`ج${part} ص${num}`:`ص${num}`;
+  return shamelaLabel(h.part,h.page_num,h.page);
 }
 function updateHitNav(){
   const nav=$("#rHitNav");
