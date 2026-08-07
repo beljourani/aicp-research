@@ -73,6 +73,11 @@ def _text_layer_broken(pages: list[tuple[int, str]]) -> bool:
        (rückwärts gedrehter Artikel)
     """
     full = " ".join(t for _, t in pages)
+    # Sprachunabhängiger Salat-Test ZUERST: eine kaputte Zeichentabelle, die
+    # lateinische Glyphen ausgibt, hat gar keine arabischen Token und würde
+    # sonst unten fälschlich als „nicht kaputt" durchgehen.
+    if _looks_like_garble(full):
+        return True
     tokens = re.findall(r"[ء-ي]+", full)
     if len(tokens) < 30:
         return False
@@ -90,6 +95,27 @@ def _text_layer_broken(pages: list[tuple[int, str]]) -> bool:
     if la_end > max(4, al_start):
         indizien += 1
     return indizien >= 1
+
+
+def _looks_like_garble(full: str) -> bool:
+    """Erkennt eine zerschossene Textebene an untypisch vielen Einzelzeichen
+    und Symbolen. Bewusst konservativ, damit normaler deutscher/englischer/
+    arabischer Text nie fälschlich als kaputt gilt (dort ist der Anteil an
+    Einzelzeichen und Symbolen niedrig, die Durchschnittswortlänge hoch)."""
+    if len(full) < 400:
+        return False
+    woerter = re.findall(r"[^\W\d_]+", full, flags=re.UNICODE)
+    if len(woerter) < 60:
+        return False
+    einzel_anteil = sum(1 for w in woerter if len(w) == 1) / len(woerter)
+    symbol_anteil = sum(
+        1 for c in full if not c.isalnum() and not c.isspace()) / len(full)
+    schnitt = sum(len(w) for w in woerter) / len(woerter)
+    if einzel_anteil > 0.45 and symbol_anteil > 0.12:
+        return True
+    if schnitt < 1.9 and symbol_anteil > 0.10:
+        return True
+    return False
 
 
 def _pdf_page_lines(page) -> list[tuple]:
@@ -481,6 +507,12 @@ def extract_txt(path: Path) -> ExtractResult:
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     res = _paginate_plain(text)
     res.real_page_numbers = False
+    # Textdateien haben KEINE gedruckten Seiten – die „Seiten" sind künstliche
+    # 2000-Zeichen-Blöcke. Darum ausdrücklich „ungefähr", damit die Oberfläche
+    # sie nicht als zitierfähige Druckseiten ausweist (sonst „exakt").
+    res.reliability = "ungefähr"
+    res.warnings.append(
+        "Textdatei ohne Druckseiten – Seitenangaben sind nur Näherungen.")
     return res
 
 

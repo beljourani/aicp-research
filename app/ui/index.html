@@ -303,9 +303,13 @@
     box-shadow: 0 0 0 3px var(--accent-weak); }
   .tchip { display: inline-flex; align-items: center; gap: 6px;
     background: var(--chip-bg); color: var(--chip-ink); font-weight: 600;
-    font-size: 13.5px; padding: 4px 6px 4px 11px; border-radius: 8px; }
+    font-size: 13.5px; padding: 4px 6px 4px 11px; border-radius: 8px;
+    max-width: 100%; }
+  /* Sehr lange Begriffe umbrechen, statt das Fenster zu sprengen (C-4). Der
+     Entfernen-Knopf bleibt so immer im sichtbaren Bereich. */
+  .tchip > span { overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
   .tchip button { border: 0; background: none; cursor: pointer; color: inherit;
-    display: grid; place-items: center; padding: 0; }
+    display: grid; place-items: center; padding: 0; flex: none; }
   .tchip.neg { background: var(--err-bg); color: var(--err-ink); }
   .termGroup input { flex: 1; min-width: 150px; border: 0; outline: none;
     font-family: inherit; font-size: 14.5px; background: none; padding: 5px 2px; }
@@ -388,6 +392,15 @@
   .docMain .dm { font-size: 12.5px; color: var(--muted); display: flex; gap: 10px;
     margin-top: 2px; }
   /* Fortschritt beim „Neu einlesen" – direkt in der Dokumentzeile. */
+  .newsH { font-weight: 700; margin: 14px 0 4px; font-size: 14.5px; }
+  /* Eigenes Bestätigungs-Modal (C-1) – ersetzt das native confirm(). */
+  .cmOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.38);
+    display: none; align-items: center; justify-content: center; z-index: 4000; }
+  .cmBox { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 22px 24px; max-width: 420px; width: calc(100% - 48px);
+    box-shadow: 0 18px 50px rgba(0,0,0,.22); }
+  .cmMsg { font-size: 15px; line-height: 1.5; color: var(--ink); }
+  .cmBtns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
   .docProg { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; }
   .docProg .rst { font-size: 12px; color: var(--accent-ink); font-weight: 600; }
   .docRow.busy { background: var(--surface); }
@@ -1063,6 +1076,14 @@ const T = {
     jobs: { wartet: "wartet", verarbeite: "wird verarbeitet",
             ocr: "Texterkennung", vektorisiere: "wird vektorisiert",
             fertig: "fertig", fehler: "Fehler", "übersprungen": "übersprungen" },
+    jobErr: { leer: "Kein Text gefunden – die Datei enthält keine lesbaren Abschnitte.",
+              pdf_kaputt: "Die PDF-Datei ist beschädigt oder unvollständig.",
+              pdf_verschluesselt: "Die PDF-Datei ist passwortgeschützt.",
+              kein_pdf: "Die Datei ist keine gültige PDF-Datei.",
+              zip_kaputt: "Die Datei ist keine gültige .echolib-Datei.",
+              datei_fehlt: "Die Datei wurde nicht gefunden.",
+              generisch: "Die Datei konnte nicht eingelesen werden." },
+    confirmYes: "Bestätigen", confirmNo: "Abbrechen",
     sem: { aus: "Semantik aus", "lädt": "Modell lädt …",
            bereit: "Semantik bereit", fehler: "Semantik n/a" },
   },
@@ -1183,6 +1204,14 @@ const T = {
     jobs: { wartet: "في الانتظار", verarbeite: "قيد المعالجة",
             ocr: "التعرّف الضوئي", vektorisiere: "حساب المتجهات", fertig: "تم",
             fehler: "خطأ", "übersprungen": "تم التخطي" },
+    jobErr: { leer: "لا يوجد نص – الملف لا يحتوي على مقاطع قابلة للقراءة.",
+              pdf_kaputt: "ملف PDF تالف أو غير مكتمل.",
+              pdf_verschluesselt: "ملف PDF محمي بكلمة مرور.",
+              kein_pdf: "الملف ليس ملف PDF صالحًا.",
+              zip_kaputt: "الملف ليس ملف ‎.echolib‎ صالحًا.",
+              datei_fehlt: "لم يتم العثور على الملف.",
+              generisch: "تعذّرت قراءة الملف." },
+    confirmYes: "تأكيد", confirmNo: "إلغاء",
     sem: { aus: "الدلالي معطل", "lädt": "يُحمّل النموذج …",
            bereit: "الدلالي جاهز", fehler: "غير متاح" },
   },
@@ -1226,8 +1255,15 @@ function applyLang(l) {
   $("#mExcludeInput").placeholder = d.excludePlaceholder;
   $("#rExcludeInput").placeholder = d.excludePlaceholder;
   $("#authorSel").placeholder = d.all;
-  if (!$("#results").querySelector(".hit"))
+  // Offene Trefferliste beim Sprachwechsel mit-übersetzen: die Treffer sind
+  // schon gerendert (mit den alten Labels „Treffer N / exakt / S. X"), darum
+  // die aktuelle Suche neu ausführen, damit alles in der neuen Sprache steht
+  // (S-7). Ohne Treffer bleibt der Starthinweis.
+  if ($("#results").querySelector(".hit")) {
+    if (typeof runSearch === "function") runSearch();
+  } else {
     $("#results").innerHTML = emptyBox(d.start);
+  }
   renderPanel(MAIN); renderPanel(READER);
   if(typeof updateTashkilBtn==="function") updateTashkilBtn();
   const _tl=$("#rTypoFontLbl"); if(_tl)_tl.textContent=d.typoFontLabel||"Schriftart";
@@ -1312,13 +1348,52 @@ function splitAuthors(a){if(!a)return[];return String(a).split(/\s*[؛;]\s*/).ma
 function authorText(a){const p=splitAuthors(a);return p.length?p.join(" · "):"—";}
 function showError(m){const e=$("#errbar");e.textContent=m;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(()=>e.style.display="none",7000);}
 function showToast(m){const e=$("#toast");e.textContent=m;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(()=>e.style.display="none",5000);}
+// Eigenes Bestätigungs-Modal statt des nativen confirm() – dieses zeigt im
+// pywebview-Fenster „127.0.0.1:PORT enthält …" mit System-Buttons (C-1).
+// Liefert ein Promise<boolean>. Enter = bestätigen, Escape/Klick daneben = ab.
+function appConfirm(message,opts){
+  opts=opts||{};
+  return new Promise(resolve=>{
+    let ov=$("#confirmModal");
+    if(!ov){
+      ov=document.createElement("div");ov.id="confirmModal";ov.className="cmOverlay";
+      ov.innerHTML=`<div class="cmBox"><div class="cmMsg"></div>
+        <div class="cmBtns"><button class="btn ghost cmNo"></button><button class="btn cmYes"></button></div></div>`;
+      document.body.appendChild(ov);
+    }
+    ov.querySelector(".cmMsg").textContent=message;
+    const yes=ov.querySelector(".cmYes"),no=ov.querySelector(".cmNo");
+    yes.textContent=opts.okText||t("confirmYes");
+    no.textContent=opts.cancelText||t("confirmNo");
+    yes.classList.toggle("danger",opts.danger!==false);
+    ov.style.display="flex";
+    const onYes=()=>close(true),onNo=()=>close(false);
+    const onBack=e=>{ if(e.target===ov)close(false); };
+    const onKey=e=>{ if(e.key==="Escape"){e.preventDefault();e.stopPropagation();close(false);}
+                     else if(e.key==="Enter"){e.preventDefault();e.stopPropagation();close(true);} };
+    function close(val){
+      ov.style.display="none";
+      yes.removeEventListener("click",onYes);no.removeEventListener("click",onNo);
+      ov.removeEventListener("click",onBack);document.removeEventListener("keydown",onKey,true);
+      resolve(val);
+    }
+    yes.addEventListener("click",onYes);no.addEventListener("click",onNo);
+    ov.addEventListener("click",onBack);document.addEventListener("keydown",onKey,true);
+    yes.focus();
+  });
+}
 function relTag(rel){
   if(rel==="ungefähr") return `<span class="rel approx" title="${esc(t('relApproxHint'))}">${esc(t('relApprox'))}</span>`;
   // Aus der Online-Sammlung übernommen: die Seitenzahl stammt unverändert
   // von dort und wurde nie neu berechnet – das ist etwas anderes als eine
   // selbst geprüfte PDF-Seite und soll im Treffer sichtbar sein.
   if(rel==="shamela") return `<span class="rel src" title="${esc(t('relShamelaHint'))}">${esc(t('relShamela'))}</span>`;
-  return `<span class="rel exact" title="${esc(t('relExactHint'))}">${esc(t('relExact'))}</span>`;
+  // „sicher" (PDF) und „exakt" (Word) sind beide zitierfähige Druckseiten.
+  // Ein UNBEKANNTER Wert fällt bewusst auf „ungefähr" zurück, nicht auf
+  // „exakt" – so wird nie fälschlich Zitierfähigkeit vorgetäuscht (K-4).
+  if(rel==="sicher"||rel==="exakt")
+    return `<span class="rel exact" title="${esc(t('relExactHint'))}">${esc(t('relExact'))}</span>`;
+  return `<span class="rel approx" title="${esc(t('relApproxHint'))}">${esc(t('relApprox'))}</span>`;
 }
 function pageStr(h){
   // Trägt das Buch eine echte Druckseite, wird IMMER sie gezeigt –
@@ -1495,7 +1570,13 @@ function baseName(p){ return (p||"").split(/[\\/]/).pop()||""; }
 function buildDocRow(d,placeholder){
   const row=document.createElement("div");row.className="docRow";
   const fn=baseName(d.file_path); if(fn)row.dataset.file=fn;
-  const acts=placeholder?"":`
+  // Läuft für dieses Dokument gerade ein Reindex, ist die Zeile „busy": KEINE
+  // Aktionen, KEIN Öffnen des Lesers (S-6). Sonst könnte man ein Dokument
+  // öffnen, dessen Seiten gerade gelöscht sind (leerer Dauerlade-Leser), oder
+  // „Neu einlesen" mehrfach anstoßen.
+  const busy=!!(fn&&reindexing.has(fn));
+  const locked=placeholder||busy;
+  const acts=locked?"":`
       <div class="docActions">
         <button class="iconBtn" data-act="download" title="${esc(t("download"))}">${svg("download")}</button>
         <button class="iconBtn" data-act="edit" title="${esc(t("edit"))}">${svg("edit")}</button>
@@ -1503,14 +1584,14 @@ function buildDocRow(d,placeholder){
         <button class="iconBtn danger" data-act="del" title="${esc(t("del"))}">${svg("trash")}</button>
       </div>`;
   row.innerHTML=`
-      <input type="checkbox" class="selBox" data-id="${d.id}" ${!placeholder&&selectedForExport.has(d.id)?"checked":""} ${placeholder?"disabled":""}>
+      <input type="checkbox" class="selBox" data-id="${d.id}" ${!locked&&selectedForExport.has(d.id)?"checked":""} ${locked?"disabled":""}>
       <div class="docMain">
         <div class="dt">${esc(d.title)}</div>
         <div class="dm"><span>${esc(authorText(d.author))}</span>
           <span>${d.page_count||"?"} ${esc(t("pages"))}</span>
           <span>${d.passage_count!=null?d.passage_count+" "+esc(t("passages")):""}</span></div>
       </div>${acts}`;
-  if(!placeholder){
+  if(!locked){
     row.addEventListener("click",e=>{
       const box=e.target.closest("[data-act],.selBox");
       if(e.target.classList.contains("selBox")){
@@ -1520,9 +1601,9 @@ function buildDocRow(d,placeholder){
       }
       const act=box&&box.dataset&&box.dataset.act;
       if(!act){ openReader(d.id); return; }
-      if(act==="del"){ if(confirm(t("confirmDelete")+d.title)) api().delete_document(d.id)
+      if(act==="del"){ appConfirm(t("confirmDelete")+d.title,{okText:t("del")}).then(ok=>{ if(!ok)return; api().delete_document(d.id)
           .then(r=>{ if(r&&r.error)return showError(r.error); refreshDocs(); showToast("1 "+t("deletedN")); })
-          .catch(()=>showError(t("errGeneric"))); }
+          .catch(()=>showError(t("errGeneric"))); }); }
       else if(act==="rescan"){ startReindex(d); }
       else if(act==="edit"){ openEditDialog(d); }
       else if(act==="download"){ api().download_document(d.id).then(r=>{
@@ -1530,7 +1611,7 @@ function buildDocRow(d,placeholder){
     });
   }
   // Läuft für dieses Dokument gerade ein Reindex? Dann Balken in die Zeile.
-  if(fn&&reindexing.has(fn)){
+  if(busy){
     row.classList.add("busy");
     const dm=row.querySelector(".docMain");
     const prog=document.createElement("div");prog.className="docProg";
@@ -1543,6 +1624,7 @@ function buildDocRow(d,placeholder){
 // „Neu einlesen" starten: Zeile sofort mit Balken zeigen, ohne Tab-Wechsel.
 function startReindex(d){
   const fn=baseName(d.file_path);
+  if(fn&&reindexing.has(fn))return;   // läuft bereits – Mehrfachklick ignorieren (S-6)
   if(fn)reindexing.set(fn,d);
   refreshDocs();            // Zeile sofort mit Balken rendern
   api().reindex_document(d.id,false).then(r=>{
@@ -1593,14 +1675,16 @@ async function refreshDocs(){
   const ids=new Set(docs.map(d=>d.id));
   selectedForExport=new Set([...selectedForExport].filter(i=>ids.has(i)));
   const vorhanden=new Set(docs.map(d=>baseName(d.file_path)));
-  for(const d of docs) box.appendChild(buildDocRow(d,false));
-  // Zeilen für Dokumente, die gerade neu eingelesen werden, aber (mitten im
-  // Reindex) nicht in der DB-Liste stehen: aus den gemerkten Daten als
-  // Platzhalter mit Balken oben anzeigen – so verschwindet die Zeile nie.
+  // DB-Dokumente plus Platzhalter für gerade neu eingelesene, die (mitten im
+  // Reindex) kurz aus der DB fehlen – gemeinsam nach created_at sortiert, damit
+  // die Reindex-Zeile AN IHRER STELLE bleibt und nicht an den Listenanfang
+  // springt (S-6). So verschwindet die Zeile nie und wandert nicht.
+  const shown=docs.map(d=>({d,ph:false}));
   for(const [fn,info] of reindexing){
-    if(vorhanden.has(fn))continue;
-    box.insertBefore(buildDocRow(info,true),box.firstChild);
+    if(!vorhanden.has(fn)) shown.push({d:info,ph:true});
   }
+  shown.sort((a,b)=>String(b.d.created_at||"").localeCompare(String(a.d.created_at||"")));
+  for(const it of shown) box.appendChild(buildDocRow(it.d,it.ph));
   if(reindexing.size){ box.style.display=""; $("#docsToolbar").style.display="flex";
     $("#docsEmpty").style.display="none"; }
   updateSelCount();
@@ -1851,7 +1935,7 @@ async function renderManageList(){
     };
     row.querySelector('[data-act="del"]').onclick=async()=>{
       const msg=manageKind==="author"?t("authorDeleteConfirm")(c.name):t("catDeleteConfirm")(c.name);
-      if(!confirm(msg))return;
+      if(!await appConfirm(msg,{okText:t("del")}))return;
       const r=manageKind==="author"
         ? await api().author_delete(c.id)
         : await api().category_delete(c.id);
@@ -1922,6 +2006,10 @@ function refreshStatusLabel(){
   el.classList.toggle("off",s!=="bereit"&&s!=="lädt");
 }
 function jobLabel(j){
+  // Zweisprachige Fehlermeldung über den stabilen Schlüssel (S-5); sonst der
+  // vom Server gelieferte Klartext.
+  if(j.error_key && T[lang].jobErr && T[lang].jobErr[j.error_key])
+    return T[lang].jobErr[j.error_key];
   if(j.error)return j.error;
   const s=j.state||"";
   const direct=T[lang].jobs[s];
@@ -2036,7 +2124,7 @@ function renderPanel(cfg){
       chip.innerHTML=`<span>${esc(term)}</span>`;
       const del=document.createElement("button");del.innerHTML=svg("x");
       del.onclick=(e)=>{e.stopPropagation();st.groups[gi].splice(ti,1);
-        if(!st.groups[gi].length&&st.groups.length>1)st.groups.splice(gi,1);renderPanel(cfg);};
+        if(!st.groups[gi].length&&st.groups.length>1)st.groups.splice(gi,1);renderPanel(cfg);maybeClearResults(cfg);};
       chip.appendChild(del);g.appendChild(chip);
     });
     const inp=document.createElement("input");
@@ -2049,7 +2137,7 @@ function renderPanel(cfg){
         else cfg.onSearch();
       } else if(e.key==="Backspace"&&!inp.value&&terms.length){
         e.preventDefault();
-        st.groups[gi].pop();renderPanel(cfg);
+        st.groups[gi].pop();renderPanel(cfg);maybeClearResults(cfg);
         $(cfg.groupsBox).querySelectorAll(".termGroup input")[gi].focus();
       }
     };
@@ -2066,9 +2154,25 @@ function renderPanelExclude(cfg){
     const chip=document.createElement("span");chip.className="tchip neg";
     chip.innerHTML=`<span>${esc(term)}</span>`;
     const del=document.createElement("button");del.innerHTML=svg("x");
-    del.onclick=(e)=>{e.stopPropagation();cfg.state.excludes.splice(ti,1);renderPanelExclude(cfg);};
+    del.onclick=(e)=>{e.stopPropagation();cfg.state.excludes.splice(ti,1);renderPanelExclude(cfg);maybeClearResults(cfg);};
     chip.appendChild(del);g.insertBefore(chip,inp);
   });
+}
+// Sind im Panel gar keine Begriffe/Ausschlüsse mehr übrig?
+function panelEmpty(st){
+  return !(st.groups||[]).some(g=>g.length) && !(st.excludes||[]).length;
+}
+// Wird der letzte Begriff/Ausschluss entfernt, die zugehörige Trefferliste
+// leeren statt die alten Treffer stehen zu lassen (C-9).
+function maybeClearResults(cfg){
+  if(!panelEmpty(cfg.state))return;
+  if(cfg===MAIN){
+    mainQuery=null;shQuery=null;
+    $("#results").innerHTML=emptyBox(searchSource==="shamela"?t("shamelaQueryHint"):t("start"));
+    $("#count").textContent="";
+  }else if(cfg===READER&&typeof showReaderHint==="function"){
+    showReaderHint();rHits=[];if(typeof updateHitNav==="function")updateHitNav();
+  }
 }
 // Offene Eingaben in den State übernehmen, dann Suchanfrage bauen
 function collectPanel(cfg){
@@ -2211,7 +2315,7 @@ function shamelaHitEl(h){
     <div class="top">
       <span class="htitle">${esc(h.title||"")}</span>
       <span class="hauthor">${esc(h.author||"")}</span>
-      <span class="meta"><span class="pageTag">${label?esc(label):""}</span>
+      <span class="meta"><span class="pageTag">${label?esc(label):""}</span>${relTag(h.reliability||"shamela")}
         <button class="bmBtn" title="${esc(t("bmAdd"))}">${svg("bookmark")}</button></span>
     </div>
     <div class="text" dir="auto">${stitchMarks(h.snippet||"",h.snippet_spans,null,null)}</div>`;
@@ -2361,7 +2465,7 @@ async function refreshBookmarks(){
         openReader(b.document_id,b.passage_id,b.terms||[],b.terms||[]);
       };
       it.querySelector(".iconBtn").onclick=async()=>{
-        if(!confirm(t("bmConfirmDel")))return;
+        if(!await appConfirm(t("bmConfirmDel"),{okText:t("del")}))return;
         await api().bookmark_delete(b.id);
         await refreshBmKeys();refreshBookmarks();
       };
@@ -2889,6 +2993,12 @@ async function gotoPage(n,smooth=true,hit=false,gen,toPage){
     // einer Animation meldete die Scroll-Erkennung Zwischenseiten, von denen der
     // nächste Tastendruck dann falsch weiterrechnete.
     target.scrollIntoView({block,behavior:"auto"});
+    // S-3: Das programmatische Scrollen löst gleich ein Scroll-Event aus. Bei
+    // einem zentrierten Treffer (block:"center") liegt die Blattoberkante über
+    // der 60px-Ableselinie, sodass visiblePage die Seite DAVOR meldete und die
+    // Kopfzeile fälschlich um 1 zu niedrig setzte. Dieses eine Auto-Event kurz
+    // ignorieren; sobald der Nutzer selbst scrollt, greift wieder alles normal.
+    rJumpAt=performance.now();
   }
   setCurrentPage(scrollPage);
 }
@@ -2932,13 +3042,17 @@ function visiblePage(fallback){
   return pageAtOffset((box.scrollTop+60)/(f||1));
 }
 // Sichtbare Seite ermitteln + nachladen
-let _scrollT=null;
+let _scrollT=null, rJumpAt=0;
 $("#rReading").addEventListener("scroll",()=>{
   clearTimeout(_scrollT);
   _scrollT=setTimeout(()=>{
     const cur=visiblePage(rPage);
     ensureWindow(cur);          // Fenster mitführen (Knotenzahl bleibt klein)
-    setCurrentPage(cur);
+    // Das unmittelbar nach einem Sprung ausgelöste Auto-Scroll-Event NICHT die
+    // eben gesetzte Zielseite überschreiben lassen (S-3). Fenster/Prefetch
+    // laufen trotzdem. Ein echter Nutzer-Scroll später liegt außerhalb dieses
+    // kurzen Fensters und aktualisiert die Seite normal.
+    if(performance.now()-rJumpAt>=260) setCurrentPage(cur);
     prefetch(cur);
   },90);
 },{passive:true});
@@ -3009,7 +3123,9 @@ function sortHitsByPage(hits){
   });
 }
 // Zerlegt die Freitext-Anfrage grob in Wörter für die literale Hervorhebung.
-function shamelaTerms(q){return (q||"").split(/\s+/).map(s=>s.trim()).filter(w=>w.length>1);}
+// Anführungszeichen (aus mehrwortigen Pillen, shamelaQuery) vor dem Zerlegen
+// entfernen, damit sie nicht in den Chip-Beschriftungen des Lesers kleben (C-7).
+function shamelaTerms(q){return (q||"").replace(/"/g,"").split(/\s+/).map(s=>s.trim()).filter(w=>w.length>1);}
 function shamelaHitLabel(h){
   return shamelaLabel(h.part,h.page_num,h.page);
 }
@@ -3282,17 +3398,27 @@ $("#mSearchBtn").onclick=runSearch;
 
 /* ---------- "Was ist neu"-Fenster nach einem Update ---------- */
 // Notizen sicher darstellen: alles maskieren, nur Listen/Absätze bilden
+// Escapen und einfache Inline-Auszeichnung (**fett**) umsetzen. Die Sternchen
+// überleben esc(), daher erst escapen, dann ersetzen (C-2).
+function mdInline(s){
+  return esc(s).replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>");
+}
 function renderNotes(txt){
   const lines=String(txt||"").split(/\r?\n/);
   let html="",inList=false;
+  const closeList=()=>{ if(inList){html+="</ul>";inList=false;} };
   for(const raw of lines){
     const l=raw.trim();
-    if(/^[-*•]\s+/.test(l)){
+    const h=l.match(/^(#{1,6})\s+(.*)$/);
+    if(h){                       // Markdown-Überschrift als kräftige Zeile
+      closeList();
+      if(h[2])html+=`<p class="newsH">${mdInline(h[2])}</p>`;
+    }else if(/^[-*•]\s+/.test(l)){
       if(!inList){html+="<ul>";inList=true;}
-      html+="<li>"+esc(l.replace(/^[-*•]\s+/,""))+"</li>";
+      html+="<li>"+mdInline(l.replace(/^[-*•]\s+/,""))+"</li>";
     }else{
-      if(inList){html+="</ul>";inList=false;}
-      if(l)html+="<p>"+esc(l)+"</p>";
+      closeList();
+      if(l)html+="<p>"+mdInline(l)+"</p>";
     }
   }
   if(inList)html+="</ul>";
@@ -3414,7 +3540,7 @@ $("#langBtn").onclick=async()=>{const n=lang==="de"?"ar":"de";applyLang(n);api()
 $("#updateBtn").onclick=async()=>{
   const up=(_lastStatus&&_lastStatus.update)||{};
   const v=up.latest||"";
-  if(!confirm(T[lang].updateConfirm(v)))return;
+  if(!await appConfirm(T[lang].updateConfirm(v),{danger:false}))return;
   showProgress(T[lang].updating);
   const r=await api().apply_update();
   if(r&&r.error){hideProgress();return showError(r.error);}
@@ -3539,7 +3665,7 @@ $("#exportBtn").onclick=async()=>{const r=await api().export_library();if(r&&r.e
 $("#exportSelBtn").onclick=async()=>{const ids=[...selectedForExport];if(!ids.length)return showError(t("selectNone"));const r=await api().export_library(ids);if(r&&r.error)return showError(r.error);if(r&&r.cancelled)return;trackJob("Export",t("exportDone"));};
 $("#delSelBtn").onclick=async()=>{
   const ids=[...selectedForExport];if(!ids.length)return showError(t("selectNone"));
-  if(!confirm(T[lang].confirmDeleteN(ids.length)))return;
+  if(!await appConfirm(T[lang].confirmDeleteN(ids.length),{okText:t("del")}))return;
   const r=await api().delete_documents(ids);
   if(r&&r.error)return showError(r.error);
   selectedForExport=new Set();
@@ -3608,6 +3734,13 @@ function applySourceUI(){
   // Kategoriefilter nur zeigen, wenn die Quelle wirklich Kategorien liefert.
   const catLbl=$("#catSel")&&$("#catSel").closest("label");
   if(catLbl)catLbl.style.display=(shamela&&!shHasCats)?"none":"";
+  // C-6: Die semantische Online-Suche kennt weder Ausschluss noch ODER-Gruppen
+  // (shamelaQuery hängt Gruppen nur aneinander). Darum das rote Ausschluss-Feld
+  // und den ODER-Button im Online-Modus ausblenden – sie täuschen sonst
+  // Funktionen vor, die dort nicht wirken.
+  const addGrp=$("#mAddGroup"); if(addGrp)addGrp.style.display=shamela?"none":"";
+  const exclToggle=$("#mToggleExclude"); if(exclToggle)exclToggle.style.display=shamela?"none":"";
+  const exclArea=$("#mExcludeArea"); if(shamela&&exclArea)exclArea.style.display="none";
   refreshShamelaState();
 }
 async function setSource(src){

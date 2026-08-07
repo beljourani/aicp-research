@@ -72,16 +72,33 @@ def export_library(db_path: Path, out_file: Path,
         db_copy = tmpd / "archive.db"
         _copy_sqlite(db_path, db_copy)
 
-        # 1b. Bei Auswahl: nicht gewählte Bücher aus der Kopie entfernen.
+        # 1b. Kopie bereinigen. WICHTIG (K-2): Die Kopie enthält sonst die
+        # KOMPLETTE Bibliothek plus die `meta`-Tabelle (mit shamela_token,
+        # Lesepositionen, Notizen) und ALLE Lesezeichen – auch bei einer
+        # kleinen Auswahl. Deshalb:
+        #  - `meta` immer leeren (Token/persönliche Daten reisen nie mit),
+        #  - bei Auswahl nur die gewählten Bücher + deren Lesezeichen behalten,
+        #  - am Ende VACUUM: gelöschte Zeilen bleiben sonst physisch in den
+        #    freien DB-Seiten lesbar (forensisch auslesbar).
+        c = connect(db_copy)
+        # meta enthält Geheimnisse (shamela_token) und Privates (Lesepositionen,
+        # Notizen, gesehene Version) – nichts davon gehört in einen Export.
+        c.execute("DELETE FROM meta")
         if doc_ids:
-            c = connect(db_copy)
             marks = ",".join("?" for _ in keep)
             c.execute(f"DELETE FROM documents WHERE id NOT IN ({marks})",
                       list(keep))              # FK-Kaskade räumt Seiten/Passagen
             c.execute("INSERT INTO passages_fts (passages_fts) "
                       "VALUES ('delete-all')")  # verwaiste Index-Reste weg
-            c.commit()
-            c.close()
+            # Lesezeichen ohne FK-Kaskade: von Hand auf die gewählten Bücher
+            # beschränken (Online-/fremde Lesezeichen fallen weg).
+            c.execute(f"DELETE FROM bookmarks WHERE document_id IS NULL "
+                      f"OR document_id NOT IN ({marks})", list(keep))
+        c.commit()
+        # VACUUM schreibt die Datei physisch neu – erst danach sind die
+        # gelöschten Inhalte wirklich weg und die Datei entsprechend klein.
+        c.execute("VACUUM")
+        c.close()
 
         # 2. Originaldateien einsammeln
         files_dir = tmpd / "files"

@@ -41,6 +41,32 @@ UPDATE_REPO = "beljourani/aicp-research"
 UPDATE_CHECK_INTERVAL = 30 * 60       # 30 Minuten
 
 
+def freundlicher_fehler(exc) -> tuple[str, str]:
+    """Übersetzt eine rohe Ausnahme in (Schlüssel, deutscher Klartext).
+
+    Der Schlüssel erlaubt dem Frontend die zweisprachige Anzeige (T.*.jobErr);
+    der deutsche Text ist der Rückfall. So sieht der Nutzer nie mehr einen
+    englischen Exception-Text samt internem Dateipfad (S-5)."""
+    s = str(exc).lower()
+    if "empty file" in s or "cannot open empty" in s:
+        return "leer", "Die Datei ist leer."
+    if ("encrypted" in s or "password" in s
+            or "document closed or encrypted" in s):
+        return "pdf_verschluesselt", "Die PDF-Datei ist passwortgeschützt."
+    if "not a zip file" in s or "bad zip" in s or "zipfile" in s:
+        return "zip_kaputt", "Die Datei ist keine gültige .echolib-Datei."
+    if ("as type pdf" in s or "no objects found" in s
+            or "cannot open" in s and "pdf" in s):
+        return "kein_pdf", "Die Datei ist keine gültige PDF-Datei."
+    if ("invalid number of pages" in s or "format error" in s
+            or "broken" in s or "damaged" in s or "cannot open broken" in s
+            or "code=7" in s):
+        return "pdf_kaputt", "Die PDF-Datei ist beschädigt oder unvollständig."
+    if "no such file" in s or "not found" in s or "auffindbar" in s:
+        return "datei_fehlt", "Die Datei wurde nicht gefunden."
+    return "generisch", "Die Datei konnte nicht eingelesen werden."
+
+
 def split_authors(value) -> list[str]:
     """Zerlegt einen gespeicherten Autoren-String in einzelne Namen."""
     if not value:
@@ -216,6 +242,15 @@ class Core:
             con.close()
         except Exception:
             traceback.print_exc()
+        # Gespeicherte Original-Pfade reparieren (z. B. nach der Umbenennung
+        # EchoArchive -> AICP Research), sonst schlägt „Neu einlesen"/Original
+        # für Alt-Bücher fehl (K-3).
+        try:
+            con = self._con()
+            self._repariere_dateipfade(con)
+            con.close()
+        except Exception:
+            traceback.print_exc()
         self._raeume_halbe_uebernahmen()
         # Im Hintergrund nach einem Update sehen (scheitert leise ohne Netz)
         try:
@@ -229,6 +264,34 @@ class Core:
         con = connect(self.db_path)
         ensure_vector_schema(con)
         return con
+
+    def _repariere_dateipfade(self, con):
+        """K-3: Selbstheilende Reparatur der gespeicherten Original-Pfade.
+
+        Nach der Umbenennung des Datenordners (EchoArchive -> AICP Research) –
+        und allgemein nach jedem Verschieben – zeigen die ABSOLUTEN
+        `documents.file_path` noch auf den alten Ort, der nicht mehr existiert.
+        Dann sind „Neu einlesen", die Original-Ansicht und der Download kaputt.
+        Diese Migration sucht die Datei am AKTUELLEN uploads-Ort per Dateiname
+        und schreibt den Pfad um. Idempotent: reparierte Pfade existieren und
+        werden übersprungen; Online-Bücher (ohne file_path) sind nicht betroffen."""
+        updir = data_dir() / "uploads"
+        rows = con.execute(
+            "SELECT id, file_path FROM documents "
+            "WHERE file_path IS NOT NULL AND file_path <> ''").fetchall()
+        repariert = 0
+        for r in rows:
+            pfad = r["file_path"]
+            if os.path.exists(pfad):
+                continue
+            kandidat = updir / os.path.basename(pfad)
+            if kandidat.exists():
+                con.execute("UPDATE documents SET file_path=? WHERE id=?",
+                            (str(kandidat), r["id"]))
+                repariert += 1
+        if repariert:
+            con.commit()
+            print(f"Original-Pfade repariert: {repariert}.", flush=True)
 
     def _init_embedder(self):
         try:
@@ -642,11 +705,15 @@ class Core:
         names = body.get("names")
         if names is None:
             names = body.get("authors") or []
+        # Jeden Namen zusätzlich am Trennzeichen „؛"/";" zerlegen – identisch zu
+        # _sync_document_authors. Sonst erzeugt ein einzelner Chip mit „؛" auf
+        # dem einen Pfad zwei Autoren, auf dem anderen einen – das hinterließ
+        # 0-Bücher-Geister-Autoren (C-5).
         clean = []
         for n in names:
-            n = (n or "").strip()
-            if n and n not in clean:
-                clean.append(n)
+            for part in split_authors(n):
+                if part not in clean:
+                    clean.append(part)
         con = self._con()
         aut_ids = []
         for n in clean:
@@ -804,6 +871,10 @@ class Core:
         for h in (res.get("hits") or []):
             h["snippet_spans"] = (highlight_spans(h.get("snippet") or "", terme)
                                   if terme else [])
+            # C-8: Online-Treffer tragen dieselbe Herkunfts-Kennzeichnung wie
+            # übernommene Bücher – die Seitenzahl stammt unverändert aus der
+            # Shamela-Quelle und wurde nie neu berechnet.
+            h.setdefault("reliability", "shamela")
         return res
 
     def shamela_page(self, body):
@@ -1166,14 +1237,16 @@ class Core:
                     con.close()
             except Exception as e:
                 traceback.print_exc()
-                self._jobs["__import__"] = {"file": "Import",
-                                            "state": "fehler", "error": str(e)}
+                schluessel, klartext = freundlicher_fehler(e)
+                self._jobs["__import__"] = {
+                    "file": "Import", "state": "fehler",
+                    "error_key": schluessel, "error": klartext}
         threading.Thread(target=work, daemon=True).start()
         return {"ok": True}
 
     def _index_one(self, path: str, job_id: str, force_ocr: bool = False,
                    replace_id: int | None = None, title: str | None = None,
-                   author: str | None = None):
+                   author: str | None = None, keep_created_at=None):
         self._jobs[job_id] = {"file": job_id, "state":
                               "ocr" if force_ocr else "verarbeite"}
         # Läuft im Anschluss die Vektorisierung? Dann teilt sich der Balken:
@@ -1210,6 +1283,27 @@ class Core:
                 con.commit()
             doc_id = index_document(con, path, title=title, author=author,
                                     force_ocr=force_ocr, progress=progress)
+            # S-2: Ein Dokument OHNE einen einzigen Textabschnitt (nur leere
+            # Seiten, kaputte Datei) ist wertlos und darf nicht still in der
+            # Bibliothek landen – sonst verstopfen leere Blätter jede Suche.
+            anzahl = con.execute(
+                "SELECT COUNT(*) FROM passages WHERE document_id=?",
+                (doc_id,)).fetchone()[0]
+            if anzahl == 0:
+                con.execute("DELETE FROM documents WHERE id=?", (doc_id,))
+                con.commit()
+                con.close()
+                self._jobs[job_id] = {
+                    "file": job_id, "state": "fehler", "error_key": "leer",
+                    "error": "Kein Text gefunden – die Datei enthält keine "
+                             "lesbaren Textabschnitte."}
+                return
+            # Beim Neu-Einlesen das ursprüngliche Anlege-Datum erhalten, damit
+            # das Dokument nach dem Reindex an seiner sortierten Stelle bleibt
+            # und nicht als „neuestes" an den Listenanfang springt (S-6).
+            if keep_created_at:
+                con.execute("UPDATE documents SET created_at=? WHERE id=?",
+                            (keep_created_at, doc_id))
             # Autoren-Verknüpfungen aus dem (evtl. bei Reindex erhaltenen)
             # Autor-String ableiten – deckt Erst-Upload und Neu-Einlesen ab.
             self._sync_document_authors(con, doc_id)
@@ -1227,8 +1321,9 @@ class Core:
             self._jobs[job_id]["pct"] = 100
         except Exception as e:
             traceback.print_exc()
+            schluessel, klartext = freundlicher_fehler(e)
             self._jobs[job_id] = {"file": job_id, "state": "fehler",
-                                  "error": str(e)}
+                                  "error_key": schluessel, "error": klartext}
 
     def reindex(self, body):
         """Liest ein Dokument aus seiner Originaldatei neu ein
@@ -1240,12 +1335,25 @@ class Core:
         if not row:
             return {"error": "Dokument nicht gefunden"}
         path = row["file_path"]
+        # K-3: Fehlt die Datei am gespeicherten (evtl. veralteten) Pfad, sofort
+        # am aktuellen uploads-Ort per Dateiname suchen und den Pfad reparieren –
+        # dann klappt „Neu einlesen" auch ohne Neustart.
+        if path and not os.path.exists(path):
+            kandidat = data_dir() / "uploads" / os.path.basename(path)
+            if kandidat.exists():
+                con = self._con()
+                con.execute("UPDATE documents SET file_path=? WHERE id=?",
+                            (str(kandidat), body["id"]))
+                con.commit()
+                con.close()
+                path = str(kandidat)
         if not path or not os.path.exists(path):
-            return {"error": f"Originaldatei nicht mehr auffindbar: {path}"}
+            return {"error": "Die Originaldatei wurde nicht gefunden."}
         self._enqueue(path, os.path.basename(path),
                       force_ocr=bool(body.get("ocr")),
                       replace_id=body["id"],
-                      title=row["title"], author=row["author"])
+                      title=row["title"], author=row["author"],
+                      keep_created_at=row["created_at"])
         return {"ok": True}
 
     def passage(self, body):
@@ -1917,12 +2025,58 @@ def main():
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
+    # C-10: zuletzt genutzte Fenstergröße/-position wiederherstellen, statt
+    # immer 1200x800 in der linken oberen Ecke zu öffnen.
+    geo = {"w": 1200, "h": 800, "x": None, "y": None}
+    try:
+        gespeichert = json.loads(CORE._meta_get("window_geo", "") or "{}")
+        if isinstance(gespeichert, dict):
+            geo["w"] = max(900, int(gespeichert.get("w") or 1200))
+            geo["h"] = max(600, int(gespeichert.get("h") or 800))
+            gx, gy = gespeichert.get("x"), gespeichert.get("y")
+            # Position nur übernehmen, wenn plausibel (kein Off-Screen bei
+            # abgestecktem zweiten Monitor).
+            if gx is not None and gy is not None and 0 <= int(gx) < 20000 \
+                    and 0 <= int(gy) < 20000:
+                geo["x"], geo["y"] = int(gx), int(gy)
+    except Exception:
+        pass
+    win_kw = dict(width=geo["w"], height=geo["h"], min_size=(900, 600))
+    if geo["x"] is not None:
+        win_kw["x"], win_kw["y"] = geo["x"], geo["y"]
     CORE.window = webview.create_window(
-        "AICP Research", f"http://127.0.0.1:{port}/",
-        width=1200, height=800, min_size=(900, 600))
+        "AICP Research", f"http://127.0.0.1:{port}/", **win_kw)
+
+    # Laufende Geometrie merken und einmal beim Schließen speichern (nicht bei
+    # jedem Pixel – das schont die Datenbank).
+    _geo = dict(geo)
+
+    def _on_resized(w, h):
+        _geo["w"], _geo["h"] = int(w), int(h)
+
+    def _on_moved(x, y):
+        _geo["x"], _geo["y"] = int(x), int(y)
+
+    def _save_geo():
+        try:
+            con = CORE._con()
+            con.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('window_geo',?)",
+                (json.dumps(_geo),))
+            con.commit()
+            con.close()
+        except Exception:
+            pass
+    try:
+        CORE.window.events.resized += _on_resized
+        CORE.window.events.moved += _on_moved
+        CORE.window.events.closing += _save_geo
+    except Exception:
+        pass
     try:
         webview.start()
     finally:
+        _save_geo()
         server.shutdown()
         if port_file is not None:
             try:
