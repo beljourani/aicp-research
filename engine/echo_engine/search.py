@@ -134,13 +134,96 @@ def _group_expr(g: QueryGroup) -> str | None:
     return expr
 
 
-def is_boolean_query(q: str) -> bool:
+def groups_from_terms(and_groups: list[list[str]],
+                      exclude: list[str] | None = None) -> list[QueryGroup]:
+    """Baut die Suchgruppen aus den Pillen der Oberfläche – ohne Syntax.
+
+    Diese Funktion ist die EINZIGE Stelle, an der aus Oberflächen-Pillen
+    Suchgruppen werden. Die Offline-Suche (`structured_search`) und die
+    Online-Suche (Shamela-Server) rufen beide sie auf, damit UND/ODER/
+    Ausschluss dort nicht nur ähnlich, sondern identisch wirken.
+
+    Regeln:
+      * jede innere Liste ist eine UND-Gruppe; die Gruppen sind ODER-verknüpft
+      * eine mehrwortige Pille ist eine exakte Wortgruppe (Phrase), keine
+        Aneinanderreihung von Einzelbegriffen
+      * die Ausschlüsse gelten global und werden deshalb in JEDE Gruppe kopiert
+    """
+    exc_pairs: list[tuple[str, str]] = []
+    exc_phrases: list[str] = []
+    for word in (exclude or []):
+        tokens = tokenize(word)
+        if not tokens:
+            continue
+        # Mehrwortiger Ausschluss = exakte Wortgruppe. Früher wirkte hier nur
+        # das erste Wort: „دار الكتب" auszuschließen warf jede Stelle mit
+        # „دار" hinaus – auch die, die mit der gemeinten Wortgruppe nichts
+        # zu tun hatte.
+        if len(tokens) > 1:
+            exc_phrases.append(" ".join(tokens))
+        else:
+            exc_pairs.append((tokens[0], stem(tokens[0])))
+    groups: list[QueryGroup] = []
+    for raw_terms in (and_groups or []):
+        g = QueryGroup(exclude=list(exc_pairs), neg_phrases=list(exc_phrases))
+        for term in raw_terms:
+            tokens = tokenize(term)
+            if not tokens:
+                continue
+            if len(tokens) > 1:  # mehrwortiger Begriff = exakte Wortgruppe
+                g.phrases.append(" ".join(tokens))
+            else:
+                g.include.append((tokens[0], stem(tokens[0])))
+        if g.include or g.phrases:
+            groups.append(g)
+    return groups
+
+
+def groups_are_boolean(groups: list[QueryGroup]) -> bool:
     """Nutzt die Anfrage ODER/Ausschluss/Phrasen? Dann keine semantische
     Beimischung (die kann Ausschlüsse nicht respektieren)."""
-    groups = parse_query(q)
     if len(groups) > 1:
         return True
     return any(g.exclude or g.phrases or g.neg_phrases for g in groups)
+
+
+def is_boolean_query(q: str) -> bool:
+    """Wie `groups_are_boolean`, nur für eine Anfrage in Textform."""
+    return groups_are_boolean(parse_query(q))
+
+
+# Zeichen/Wörter, die in der Textform der Anfrage eine eigene Bedeutung haben
+# und ein Suchwort deshalb unbrauchbar machen würden (siehe query_from_terms).
+_BEDEUTUNG = re.compile(r'^[-−]|["|]|^(?:oder|or|أو)$', re.IGNORECASE)
+
+
+def query_from_terms(and_groups: list[list[str]],
+                     exclude: list[str] | None = None) -> str:
+    """Serialisiert die Pillen in die Textform der Suchsyntax.
+
+    Rückfallebene für Gegenstellen, die die Pillen noch nicht strukturiert
+    entgegennehmen (älterer Shamela-Server). Der strukturierte Weg über
+    `groups_from_terms` ist der genauere: ein Suchwort, das wörtlich „أو"
+    heißt oder mit „-" beginnt, hat in der Textform eine eigene Bedeutung.
+    Solche Wörter werden hier in Anführungszeichen gesetzt – sie werden dann
+    als Wortgruppe gesucht (ohne Wurzel-Aufweichung), was enger ist als der
+    strukturierte Weg, aber nie falsch.
+    """
+    def wort(t: str, neg: bool = False) -> str:
+        t = (t or "").strip()
+        if not t:
+            return ""
+        if " " in t or _BEDEUTUNG.search(t):
+            t = '"' + t.replace('"', "") + '"'
+        return ("-" + t) if neg else t
+
+    aus = [w for w in (wort(x, True) for x in (exclude or [])) if w]
+    teile = []
+    for raw_terms in (and_groups or []):
+        worte = [w for w in (wort(x) for x in raw_terms) if w]
+        if worte:
+            teile.append(" ".join(worte + aus))
+    return " | ".join(teile).strip()
 
 
 @dataclass
@@ -170,24 +253,7 @@ def structured_search(con: sqlite3.Connection,
                       offset: int = 0) -> list[SearchHit]:
     """Begriffssuche aus der Oberfläche: Gruppen von UND-Begriffen
     (ODER-verknüpft) plus globale Ausschlussliste – ohne Syntax-Parsing."""
-    groups: list[QueryGroup] = []
-    exc_pairs = []
-    for word in (exclude or []):
-        tokens = tokenize(word)
-        if tokens:
-            exc_pairs.append((tokens[0], stem(tokens[0])))
-    for raw_terms in and_groups:
-        g = QueryGroup(exclude=list(exc_pairs))
-        for term in raw_terms:
-            tokens = tokenize(term)
-            if not tokens:
-                continue
-            if len(tokens) > 1:  # mehrwortiger Begriff = exakte Wortgruppe
-                g.phrases.append(" ".join(tokens))
-            else:
-                g.include.append((tokens[0], stem(tokens[0])))
-        if g.include or g.phrases:
-            groups.append(g)
+    groups = groups_from_terms(and_groups, exclude)
     return _search_groups(con, groups, limit=limit, author=author,
                           document_id=document_id, category=category,
                           offset=offset)

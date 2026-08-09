@@ -847,12 +847,30 @@ class Core:
         return {"ok": True}
 
     def shamela_search(self, body):
+        """Online-Suche. Nimmt dieselben Pillen entgegen wie die lokale Suche.
+
+        Die Gruppen und Ausschlüsse gehen STRUKTURIERT an den Server – dort
+        entstehen daraus über `groups_from_terms` genau dieselben Suchgruppen
+        wie offline. Zusätzlich wird die Anfrage in Textform (`q`) mitgeschickt:
+        Ein noch nicht aktualisierter Server kennt die neuen Felder nicht und
+        würde sonst still ohne Ausschlüsse suchen.
+        """
+        from echo_engine.search import query_from_terms
         body = body or {}
+        gruppen = body.get("groups")
+        ausschluss = body.get("excludes") or []
+        if gruppen is None:
+            frage = body.get("q") or ""
+        else:
+            frage = query_from_terms(gruppen, ausschluss)
         payload = {
-            "q": body.get("q") or "",
+            "q": frage,
             "limit": max(1, min(int(body.get("limit") or 30), 100)),
             "offset": max(0, int(body.get("offset") or 0)),
         }
+        if gruppen is not None:
+            payload["and_groups"] = gruppen
+            payload["excludes"] = ausschluss
         for k in ("categories", "authors", "book_ids", "source"):
             if body.get(k):
                 payload[k] = body[k]
@@ -867,7 +885,8 @@ class Core:
             return {"error": str(e)}
         # Wie bei der lokalen Suche: Markierung wurzelbewusst und ganzwörtig
         # in der App berechnen (kein Server-Neustart nötig).
-        terme = self._include_terme({"q": payload["q"]})
+        terme = (self._include_terme({"mode": "terms", "groups": gruppen})
+                 if gruppen is not None else self._include_terme({"q": frage}))
         for h in (res.get("hits") or []):
             h["snippet_spans"] = (highlight_spans(h.get("snippet") or "", terme)
                                   if terme else [])

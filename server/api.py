@@ -221,8 +221,11 @@ def _fts_verfuegbar() -> bool:
     return os.path.exists(FTS_DB)
 
 
-def _fts_suche(con, q: str, limit: int, authors=None, book_ids=None):
+def _fts_suche(con, groups, limit: int, authors=None, book_ids=None):
     """Wort-/Wurzelsuche über den Server-Index – zweistufig.
+
+    `groups` sind fertige Suchgruppen der Engine (siehe `_gruppen`) – entweder
+    aus den Pillen der Oberfläche oder aus einer Anfrage in Textform.
 
     Die Engine-Abfrage verbindet passages_fts mit passages und documents,
     BEVOR sortiert wird. Lokal ist das egal (86.000 Passagen), hier nicht:
@@ -234,10 +237,9 @@ def _fts_suche(con, q: str, limit: int, authors=None, book_ids=None):
     und bewertet wird mit derselben Engine-Logik wie offline, die Reihenfolge
     ist also dieselbe.
     """
-    from echo_engine.search import (parse_query, _group_expr, _matched_words,
+    from echo_engine.search import (_group_expr, _matched_words,
                                     _make_snippet, match_forms,
                                     match_forms_je_begriff)
-    groups = parse_query(q or "")
     exprs = [e for e in (_group_expr(g) for g in groups) if e]
     if not exprs:
         return []
@@ -591,6 +593,25 @@ class SearchReq(BaseModel):
     source: str | None = None            # "shamela" | "quran"
     # Semantik zusätzlich zur Wort-/Wurzelsuche (wie der Schalter offline).
     semantic: bool = True
+    # Die Pillen der Oberfläche, unverändert: jede innere Liste ist eine
+    # UND-Gruppe, die Gruppen sind ODER-verknüpft; `excludes` gilt global.
+    # Sind sie gesetzt, haben sie Vorrang vor `q` – dann entsteht die Suche
+    # aus derselben Engine-Funktion wie offline, ohne Umweg über Textsyntax.
+    # `q` wird trotzdem mitgeschickt: ein Server ohne diese Felder versteht
+    # zumindest die Textform, statt still die Ausschlüsse zu verlieren.
+    and_groups: list[list[str]] | None = None
+    excludes: list[str] | None = None
+
+
+def _gruppen(req: SearchReq):
+    """Suchgruppen der Anfrage – strukturiert, sonst aus der Textform.
+
+    Beides läuft über die Engine, `groups_from_terms` ist dieselbe Funktion,
+    die auch die Offline-Suche benutzt (`structured_search`).
+    """
+    if req.and_groups is not None:
+        return el.groups_from_terms(req.and_groups, req.excludes or [])
+    return el.parse_query(req.q or "")
 
 
 # ---------------------------------------------------------------- Routen -----
@@ -624,16 +645,17 @@ def search(req: SearchReq,
     qfilter, semantik_moeglich = _qdrant_filter(req)
 
     spanne = req.offset + req.limit
+    gruppen = _gruppen(req)
     # Boolesche Anfragen (ODER / Ausschluss / Phrase) laufen rein über die
     # Wortsuche – genau wie offline; die Semantik kann Ausschlüsse nicht
     # berücksichtigen.
-    nur_wort = (not req.semantic) or el.is_boolean_query(req.q or "")
+    nur_wort = (not req.semantic) or el.groups_are_boolean(gruppen)
 
     fts_hits, fts_con = [], None
-    if _fts_verfuegbar() and (req.q or "").strip():
+    if _fts_verfuegbar() and gruppen:
         try:
             fts_con = _fts()
-            fts_hits = _fts_suche(fts_con, req.q, limit=spanne * 3,
+            fts_hits = _fts_suche(fts_con, gruppen, limit=spanne * 3,
                                   authors=req.authors or None,
                                   book_ids=req.book_ids or None)
         except Exception:
@@ -656,8 +678,11 @@ def search(req: SearchReq,
                 "offset": req.offset, "limit": req.limit}
 
     # --- Zusammenführung von Wort- und Vektorsuche (RRF, wie offline) -----
+    # Die Semantik braucht eine Anfrage in Textform. Kommen die Pillen
+    # strukturiert und ist `q` leer, gibt es nichts einzubetten – ein leerer
+    # Vektor würde sonst eine beliebige Reihenfolge erzwingen.
     vec = (_vektor_rangliste(req, qfilter, spanne * 3 + 1)
-           if semantik_moeglich else [])
+           if (semantik_moeglich and (req.q or "").strip()) else [])
     punkte: dict = {}
     treffer: dict = {}
 

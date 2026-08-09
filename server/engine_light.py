@@ -38,9 +38,10 @@ _paket_anmelden()
 from echo_engine.db import connect                       # noqa: E402
 from echo_engine.normalize import (normalize, query_forms,  # noqa: E402
                                    stem, to_index_forms, tokenize)
-from echo_engine.search import (SearchHit, highlight_spans,  # noqa: E402
-                                is_boolean_query, search)
+from echo_engine.search import (SearchHit, groups_are_boolean,  # noqa: E402
+                                groups_from_terms, highlight_spans,
+                                is_boolean_query, parse_query, search)
 
 __all__ = ["connect", "normalize", "query_forms", "stem", "to_index_forms",
            "tokenize", "SearchHit", "highlight_spans", "is_boolean_query",
-           "search"]
+           "groups_are_boolean", "groups_from_terms", "parse_query", "search"]

@@ -155,9 +155,16 @@ Building distributable binaries (rarely needed for code changes — CI does this
 
 ## Shamela online search (`server/` + app integration)
 
-Optional second search source: the ~8,600 books of *Al-Maktaba Al-Shamela*, searched **semantically**
-on a small self-hosted server, without storing the books locally. The core app stays fully offline;
-Shamela is an opt-in add-on the user connects once.
+Optional second search source: the ~8,600 books of *Al-Maktaba Al-Shamela*, searched on a small
+self-hosted server without storing the books locally. The core app stays fully offline; Shamela is an
+opt-in add-on the user connects once.
+
+**Online search is word/root search, not semantic search.** The server carries its own FTS5 index
+(`fts.db`, 11.5M chunks, `norm` weighted 2× / `stems` 1×, BM25) built through the same
+`normalize.to_index_forms` as the local library, and imports the engine's own `_group_expr` — so
+AND / OR groups / exclusions / phrases behave **exactly** as offline. Vectors only re-rank the output
+page; they never add a hit. Do not describe this service as "semantic" — that wording was already
+wrong once and led to the boolean filters being hidden in the UI for a release.
 
 - **`server/`** is a standalone FastAPI service the user deploys on a VPS (~15–30 €/month). It imports
   the pre-embedded HF dataset `Maktabati/shamela-vectors` (11.5M chunks, `intfloat/multilingual-e5-base`,
@@ -197,10 +204,19 @@ Shamela is an opt-in add-on the user connects once.
   Python process. `/api/shamela_status` reports only `configured` + `url`, never the token.
 - **App endpoints** (`main.py`): `shamela_status` / `shamela_save` (saves + tests `/health`) /
   `shamela_clear` / `shamela_search` / `shamela_page` / `shamela_categories` / `shamela_authors`.
+- **The search chips go to the server structurally, never as a text query.** `shamela_search` sends
+  `and_groups` + `excludes` (the same shape the local `/api/search` takes in `mode:"terms"`); the
+  server turns them into query groups with `search.groups_from_terms()` — literally the same function
+  `structured_search` uses offline. `q` is still sent alongside (built by `search.query_from_terms`)
+  purely as a fallback for a server that predates the structured fields; without it such a server
+  would silently drop the exclusions. Never go back to serializing chips into query syntax as the
+  primary path: a chip that reads `أو`/`oder`/`or`, starts with `-`, or contains `|` has its own
+  meaning in that syntax and would be misread.
 - **Frontend**: a source toggle (`searchSource` = `local` | `shamela`) at the top of the search view.
-  In Shamela mode the boolean chips are flattened into one free-text query (semantic search has no
-  boolean/exclude), the local book filter and the semantic checkbox are hidden, and author/category
-  filters are populated from the server. Results open a **remote reader** that reuses the whole reader
+  Both sources show the same controls — AND fields, OR groups, the red exclusion field, book filter
+  and semantic checkbox. Only the category filter is hidden online (`shHasCats`), because the dataset
+  has no categories at all. Author/book filters are populated from the server.
+  Results open a **remote reader** that reuses the whole reader
   shell: `rRemote`/`rBook` branch only the data source (`ensurePages` → `shamela_page`) and the page
   label (Shamela sheets are keyed by the internal `seq` described above; the sheet label shows the real
   `ج<part> ص<page>`). The first open passes `page` (the source's page string) instead of `seq`, since

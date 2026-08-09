@@ -276,6 +276,103 @@ def test_ausschluss_online_mit_echtem_wort():
     _mit_index(pruef)
 
 
+# ------------------------------------------ Pillen der Oberfläche (Online) ----
+# Die App schickt die Pillen strukturiert (and_groups + excludes). Daraus muss
+# GENAU dieselbe Suche entstehen wie offline – dieselbe Engine-Funktion, nicht
+# nur ein ähnliches Ergebnis.
+
+def _seiten(r):
+    return sorted(h["page"] for h in r["hits"])
+
+
+def test_pillen_wie_textform():
+    """Strukturierte Pillen liefern dieselbe Trefferliste wie die Textform."""
+    def pruef():
+        paare = [
+            ([["الصبر"]], [], "الصبر"),
+            ([["الصبر"]], ["البلاء"], "الصبر -البلاء"),
+            ([["الصبر"], ["الصلاة"]], [], "الصبر | الصلاة"),
+            ([["الصبر"], ["الصلاة"]], ["البلاء"], "الصبر -البلاء | الصلاة -البلاء"),
+        ]
+        for gruppen, aus, text in paare:
+            a = _suche(q="", and_groups=gruppen, excludes=aus,
+                       limit=20, semantic=False)
+            b = _suche(q=text, limit=20, semantic=False)
+            assert _seiten(a) == _seiten(b), (text, _seiten(a), _seiten(b))
+        print("ok  test_pillen_wie_textform")
+    _mit_index(pruef)
+
+
+def test_oder_gruppe_online():
+    """ODER-Gruppen liefern die Vereinigung, nicht die Schnittmenge.
+
+    Genau das ging verloren, solange die App die Gruppen flach zusammensetzte:
+    aus (الصبر) ODER (الصلاة) wurde (الصبر UND الصلاة) – und damit nichts.
+    """
+    def pruef():
+        a = _suche(q="", and_groups=[["الصبر"]], limit=20, semantic=False)
+        b = _suche(q="", and_groups=[["الصلاة"]], limit=20, semantic=False)
+        beide = _suche(q="", and_groups=[["الصبر"], ["الصلاة"]],
+                       limit=20, semantic=False)
+        assert a["hits"] and b["hits"], "Vorbedingung: beide Gruppen treffen"
+        assert _seiten(beide) == sorted(set(_seiten(a)) | set(_seiten(b))), \
+            (_seiten(a), _seiten(b), _seiten(beide))
+        # Gegenprobe: flach zusammengesetzt (UND) gäbe es keinen Treffer.
+        flach = _suche(q="", and_groups=[["الصبر", "الصلاة"]],
+                       limit=20, semantic=False)
+        assert not flach["hits"], _seiten(flach)
+        print("ok  test_oder_gruppe_online")
+    _mit_index(pruef)
+
+
+def test_ausschluss_gilt_in_jeder_gruppe():
+    """Der Ausschluss ist global – er darf über die zweite Gruppe nicht
+    zurückkommen."""
+    def pruef():
+        r = _suche(q="", and_groups=[["الصبر"], ["الصلاة"]],
+                   excludes=["البلاء"], limit=20, semantic=False)
+        assert "V01P006" not in _seiten(r), _seiten(r)   # trägt „البلاء"
+        assert "V02P100" in _seiten(r), _seiten(r)       # الصلاة, bleibt
+        print("ok  test_ausschluss_gilt_in_jeder_gruppe")
+    _mit_index(pruef)
+
+
+def test_pillen_ohne_semantik_bei_ausschluss():
+    """Auch strukturiert gilt: Ausschluss/ODER schaltet die Semantik ab."""
+    gerufen = []
+
+    def pruef():
+        echt = api._vektor_rangliste
+        api._vektor_rangliste = lambda *a, **k: gerufen.append(1) or []
+        try:
+            _suche(q="الصبر -البلاء", and_groups=[["الصبر"]],
+                   excludes=["البلاء"], limit=10, semantic=True)
+            assert not gerufen, "Semantik lief trotz Ausschluss"
+        finally:
+            api._vektor_rangliste = echt
+        print("ok  test_pillen_ohne_semantik_bei_ausschluss")
+    _mit_index(pruef)
+
+
+def test_pille_die_oder_heisst():
+    """Eine Pille, die wörtlich „أو" heißt, ist ein Suchwort – kein Trenner.
+
+    Das ist der Grund, warum die Pillen strukturiert gehen: in der Textform
+    hätte „أو" eine eigene Bedeutung. Der Rückfallweg über `query_from_terms`
+    setzt solche Wörter deshalb in Anführungszeichen.
+    """
+    from echo_engine.search import query_from_terms, parse_query
+    pillen = [["الصبر", "أو", "الصلاة"]]
+    # Strukturiert: EINE Gruppe mit drei Begriffen (UND).
+    gruppen = api.el.groups_from_terms(pillen, [])
+    assert len(gruppen) == 1 and len(gruppen[0].include) == 3, gruppen
+    # Naiv aneinandergehängt wären daraus zwei ODER-Gruppen geworden.
+    assert len(parse_query("الصبر أو الصلاة")) == 2
+    # Der Rückfallweg über die Textform macht daraus wieder eine Gruppe.
+    assert len(parse_query(query_from_terms(pillen, []))) == 1
+    print("ok  test_pille_die_oder_heisst")
+
+
 def test_artikel_form_online_markiert():
     """Ein über die Artikel-Form gefundener Treffer wird markiert."""
     from echo_engine.search import highlight_spans
@@ -696,6 +793,11 @@ if __name__ == "__main__":
     test_semantic_false_ist_reine_wortsuche()
     test_und_treffer_vollstaendig_online()
     test_ausschluss_online_mit_echtem_wort()
+    test_pillen_wie_textform()
+    test_oder_gruppe_online()
+    test_ausschluss_gilt_in_jeder_gruppe()
+    test_pillen_ohne_semantik_bei_ausschluss()
+    test_pille_die_oder_heisst()
     test_artikel_form_online_markiert()
     test_speicher_aendert_das_ergebnis_nicht()
     test_speicher_greift()

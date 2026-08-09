@@ -1,10 +1,16 @@
 # Shamela-Suchserver – Einrichtung & Betrieb
 
-Dieser Server macht die ~8.600 Bücher der *Al-Maktaba Al-Shamela* über eine
-**semantische Suche** durchsuchbar, ohne dass die App die Bücher lokal
-speichern muss. Die App schickt nur den Suchtext; der Server bettet ihn ein,
-durchsucht die Vektor-Datenbank und liefert Treffer samt ganzen Seiten für den
-Leser zurück.
+Dieser Server macht die ~8.600 Bücher der *Al-Maktaba Al-Shamela* durchsuchbar,
+ohne dass die App die Bücher lokal speichern muss.
+
+Gesucht wird **nach Wort und Wortwurzel – genau wie in der eigenen Bibliothek**.
+Dafür trägt der Server einen eigenen Volltextindex (`fts.db`) und benutzt
+dieselbe Such-Engine wie die App. UND, ODER-Gruppen, Ausschlüsse und exakte
+Wortgruppen wirken deshalb online wie offline. Die semantische Suche kommt
+zusätzlich dazu: sie **sortiert die ausgegebene Trefferseite um**, fügt aber
+niemals eine Stelle hinzu, in der die gesuchten Wörter nicht vorkommen. Bei
+einer Anfrage mit ODER oder Ausschluss schaltet sich die Semantik selbst ab –
+sie kann Ausschlüsse nicht berücksichtigen.
 
 Der Zugriff ist durch einen geheimen **Token** geschützt. Diesen Token trägt
 man in der App **einmalig** ein; danach bleibt die Verbindung bestehen.
@@ -104,6 +110,20 @@ importierte Abschnitte werden übersprungen bzw. überschrieben.
 Am Ende steht `data/meta.db` bereit (Bücher-/Seitenindex) und die Vektoren
 liegen in Qdrant.
 
+## Schritt 4b – Wortindex bauen (einmalig, dauert mehrere Stunden)
+
+Die Suche nach Wort und Wurzel läuft nicht über Qdrant, sondern über einen
+eigenen Volltextindex (`data/fts.db`, ~30 GB). Ohne ihn beantwortet der Server
+nur semantisch – UND, ODER und Ausschluss wirken dann nicht.
+
+```bash
+docker compose run --rm fts-builder
+```
+
+Der Lauf ist ebenfalls **wiederaufnehmbar** (er merkt sich in `fts_state`,
+welche Autoren fertig sind) und liest nur aus Qdrant – es wird nichts neu
+eingebettet. Auch hier gilt der `tmux`-Tipp von oben.
+
 ## Schritt 5 – Server starten
 
 ```bash
@@ -159,7 +179,7 @@ Token eintragen – einmalig.
 | Methode & Pfad | Zweck                                                     |
 |----------------|-----------------------------------------------------------|
 | `GET /health`  | Erreichbarkeit + Punktzahl (ohne Token)                   |
-| `POST /search` | Semantische Suche; Body: `q`, `limit`, `offset`, Filter   |
+| `POST /search` | Suche; Body: `and_groups` + `excludes` (die Pillen der App) oder `q` als Text, dazu `limit`, `offset`, `semantic`, Filter |
 | `GET /page`    | Ganze Seite + Nachbarseiten für den Leser                 |
 | `GET /book_info` | Umfang eines Buches (für die Rückfrage vor dem Übernehmen) |
 | `GET /book`    | Ein Block Blätter eines Buches, Text zusammengesetzt      |

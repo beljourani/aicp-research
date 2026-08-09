@@ -976,7 +976,7 @@ const T = {
     shOpenFail: "Dieses Buch lässt sich nicht öffnen – dem Treffer fehlt die Seitenangabe.",
     shamelaCfgTip: "Shamela-Server einrichten",
     shamelaHead: "Shamela-Server",
-    shamelaIntro: "Durchsuche die ~8.600 Bücher der Al-Maktaba Al-Shamela über deinen eigenen Server – semantisch, ohne die Bücher lokal zu speichern. Der Zugang wird einmalig gespeichert und bleibt bestehen.",
+    shamelaIntro: "Durchsuche die ~8.600 Bücher der Al-Maktaba Al-Shamela über deinen eigenen Server – nach Wort und Wortwurzel wie in deiner eigenen Bibliothek, ohne die Bücher lokal zu speichern. Der Zugang wird einmalig gespeichert und bleibt bestehen.",
     shamelaUrlLabel: "Server-Adresse",
     shamelaTokenLabel: "Zugangs-Token",
     shamelaSaveBtn: "Verbinden & speichern",
@@ -988,7 +988,8 @@ const T = {
     shamelaCleared: "Verbindung getrennt.",
     shamelaConnected: "verbunden", shamelaNotSet: "kein Server",
     shamelaNeedCfg: "Bitte zuerst einen Shamela-Server einrichten (Zahnrad-Symbol).",
-    shamelaQueryHint: "Semantische Suche: beschreibe dein Thema in eigenen Worten – es zählt der Sinn, nicht die exakten Wörter.",
+    shamelaQueryHint: "Online-Suche: Begriffe eingeben wie in der eigenen Bibliothek – UND, ODER-Gruppe und Ausschluss wirken hier genauso.",
+    shamelaNeedTerm: "Bitte mindestens einen Suchbegriff eingeben – ein Ausschluss allein ergibt keine Suche.",
     shamelaSearching: "Suche auf dem Server …",
     shamelaLoadErr: "Server nicht erreichbar.",
     collectionsTitle: "Sammlungen", collByAuthors: "Autoren",
@@ -1104,7 +1105,7 @@ const T = {
     shOpenFail: "تعذر فتح هذا الكتاب – النتيجة لا تتضمن رقم الصفحة.",
     shamelaCfgTip: "إعداد خادم الشاملة",
     shamelaHead: "خادم الشاملة",
-    shamelaIntro: "ابحث في نحو 8600 كتاب من المكتبة الشاملة عبر خادمك الخاص – بحثاً دلالياً دون تخزين الكتب محلياً. يُحفظ الوصول مرة واحدة ويبقى.",
+    shamelaIntro: "ابحث في نحو 8600 كتاب من المكتبة الشاملة عبر خادمك الخاص – بالكلمة والجذر كما في مكتبتك، دون تخزين الكتب محلياً. يُحفظ الوصول مرة واحدة ويبقى.",
     shamelaUrlLabel: "عنوان الخادم",
     shamelaTokenLabel: "رمز الوصول",
     shamelaSaveBtn: "اتصال وحفظ",
@@ -1116,7 +1117,8 @@ const T = {
     shamelaCleared: "تم قطع الاتصال.",
     shamelaConnected: "متصل", shamelaNotSet: "لا خادم",
     shamelaNeedCfg: "يرجى إعداد خادم الشاملة أولاً (رمز الترس).",
-    shamelaQueryHint: "بحث دلالي: صِف موضوعك بكلماتك – المعنى هو ما يهم، لا الكلمات الحرفية.",
+    shamelaQueryHint: "البحث عبر الإنترنت: أدخل الكلمات كما في مكتبتك – «و» ومجموعة «أو» والاستبعاد تعمل هنا بالطريقة نفسها.",
+    shamelaNeedTerm: "يرجى إدخال كلمة بحث واحدة على الأقل – الاستبعاد وحده لا يشكّل بحثاً.",
     shamelaSearching: "جارٍ البحث في الخادم …",
     shamelaLoadErr: "تعذّر الوصول إلى الخادم.",
     collectionsTitle: "المجموعات", collByAuthors: "المؤلفون",
@@ -2256,32 +2258,34 @@ function shamelaFilters(){
   b.semantic=sem?!!sem.checked:true;
   return b;
 }
-// Baut die Online-Anfrage aus den Pillen. Eine MEHRWÖRTIGE Pille wird zu einer
-// exakten Wortgruppe in Anführungszeichen – der Server behandelt sie dann als
-// Phrase (parse_query -> FTS5: zusammenhängend, in Reihenfolge), genau wie die
-// Offline-Suche. Einzelwort-Pillen bleiben unverändert (UND).
-function shamelaQuery(groups){
-  return (groups||[]).flat()
-    .map(c => (c||"").trim())
-    .filter(Boolean)
-    .map(c => /\s/.test(c) ? `"${c.replace(/"/g,'')}"` : c)
-    .join(" ").trim();
-}
+// Die Pillen gehen unverändert an den Server – als Gruppen (UND innerhalb,
+// ODER dazwischen) plus globale Ausschlussliste, genau wie bei der lokalen
+// Suche. Der Server baut daraus mit derselben Engine-Funktion die Suchgruppen
+// (groups_from_terms), sodass UND/ODER/Ausschluss/Wortgruppe online exakt so
+// wirken wie offline. Früher wurde hier flach zusammengesetzt, wodurch die
+// ODER-Gruppen zu einer UND-Kette verschmolzen und die Ausschlüsse verfielen.
 async function runShamelaSearch(){
   const st=await api().shamela_status().catch(()=>null);
   if(!st||!st.configured){ $("#results").innerHTML=emptyBox(t("shamelaNeedCfg")); $("#count").textContent=""; shQuery=null; return; }
-  const { groups } = collectPanel(MAIN);
-  const q=shamelaQuery(groups);
-  if(!q){ $("#results").innerHTML=emptyBox(t("shamelaQueryHint")); $("#count").textContent=""; shQuery=null; return; }
-  shQuery=q; shOffset=0; shLoaded=0;
+  const { groups, excludes } = collectPanel(MAIN);
+  // Ohne positiven Begriff gibt es nichts zu suchen: eine reine Ausschluss-
+  // liste würde die ganze Sammlung bedeuten. Das sagt der Hinweis deutlich,
+  // statt stumm null Treffer zu zeigen.
+  if(!groups.length){
+    $("#results").innerHTML=emptyBox(excludes.length?t("shamelaNeedTerm"):t("shamelaQueryHint"));
+    $("#count").textContent=""; shQuery=null; return; }
+  shQuery={groups,excludes}; shOffset=0; shLoaded=0;
+  lastSearchTerms=groups.flat();     // für Lesezeichen-Hervorhebung
   $("#results").innerHTML=searchingBox(); $("#count").textContent=t("shamelaSearching");
-  const res=await api().shamela_search(Object.assign({q,limit:PAGE,offset:0},shamelaFilters()));
+  const res=await api().shamela_search(Object.assign({groups,excludes,limit:PAGE,offset:0},shamelaFilters()));
   showShamelaResults(res,false);
 }
 async function loadMoreShamela(){
   if(!shQuery)return;
   shOffset+=PAGE;
-  const res=await api().shamela_search(Object.assign({q:shQuery,limit:PAGE,offset:shOffset},shamelaFilters()));
+  const res=await api().shamela_search(Object.assign(
+    {groups:shQuery.groups,excludes:shQuery.excludes,limit:PAGE,offset:shOffset},
+    shamelaFilters()));
   showShamelaResults(res,true);
 }
 function showShamelaResults(res,append){
@@ -2306,7 +2310,8 @@ function showShamelaResults(res,append){
 function shamelaBmData(h){
   return {source:"shamela",book_id:h.book_id,seq:h.seq,page_str:h.page,
           page_label:shamelaHitLabel(h),title:h.title,author:h.author,
-          snippet:h.snippet,terms:shamelaTerms(shQuery||"")};
+          snippet:h.snippet,
+          terms:(shQuery&&shQuery.groups?shQuery.groups.flat():[])};
 }
 function shamelaHitEl(h){
   const el=document.createElement("div");el.className="hit";
@@ -2326,7 +2331,7 @@ function shamelaHitEl(h){
     e.stopPropagation();
     toggleBookmark(bm,shamelaBmData(h));
   };
-  el.onclick=()=>openShamelaReader(Object.assign({},h,{_query:shQuery||""}));
+  el.onclick=()=>openShamelaReader(Object.assign({},h,{_query:shQuery||null}));
   return el;
 }
 function hitEl(h){
@@ -2459,7 +2464,7 @@ async function refreshBookmarks(){
           // Online-Buch im Remote-Leser aufschlagen (Seitenkennung gemerkt).
           return openShamelaReader({book_id:b.book_id,page:b.page_str,
             title:b.title,author:b.author,
-            _query:(b.terms||[]).join(" ")});
+            _query:b.terms||[]});
         }
         if(b.missing)return showError(t("bmMissing"));
         openReader(b.document_id,b.passage_id,b.terms||[],b.terms||[]);
@@ -2720,11 +2725,15 @@ async function openShamelaReader(hit){
   rImg=false;rHasImg=false;rPassageText="";rReady=false;
   rLoaded=new Set();rHits=[];rHitIdx=-1;rPageLabels={};rPageStrs={};rPageText={};rPageSpans={};rHasLabels=false;
   setReaderRemoteUI(true);
-  const q=hit._query||"";
-  rWords=shamelaTerms(q);
-  readerState.groups=q?[shamelaTerms(q)]:[[]];
-  readerState.excludes=[];readerState.excludeOpen=false;
-  $("#rExcludeArea").style.display="none";
+  // Vollständige Suchanfrage übernehmen (Gruppen + Ausschlüsse) – wie bei
+  // einem lokalen Buch, damit ODER-Gruppe und Ausschluss auch im Online-Leser
+  // stehen bleiben und die Suche im Buch dasselbe findet wie die Trefferliste.
+  const q=normQuery(hit._query);
+  rWords=q.groups.flat().filter(Boolean);
+  readerState.groups=q.groups.length?q.groups:[[]];
+  readerState.excludes=q.excludes;
+  readerState.excludeOpen=q.excludes.length>0;
+  $("#rExcludeArea").style.display=q.excludes.length?"":"none";
   renderPanel(READER);
   $("#rHitNav").style.display="none";
   $("#reader").classList.add("open");
@@ -3070,13 +3079,15 @@ async function runReaderSearch(autoSelect=true,force=false){
     showReaderHint();rHits=[];updateHitNav();return; }
   let res;
   if(rRemote){
-    const q=shamelaQuery(groups);
-    if(!q){ showReaderHint();rHits=[];updateHitNav();return; }
+    // Auch im Online-Leser gehen die Pillen strukturiert hinaus – ODER-Gruppe
+    // und Ausschluss wirken hier genauso wie in einem lokalen Buch.
+    if(!groups.length){ showReaderHint();rHits=[];updateHitNav();return; }
     const sem=$("#semantic");
-    const r=await api().shamela_search({q,limit:100,book_ids:[rBook],
+    const r=await api().shamela_search({groups,excludes,limit:100,book_ids:[rBook],
       semantic:sem?!!sem.checked:true});
     if(r&&r.error){ showError(r.error); rHits=[];updateHitNav(); return; }
-    res={hits:(r.hits||[]).map(h=>shamelaToReaderHit(h,q))};
+    const terme=groups.flat();
+    res={hits:(r.hits||[]).map(h=>shamelaToReaderHit(h,terme))};
   }else{
     res=await api().search_terms(groups, excludes, null, rDoc, 0, 200);
   }
@@ -3087,14 +3098,14 @@ async function runReaderSearch(autoSelect=true,force=false){
   if(autoSelect&&rHits.length)selectHit(0);
 }
 // Shamela-Treffer in das Trefferformat des Lesers übersetzen: die
-// sequence_num wird zur „Seite" (page_from=page_to=seq), die Suchbegriffe
-// dienen als Wortformen für die Hervorhebung.
-function shamelaToReaderHit(h,q){
+// sequence_num wird zur „Seite" (page_from=page_to=seq); `terme` sind die
+// positiven Pillen und dienen als Wortformen für die Hervorhebung.
+function shamelaToReaderHit(h,terme){
   // Online-Treffer tragen keine Blattnummer (der Server liefert seq:null) –
   // die Seitenkennung `page` wird deshalb mitgeführt und beim Anklicken in
   // eine Blattnummer aufgelöst (siehe selectHit).
   return {title:h.title,author:h.author,snippet:h.snippet||"",
-    matched_words:shamelaTerms(q),page_from:h.seq,page_to:h.seq,
+    matched_words:(terme||[]).slice(),page_from:h.seq,page_to:h.seq,
     page_label:shamelaHitLabel(h),passage_id:null,
     book_id:h.book_id,seq:h.seq,page:h.page,page_str:h.page,
     part:h.part,page_num:h.page_num,snippet_spans:h.snippet_spans,
@@ -3122,10 +3133,6 @@ function sortHitsByPage(hits){
     return x[3]<y[3]?-1:(x[3]>y[3]?1:0);
   });
 }
-// Zerlegt die Freitext-Anfrage grob in Wörter für die literale Hervorhebung.
-// Anführungszeichen (aus mehrwortigen Pillen, shamelaQuery) vor dem Zerlegen
-// entfernen, damit sie nicht in den Chip-Beschriftungen des Lesers kleben (C-7).
-function shamelaTerms(q){return (q||"").replace(/"/g,"").split(/\s+/).map(s=>s.trim()).filter(w=>w.length>1);}
 function shamelaHitLabel(h){
   return shamelaLabel(h.part,h.page_num,h.page);
 }
@@ -3734,13 +3741,12 @@ function applySourceUI(){
   // Kategoriefilter nur zeigen, wenn die Quelle wirklich Kategorien liefert.
   const catLbl=$("#catSel")&&$("#catSel").closest("label");
   if(catLbl)catLbl.style.display=(shamela&&!shHasCats)?"none":"";
-  // C-6: Die semantische Online-Suche kennt weder Ausschluss noch ODER-Gruppen
-  // (shamelaQuery hängt Gruppen nur aneinander). Darum das rote Ausschluss-Feld
-  // und den ODER-Button im Online-Modus ausblenden – sie täuschen sonst
-  // Funktionen vor, die dort nicht wirken.
-  const addGrp=$("#mAddGroup"); if(addGrp)addGrp.style.display=shamela?"none":"";
-  const exclToggle=$("#mToggleExclude"); if(exclToggle)exclToggle.style.display=shamela?"none":"";
-  const exclArea=$("#mExcludeArea"); if(shamela&&exclArea)exclArea.style.display="none";
+  // ODER-Gruppe und Ausschluss gibt es in BEIDEN Quellen. Sie waren online
+  // eine Zeit lang ausgeblendet, weil die Anfrage flach zusammengesetzt wurde
+  // und die Gruppen dabei verfielen. Jetzt gehen die Pillen strukturiert an den
+  // Server, der daraus mit derselben Engine-Funktion wie offline sucht.
+  const addGrp=$("#mAddGroup"); if(addGrp)addGrp.style.display="";
+  const exclToggle=$("#mToggleExclude"); if(exclToggle)exclToggle.style.display="";
   refreshShamelaState();
 }
 async function setSource(src){

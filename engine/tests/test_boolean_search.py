@@ -186,6 +186,73 @@ def test_ausschluss_mit_real_vorkommendem_wort():
     print("OK  Ausschluss – nur die passenden Treffer fallen weg")
 
 
+# --- Die Pillen der Oberfläche -----------------------------------------------
+# Offline- und Online-Suche bauen ihre Suchgruppen aus DERSELBEN Funktion.
+# Bricht das hier, laufen die beiden Quellen wieder auseinander.
+
+def test_gruppen_aus_pillen():
+    """Gruppen, globale Ausschlüsse und mehrwortige Pillen."""
+    from echo_engine.search import groups_from_terms, groups_are_boolean
+    g = groups_from_terms([["صبر", "بلاء"], ["صلاة"]], ["فقر"])
+    assert len(g) == 2, len(g)
+    assert len(g[0].include) == 2 and len(g[1].include) == 1
+    # Der Ausschluss gilt global – er muss in JEDER ODER-Gruppe stehen,
+    # sonst würde die zweite Gruppe die ausgeschlossenen Stellen zurückholen.
+    assert [n for n, _s in g[0].exclude] == ["فقر"]
+    assert [n for n, _s in g[1].exclude] == ["فقر"]
+    assert groups_are_boolean(g)
+
+    # Mehrwortige Pille = exakte Wortgruppe, positiv wie negativ.
+    g2 = groups_from_terms([["دار الكتب"]], ["فصل الربيع"])
+    assert g2[0].phrases == ["دار الكتب"], g2[0].phrases
+    assert g2[0].neg_phrases == ["فصل الربيع"], g2[0].neg_phrases
+    assert not g2[0].exclude, "mehrwortiger Ausschluss darf kein Einzelwort werden"
+
+    # Eine einfache UND-Anfrage ist NICHT boolesch (die Semantik darf mit).
+    assert not groups_are_boolean(groups_from_terms([["صبر", "بلاء"]], []))
+    print("OK  Pillen -> Gruppen: ODER, globaler Ausschluss, Wortgruppen")
+
+
+def test_ausschluss_wortgruppe_trifft_nur_zusammenhaengend():
+    """Ein mehrwortiger Ausschluss entfernt nur die zusammenhängende Form."""
+    from echo_engine.search import structured_search
+    con = connect(":memory:")
+    index_pages(con, [
+        (1, "الكلام في فصل الربيع عند أهل النظر وهذا معروف. "),
+        (2, "الكلام في الفصل الأول من الكتاب وهذا معروف كذلك. "),
+    ], title="Ausschluss")
+    hits = structured_search(con, [["كلام"]], exclude=["فصل الربيع"], limit=50)
+    seiten = sorted(h.page_from for h in hits)
+    # Seite 2 enthält „فصل" (als الفصل), aber nicht die Wortgruppe – sie bleibt.
+    assert seiten == [2], seiten
+    print("OK  Ausschluss-Wortgruppe wirkt nur zusammenhängend")
+
+
+def test_textform_der_pillen():
+    """Die Textform der Anfrage bildet dieselben Gruppen wie die Pillen.
+
+    Die Textform ist nur die Rückfallebene für eine Gegenstelle, die die
+    Pillen noch nicht strukturiert annimmt (älterer Online-Server). Sie muss
+    dieselbe Bedeutung tragen – und Wörter, die in der Syntax eine eigene
+    Bedeutung hätten, unschädlich machen.
+    """
+    from echo_engine.search import query_from_terms, parse_query
+    q = query_from_terms([["صبر", "بلاء"], ["صلاة"]], ["فقر"])
+    assert q == "صبر بلاء -فقر | صلاة -فقر", q
+    g = parse_query(q)
+    assert len(g) == 2
+    assert all([n for n, _s in x.exclude] == ["فقر"] for x in g)
+
+    # Gefahr: ein Suchwort, das wörtlich „أو" heißt oder mit „-" beginnt,
+    # würde sonst als ODER-Trenner bzw. als Ausschluss gelesen werden.
+    q2 = query_from_terms([["أو"]], [])
+    assert len(parse_query(q2)) == 1, q2
+    q3 = query_from_terms([["دار الكتب"]], ["فصل الربيع"])
+    g3 = parse_query(q3)
+    assert g3[0].phrases == ["دار الكتب"] and g3[0].neg_phrases == ["فصل الربيع"]
+    print("OK  Textform der Pillen trägt dieselbe Bedeutung")
+
+
 def test_artikel_form_wird_markiert():
     """Ein über die Artikel-Form gefundener Treffer wird auch markiert."""
     from echo_engine.search import highlight_spans
@@ -207,5 +274,8 @@ if __name__ == "__main__":
     test_und_jeder_treffer_vollstaendig()
     test_oder_jeder_treffer_erfuellt_eine_gruppe()
     test_ausschluss_mit_real_vorkommendem_wort()
+    test_gruppen_aus_pillen()
+    test_ausschluss_wortgruppe_trifft_nur_zusammenhaengend()
+    test_textform_der_pillen()
     test_artikel_form_wird_markiert()
     print("\nAlle Boolesche-Suche-Tests bestanden.")
