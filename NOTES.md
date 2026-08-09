@@ -1,56 +1,28 @@
-## AICP Research 1.3.6
+## AICP Research 1.3.7
 
-Diese Version arbeitet die Ergebnisse eines ausführlichen Tests ab – vor allem beim sicheren Weitergeben von Büchern, bei zitierfähigen Seitenzahlen und beim zuverlässigen Einlesen.
+Diese Version bringt die Suchfilter der Online-Suche zurück. UND, ODER-Gruppen und Ausschluss wirken dort jetzt genau so wie in der eigenen Bibliothek.
 
-### Sicherheit und Daten
-- **Auswahl-Export gibt wirklich nur die Auswahl weiter:** Beim Exportieren ausgewählter Bücher enthielt die Datei bisher versehentlich die **gesamte** Bibliothek, alle Lesezeichen und persönliche Daten (inklusive gespeicherter Zugangsdaten des Online-Servers). Jetzt enthält der Export ausschließlich die gewählten Bücher und ihre Lesezeichen – nichts weiter. Auch die Dateigröße ist entsprechend kleiner.
+### Online-Suche sucht wie die eigene Bibliothek
+- **ODER-Gruppen und Ausschluss sind zurück:** In der Online-Suche fehlten der Knopf für eine zweite ODER-Gruppe und das rote Ausschlussfeld. Beides ist wieder da – und wirkt auch wirklich. Bisher wurden mehrere Gruppen im Hintergrund zu einer einzigen UND-Verknüpfung zusammengezogen und Ausschlüsse verworfen, ohne dass es sichtbar war.
+- **Dieselbe Logik wie offline:** Online und offline benutzen jetzt nachweislich denselben Suchweg. Eine Anfrage liefert in beiden Quellen dieselben Fundstellen, auch mit mehreren Gruppen und Ausschlüssen gleichzeitig.
+- **Suche im Buch:** Auch beim Lesen eines Online-Buches wirken ODER-Gruppe und Ausschluss. Dort standen die Bedienelemente zwar, taten aber nichts.
+- **Ausschluss mehrerer Wörter:** Schließt man eine Wortfolge wie „دار الكتب" aus, wird nur noch genau diese Wortfolge entfernt. Bisher flog jede Stelle mit dem ersten Wort heraus – auch dort, wo es um etwas anderes ging. Das gilt für beide Quellen.
+- **Klare Rückmeldung:** Eine Suche, die nur aus Ausschlüssen besteht, sagt jetzt, dass ein Suchbegriff fehlt, statt wortlos nichts zu liefern.
 
-### Zuverlässiges Einlesen und Seitenzahlen
-- **Alte Bücher wieder neu einlesbar:** Bücher, die vor der Umbenennung der App importiert wurden, ließen sich nicht mehr neu einlesen oder im Original öffnen („Originaldatei nicht mehr auffindbar"). Die App findet die Dateien jetzt automatisch wieder.
-- **Textdateien ehrlich gekennzeichnet:** Eine `.txt`-Datei hat keine gedruckten Seiten. Ihre Seitenangaben werden jetzt als **„ungefähr"** ausgewiesen statt fälschlich als zitierfähig.
-- **Kaputte Vorlagen werden erkannt:** Seiten, deren Textebene nur Zeichensalat liefert, werden jetzt zuverlässig erkannt und per Texterkennung lesbar gemacht – nicht mehr unbrauchbar in die Bibliothek übernommen.
-- **Leere Dokumente werden gemeldet** statt still und ohne Inhalt in der Bibliothek zu landen.
-- **Verständliche Meldungen:** Beschädigte, leere oder passwortgeschützte Dateien erzeugen jetzt klare deutsche bzw. arabische Hinweise statt englischer Technik-Meldungen.
-
-### Leser und Suche
-- **Richtige Seitenzahl sofort:** Nach dem Anklicken eines Treffers zeigte der Leser kurz eine um 1 zu niedrige Seitenzahl. Jetzt steht sofort die richtige Seite oben.
-- **„Neu einlesen" robuster:** Mehrfaches Klicken führt nicht mehr zu einem leeren, endlos ladenden Leser; die Zeile bleibt an ihrer Stelle in der Liste.
-- **Sprachwechsel wirkt auch auf offene Treffer:** Die bereits angezeigte Trefferliste wird beim Umschalten mit übersetzt.
-- **Online-Seitenangabe einheitlich:** Trefferliste und Leser verwenden garantiert dieselbe Seitenbeschriftung.
-
-### Oberfläche
-- **Sicherheitsabfragen im App-Stil** statt der technischen System-Dialoge.
-- **„Was ist neu"** wird sauber formatiert angezeigt (keine sichtbaren Formatierungszeichen).
-- **Lange Suchbegriffe** brechen um, statt das Fenster zu sprengen.
-- **Online-Suche** blendet Bedienelemente aus, die dort nicht wirken (Ausschluss, ODER-Gruppe); Online-Treffer zeigen ihre Herkunft.
-- **Autorennamen mit „؛"** hinterlassen keine leeren Autoren-Einträge mehr.
-- **Fenstergröße und -position** werden gemerkt.
+### Hinweis
+Die vollen Filter setzen einen aktualisierten Online-Server voraus. Ist er noch nicht aktualisiert, wirken UND, ODER und Ausschluss trotzdem – nur in seltenen Sonderfällen (ein Suchwort, das wörtlich „أو" heißt oder mit „-" beginnt) weicht das Ergebnis ab.
 
 <!--ar-->
-## AICP Research 1.3.6
+## AICP Research 1.3.7
 
-تعالج هذه النسخة نتائج اختبار موسّع – خاصةً في المشاركة الآمنة للكتب، وأرقام الصفحات القابلة للاقتباس، والقراءة الموثوقة.
+تُعيد هذه النسخة مرشّحات البحث إلى البحث عبر الإنترنت. «و» ومجموعات «أو» والاستبعاد تعمل هناك الآن تمامًا كما في مكتبتك الخاصة.
 
-### الأمان والبيانات
-- **تصدير التحديد يشارك التحديد فقط:** عند تصدير كتب مختارة كان الملف يحتوي عن طريق الخطأ على **كامل** المكتبة وكل الإشارات المرجعية وبيانات شخصية (بما فيها بيانات الدخول المحفوظة للخادم). الآن يحتوي التصدير على الكتب المختارة وإشاراتها فقط – لا شيء غير ذلك، وحجم الملف أصغر تبعًا لذلك.
+### البحث عبر الإنترنت يبحث كمكتبتك
+- **عودة مجموعات «أو» والاستبعاد:** كان زر إضافة مجموعة «أو» وحقل الاستبعاد الأحمر غائبَين في البحث عبر الإنترنت. عادا الآن – ويعملان فعلًا. سابقًا كانت المجموعات المتعددة تُدمج خلف الكواليس في رابط «و» واحد وتُهمل الاستبعادات دون أن يظهر ذلك.
+- **المنطق نفسه كما دون اتصال:** يستخدم البحثان الآن المسار نفسه فعليًا. الطلب الواحد يعطي المواضع نفسها في المصدرين، حتى مع عدة مجموعات واستبعادات معًا.
+- **البحث داخل الكتاب:** تعمل مجموعة «أو» والاستبعاد أيضًا أثناء قراءة كتاب من الإنترنت. كانت العناصر موجودة هناك لكنها بلا أثر.
+- **استبعاد عدة كلمات:** عند استبعاد عبارة مثل «دار الكتب» تُحذف هذه العبارة وحدها. سابقًا كان يسقط كل موضع فيه الكلمة الأولى – حتى حيث لا علاقة له بالمقصود. وهذا يسري على المصدرين.
+- **رسالة واضحة:** البحث المكوّن من استبعادات فقط يخبرك الآن بأن كلمة البحث ناقصة، بدل ألا يعطي شيئًا بصمت.
 
-### قراءة موثوقة وأرقام الصفحات
-- **الكتب القديمة قابلة لإعادة القراءة:** الكتب التي أُضيفت قبل إعادة تسمية التطبيق لم تعد تُقرأ من جديد أو تُفتح في أصلها («تعذّر العثور على الملف الأصلي»). يعثر التطبيق الآن على الملفات تلقائيًا.
-- **ملفات النص موسومة بصدق:** ملف `.txt` لا يملك صفحات مطبوعة، فتُوسم صفحاته الآن بـ**«تقريبي»** بدل وسمها خطأً كقابلة للاقتباس.
-- **اكتشاف الأصول التالفة:** الصفحات التي تعطي طبقة نص مشوّشة تُكتشف الآن وتُقرأ عبر التعرّف الضوئي – بدل إدخالها غير صالحة إلى المكتبة.
-- **الإبلاغ عن المستندات الفارغة** بدل إدخالها بصمت بلا محتوى.
-- **رسائل مفهومة:** الملفات التالفة أو الفارغة أو المحمية بكلمة مرور تعطي الآن رسائل واضحة بالعربية أو الألمانية بدل رسائل تقنية إنجليزية.
-
-### القارئ والبحث
-- **رقم الصفحة الصحيح فورًا:** بعد النقر على نتيجة كان القارئ يعرض لوهلة رقمًا أقل بواحد. الآن يظهر الرقم الصحيح فورًا في الأعلى.
-- **«إعادة القراءة» أكثر متانة:** النقر المتكرر لم يعد يؤدي إلى قارئ فارغ لا ينتهي تحميله؛ ويبقى الصف في مكانه في القائمة.
-- **تبديل اللغة يشمل النتائج المفتوحة:** تُترجم قائمة النتائج المعروضة عند التبديل.
-- **توحيد رقم الصفحة على الإنترنت:** تستخدم قائمة النتائج والقارئ الوسم نفسه للصفحة.
-
-### الواجهة
-- **رسائل التأكيد بنمط التطبيق** بدل نوافذ النظام التقنية.
-- **«الجديد»** يُعرض منسّقًا بشكل نظيف (بلا رموز تنسيق ظاهرة).
-- **كلمات البحث الطويلة** تلتف بدل تجاوز حدود النافذة.
-- **البحث عبر الإنترنت** يخفي العناصر غير الفعّالة هناك (الاستبعاد، مجموعة «أو»)؛ وتُظهر النتائج مصدرها.
-- **أسماء المؤلفين التي تحوي «؛»** لم تعد تترك مؤلفين فارغين.
-- **حجم النافذة وموضعها** يُحفظان.
+### ملاحظة
+تتطلب المرشّحات الكاملة خادمًا محدّثًا. وإن لم يُحدَّث بعد، تعمل «و» و«أو» والاستبعاد أيضًا – ويختلف الناتج فقط في حالات نادرة (كلمة بحث هي حرفيًا «أو» أو تبدأ بـ «-»).
