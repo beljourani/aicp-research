@@ -9,8 +9,9 @@ Diese Version bringt die Suchfilter der Online-Suche zurück. UND, ODER-Gruppen 
 - **Ausschluss mehrerer Wörter:** Schließt man eine Wortfolge wie „دار الكتب" aus, wird nur noch genau diese Wortfolge entfernt. Bisher flog jede Stelle mit dem ersten Wort heraus – auch dort, wo es um etwas anderes ging. Das gilt für beide Quellen.
 - **Klare Rückmeldung:** Eine Suche, die nur aus Ausschlüssen besteht, sagt jetzt, dass ein Suchbegriff fehlt, statt wortlos nichts zu liefern.
 
-### Hinweis
-Die vollen Filter setzen einen aktualisierten Online-Server voraus. Ist er noch nicht aktualisiert, wirken UND, ODER und Ausschluss trotzdem – nur in seltenen Sonderfällen (ein Suchwort, das wörtlich „أو" heißt oder mit „-" beginnt) weicht das Ergebnis ab.
+### Behoben
+- **Verbindung zum Online-Server auf dem Mac:** Je nach Python-Installation fehlte der App der Zertifikatsspeicher, sodass jede Verbindung mit einer Zertifikatsmeldung scheiterte. Die App bringt den Speicher jetzt selbst mit.
+- **Ehrliche Verbindungsanzeige:** Neben der Quelle stand „verbunden", sobald Adresse und Token hinterlegt waren – auch wenn der Server gar nicht antwortete. Jetzt steht dort „nicht erreichbar", solange kein Zugriff gelingt.
 
 <!--ar-->
 ## AICP Research 1.3.7
@@ -24,5 +25,6 @@ Die vollen Filter setzen einen aktualisierten Online-Server voraus. Ist er noch 
 - **استبعاد عدة كلمات:** عند استبعاد عبارة مثل «دار الكتب» تُحذف هذه العبارة وحدها. سابقًا كان يسقط كل موضع فيه الكلمة الأولى – حتى حيث لا علاقة له بالمقصود. وهذا يسري على المصدرين.
 - **رسالة واضحة:** البحث المكوّن من استبعادات فقط يخبرك الآن بأن كلمة البحث ناقصة، بدل ألا يعطي شيئًا بصمت.
 
-### ملاحظة
-تتطلب المرشّحات الكاملة خادمًا محدّثًا. وإن لم يُحدَّث بعد، تعمل «و» و«أو» والاستبعاد أيضًا – ويختلف الناتج فقط في حالات نادرة (كلمة بحث هي حرفيًا «أو» أو تبدأ بـ «-»).
+### إصلاحات
+- **الاتصال بالخادم على نظام ماك:** بحسب تثبيت بايثون كان مخزن الشهادات ناقصًا، فيفشل كل اتصال برسالة شهادة. صار التطبيق يحمل المخزن معه.
+- **مؤشر اتصال صادق:** كان يظهر «متصل» بمجرد حفظ العنوان والرمز، حتى إن لم يستجب الخادم. الآن يظهر «تعذّر الوصول» ما دام الوصول غير ممكن.

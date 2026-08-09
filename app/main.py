@@ -104,6 +104,27 @@ def _resource_base() -> Path:
 UI_FILE = _resource_base() / "ui" / "index.html"
 
 
+def _ssl_kontext():
+    """Zertifikatsspeicher für HTTPS.
+
+    Python bringt je nach Installation KEINEN brauchbaren Speicher mit – auf
+    macOS liefert eine frisch angelegte Umgebung `cafile: None` und damit null
+    Wurzelzertifikate, jede HTTPS-Verbindung scheitert dann mit
+    'CERTIFICATE_VERIFY_FAILED'. Deshalb wird der mitgelieferte certifi-Speicher
+    benutzt. `updater.py` und `components.py` machen es genauso; der
+    Shamela-Zugriff war die letzte Stelle ohne.
+    """
+    import ssl
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+SSL_KONTEXT = _ssl_kontext()
+
+
 def data_dir() -> Path:
     if sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support"
@@ -770,7 +791,8 @@ class Core:
         req = urllib.request.Request(full, data=data, headers=headers,
                                      method=method)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout,
+                                        context=SSL_KONTEXT) as resp:
                 roh = resp.read()
                 kodierung = (resp.headers.get("Content-Encoding") or "").lower()
             # urllib packt nicht selbst aus. Antwortet der Server

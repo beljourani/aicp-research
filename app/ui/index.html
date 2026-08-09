@@ -987,6 +987,7 @@ const T = {
     shamelaOk: "Verbindung erfolgreich.",
     shamelaCleared: "Verbindung getrennt.",
     shamelaConnected: "verbunden", shamelaNotSet: "kein Server",
+    shamelaUnreachable: "nicht erreichbar",
     shamelaNeedCfg: "Bitte zuerst einen Shamela-Server einrichten (Zahnrad-Symbol).",
     shamelaQueryHint: "Online-Suche: Begriffe eingeben wie in der eigenen Bibliothek – UND, ODER-Gruppe und Ausschluss wirken hier genauso.",
     shamelaNeedTerm: "Bitte mindestens einen Suchbegriff eingeben – ein Ausschluss allein ergibt keine Suche.",
@@ -1116,6 +1117,7 @@ const T = {
     shamelaOk: "تم الاتصال بنجاح.",
     shamelaCleared: "تم قطع الاتصال.",
     shamelaConnected: "متصل", shamelaNotSet: "لا خادم",
+    shamelaUnreachable: "تعذّر الوصول",
     shamelaNeedCfg: "يرجى إعداد خادم الشاملة أولاً (رمز الترس).",
     shamelaQueryHint: "البحث عبر الإنترنت: أدخل الكلمات كما في مكتبتك – «و» ومجموعة «أو» والاستبعاد تعمل هنا بالطريقة نفسها.",
     shamelaNeedTerm: "يرجى إدخال كلمة بحث واحدة على الأقل – الاستبعاد وحده لا يشكّل بحثاً.",
@@ -2291,7 +2293,8 @@ async function loadMoreShamela(){
 function showShamelaResults(res,append){
   const box=$("#results");
   const old=$("#loadMore"); if(old)old.remove();
-  if(res&&res.error){ box.innerHTML=emptyBox(res.error); $("#count").textContent=""; return; }
+  if(res&&res.error){ markShamela(false); box.innerHTML=emptyBox(res.error); $("#count").textContent=""; return; }
+  markShamela(true);
   if(!append){ box.innerHTML=""; shLoaded=0; }
   const hits=res.hits||[];
   if(!append && !hits.length){ box.innerHTML=emptyBox(t("empty")); $("#count").textContent=""; return; }
@@ -3683,13 +3686,24 @@ $("#importBtn").onclick=async()=>{const r=await api().import_library();if(r&&r.e
 
 /* ---------- Quellen-Umschalter + Shamela-Einstellungen ---------- */
 let _shStatus={configured:false,url:""};
+// Ist der Server beim letzten Zugriff wirklich gegangen? `shamela_status`
+// beantwortet das NICHT – es meldet nur, ob Adresse und Token hinterlegt sind.
+// Ohne diese Unterscheidung stand „verbunden" auch dann, wenn jeder Aufruf
+// scheiterte; die Anzeige widersprach dann der Fehlermeldung daneben.
+// null = noch nichts versucht.
+let _shErreichbar=null;
+function markShamela(ok){
+  if(_shErreichbar===ok)return;
+  _shErreichbar=ok; refreshShamelaState();
+}
 async function refreshShamelaState(){
   try{ _shStatus=await api().shamela_status(); }catch(e){ _shStatus={configured:false,url:""}; }
   const el=$("#shamelaState");
   if(el){
     if(searchSource!=="shamela"){ el.textContent=""; el.className="shamelaState"; }
-    else if(_shStatus.configured){ el.textContent="● "+t("shamelaConnected"); el.className="shamelaState ok"; }
-    else { el.textContent="● "+t("shamelaNotSet"); el.className="shamelaState off"; }
+    else if(!_shStatus.configured){ el.textContent="● "+t("shamelaNotSet"); el.className="shamelaState off"; }
+    else if(_shErreichbar===false){ el.textContent="● "+t("shamelaUnreachable"); el.className="shamelaState off"; }
+    else { el.textContent="● "+t("shamelaConnected"); el.className="shamelaState ok"; }
   }
 }
 // Beim Wechsel in den Shamela-Modus die Filterlisten vom Server holen.
@@ -3708,6 +3722,7 @@ async function loadShamelaFilters(){
   applySourceUI();
   // Wenn der Server die Filter nicht liefert: leer lassen (nicht lokal) und
   // sichtbar melden, damit klar ist, dass die Verbindung das Problem ist.
+  markShamela(okA&&okB);
   if(!okA||!okB){ if(!okA)authorOptions=[]; if(!okB)allDocs=[]; showError(t("shamelaFilterErr")); }
 }
 // Bücherliste des Servers in den Buchfilter laden (Titel -> Kennung).
