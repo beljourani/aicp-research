@@ -1281,7 +1281,8 @@ class Core:
                 schluessel, klartext = freundlicher_fehler(e)
                 self._jobs["__import__"] = {
                     "file": "Import", "state": "fehler",
-                    "error_key": schluessel, "error": klartext}
+                    "error_key": schluessel, "error": klartext,
+                    "error_detail": f"{type(e).__name__}: {e}"[:600]}
         threading.Thread(target=work, daemon=True).start()
         return {"ok": True}
 
@@ -1363,8 +1364,12 @@ class Core:
         except Exception as e:
             traceback.print_exc()
             schluessel, klartext = freundlicher_fehler(e)
+            # Zusätzlich den ECHTEN technischen Grund mitgeben (z. B. „DLL load
+            # failed …"), damit man an jedem Gerät genau sieht, woran es liegt,
+            # statt raten zu müssen. Die freundliche Meldung bleibt die Überschrift.
             self._jobs[job_id] = {"file": job_id, "state": "fehler",
-                                  "error_key": schluessel, "error": klartext}
+                                  "error_key": schluessel, "error": klartext,
+                                  "error_detail": f"{type(e).__name__}: {e}"[:600]}
 
     def reindex(self, body):
         """Liest ein Dokument aus seiner Originaldatei neu ein

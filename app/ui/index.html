@@ -434,6 +434,10 @@
   .ujob.done .st { color: var(--accent-ink); font-weight: 600; }
   .ujob.err .st { color: var(--err); font-weight: 600; }
   .ujob.skip { opacity: .6; }
+  /* Technischer Klartext bei Fehlern – auswählbar zum Kopieren/Melden. */
+  .ujobErr { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11.5px; color: var(--muted); margin-top: 2px; line-height: 1.45;
+    word-break: break-word; white-space: pre-wrap; user-select: text; }
 
   /* ---------- Fortschrittsbalken (wiederverwendbar: Upload + Dokumentzeile) ---- */
   .pbar { height: 5px; width: 100%; background: var(--line);
@@ -2080,7 +2084,8 @@ async function refreshStatus(){
       const el=document.createElement("div");
       el.className="ujob"+(j.state==="fehler"?" err":j.state==="fertig"?" done":j.state==="übersprungen"?" skip":"");
       const label=j.state==="übersprungen"?`${t("jobs")&&T[lang].jobs["übersprungen"]} – ${esc(j.error||"")}`:esc(jobLabel(j));
-      el.innerHTML=`<div class="ujobTop">${svg("page")}<span>${esc(j.file)}</span><span class="st">${label}</span></div>${jobBarHTML(j)}`;
+      const detail=(j.state==="fehler"&&j.error_detail)?`<div class="ujobErr">${esc(j.error_detail)}</div>`:"";
+      el.innerHTML=`<div class="ujobTop">${svg("page")}<span>${esc(j.file)}</span><span class="st">${label}</span></div>${jobBarHTML(j)}${detail}`;
       jb.appendChild(el);
       if(["fertig","fehler","übersprungen"].includes(j.state))doneCount++;
       else active=true;
