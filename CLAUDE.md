@@ -328,8 +328,33 @@ Other things worth knowing:
 - Builds are unsigned. macOS shows "unidentified developer" on first manual launch (right-click → Open);
   the auto-update path avoids this by removing the quarantine attribute.
 
+## Diagnosis on the user's machine
+
+There is no console on Windows: `build/echoarchive.spec` packs with `console=False`, so in the running
+app `sys.stdout`/`sys.stderr` are `None` and every `print()` and traceback is silently dropped. Without
+a file there is *no* way to learn why something failed on the user's laptop — the UI's friendly
+sentence ("Die Datei konnte nicht eingelesen werden.") is all he can see.
+
+- `data_dir()/protokoll.txt` is that file. `protokolliere()` appends timestamped lines and rotates once
+  at ~1 MB (`protokoll-alt.txt`). `protokoll_einrichten()` re-points `sys.stdout`/`sys.stderr` into it
+  when they are `None`, so existing `print()`/`traceback.print_exc()` calls are captured too.
+- `fehler_melden(kontext, exc)` writes the **full traceback** to the log and returns the short technical
+  reason for the UI. Every failing job carries it as `error_detail` next to the friendly `error` text.
+  `technischer_grund()` appends the code location (`extract.py:159 in extract_pdf`) — the message alone
+  ("DLL load failed") does not say whether it broke while opening the PDF or during OCR.
+- "Kein Text gefunden" is a **second, exception-free** way an import fails. `_leer_grund()` reports
+  pages/characters/engine for it, which is what distinguishes "file could not be opened at all"
+  (`Seiten=0`) from "scan whose OCR produced nothing" (`Seiten=248 · Zeichen=0`).
+- Reachable from the UI: every error row has *Fehlerbericht kopieren* / *Protokoll anzeigen*, plus a
+  permanent *Protokoll anzeigen* entry in the sidebar (`/api/protokoll`, `/api/open_protokoll`).
+- The technical detail is Latin text and must stay `direction: ltr; text-align: left` — the Arabic
+  RTL layout otherwise reverses it into something unreadable.
+
 ## Pitfalls already paid for
 
+- **Job rows are only ever built by `refreshStatus()`, and polling stops when nothing is running.**
+  Anything that must change with the language has to trigger a re-render explicitly; `applyLang()`
+  alone left a finished error row standing in German inside an otherwise Arabic UI.
 - **A search can consist of exclusions only**, with no positive terms. Then there are no matched words
   to highlight and no terms to re-run inside the reader. Code that assumes "there are always search
   terms" fails in ways that look like an unrelated bug. Pass the full query (groups *and* exclusions),

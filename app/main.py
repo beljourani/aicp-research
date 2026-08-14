@@ -17,6 +17,7 @@ import queue
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import threading
 import traceback
@@ -146,6 +147,139 @@ def data_dir() -> Path:
     return d
 
 
+# --- Protokolldatei ------------------------------------------------------
+# Warum das nötig ist: der Windows-Build wird OHNE Konsole gepackt
+# (`console=False` in echoarchive.spec). Damit sind `sys.stdout`/`sys.stderr`
+# im laufenden Programm None, und jedes `print(...)` und jeder Traceback
+# verschwindet spurlos. Auf dem Rechner des Nutzers war der echte Grund eines
+# Fehlers deshalb schlicht nicht zu bekommen – man sah nur „Die Datei konnte
+# nicht eingelesen werden.". Ab jetzt landet alles in einer Datei neben der
+# Bibliothek, die sich aus der App heraus öffnen lässt.
+PROTOKOLL_MAX = 1_000_000          # ~1 MB, dann wird einmal rotiert
+_PROTOKOLL_SPERRE = threading.Lock()
+_ECHTES_STDERR = sys.stderr        # im Entwicklungsmodus ein echtes Terminal
+
+
+def protokoll_pfad() -> Path:
+    return data_dir() / "protokoll.txt"
+
+
+def protokolliere(text: str) -> None:
+    """Hängt eine Zeile mit Zeitstempel an die Protokolldatei an.
+
+    Darf NIE eine Ausnahme auslösen – Protokollieren ist Beiwerk und soll das
+    eigentliche Einlesen nicht zusätzlich zum Scheitern bringen."""
+    from datetime import datetime
+    zeile = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {text.rstrip()}\n"
+    try:
+        with _PROTOKOLL_SPERRE:
+            p = protokoll_pfad()
+            if p.exists() and p.stat().st_size > PROTOKOLL_MAX:
+                alt = p.with_name("protokoll-alt.txt")
+                try:
+                    alt.unlink()
+                except OSError:
+                    pass
+                p.rename(alt)
+            with p.open("a", encoding="utf-8") as f:
+                f.write(zeile)
+    except Exception:
+        pass
+    if _ECHTES_STDERR is not None:
+        try:
+            _ECHTES_STDERR.write(zeile)
+            _ECHTES_STDERR.flush()
+        except Exception:
+            pass
+
+
+class _ProtokollStrom:
+    """Ersatz für stdout/stderr, der zeilenweise ins Protokoll schreibt.
+
+    Wird nur im gepackten Programm eingehängt, wo es keine Konsole gibt."""
+
+    def __init__(self, kanal: str):
+        self._kanal = kanal
+        self._puffer = ""
+
+    def write(self, s):
+        s = str(s)
+        self._puffer += s
+        while "\n" in self._puffer:
+            zeile, self._puffer = self._puffer.split("\n", 1)
+            if zeile.strip():
+                protokolliere(f"[{self._kanal}] {zeile}")
+        return len(s)
+
+    def flush(self):
+        if self._puffer.strip():
+            protokolliere(f"[{self._kanal}] {self._puffer}")
+        self._puffer = ""
+
+    def isatty(self):
+        return False
+
+    def fileno(self):
+        raise OSError("kein Dateideskriptor")
+
+
+def protokoll_einrichten() -> None:
+    """Leitet Ausgaben ins Protokoll um, wenn es keine Konsole gibt."""
+    global _ECHTES_STDERR
+    if sys.stdout is None:
+        sys.stdout = _ProtokollStrom("out")
+    if sys.stderr is None:
+        _ECHTES_STDERR = None
+        sys.stderr = _ProtokollStrom("err")
+
+
+def umgebung_zeile() -> str:
+    """Eine Zeile mit allem, was für eine Ferndiagnose zählt."""
+    try:
+        from echo_engine import updater
+        version = updater.current_version()
+    except Exception:
+        version = "?"
+    return (f"AICP Research {version} · {sys.platform} · Python "
+            f"{sys.version.split()[0]} · gepackt={bool(getattr(sys, 'frozen', False))}")
+
+
+def technischer_grund(exc: BaseException) -> str:
+    """Kurzfassung für die Oberfläche: Typ, Meldung und die Stelle im Code.
+
+    Die Stelle ist entscheidend – „ImportError: DLL load failed" allein sagt
+    nicht, ob es beim PDF-Öffnen oder bei der Texterkennung passiert ist."""
+    meldung = str(exc).strip() or "(ohne Meldung)"
+    stelle = ""
+    tb = exc.__traceback__
+    letzter = None
+    while tb is not None:
+        letzter = tb
+        tb = tb.tb_next
+    if letzter is not None:
+        code = letzter.tb_frame.f_code
+        stelle = (f" [{os.path.basename(code.co_filename)}:"
+                  f"{letzter.tb_lineno} in {code.co_name}]")
+    return f"{type(exc).__name__}: {meldung}{stelle}"[:600]
+
+
+def fehler_melden(kontext: str, exc: BaseException) -> str:
+    """Schreibt den VOLLSTÄNDIGEN Traceback ins Protokoll und liefert den
+    kurzen technischen Grund für die Job-Zeile in der Oberfläche."""
+    try:
+        spur = "".join(traceback.format_exception(
+            type(exc), exc, exc.__traceback__)).rstrip()
+    except Exception:
+        spur = repr(exc)
+    protokolliere(f"FEHLER {kontext} | {umgebung_zeile()}\n{spur}")
+    return technischer_grund(exc)
+
+
+# Muss laufen, BEVOR irgendetwas anderes ausgibt – sonst gehen die ersten
+# Meldungen des gepackten Programms verloren.
+protokoll_einrichten()
+
+
 # Wie viele Dokumente gleichzeitig verarbeitet werden. Mehr bringt
 # nichts – die Arbeit ist rechenlastig und die Datenbank hat nur einen
 # Schreiber. Zu viele Threads machen alles langsamer.
@@ -230,9 +364,22 @@ class Core:
         while True:
             path, job_id, opts = self._queue.get()
             try:
+                groesse = os.path.getsize(path)
+            except OSError:
+                groesse = -1
+            protokolliere(f"START Einlesen „{job_id}“ · {groesse} Bytes · "
+                          f"{path} · {umgebung_zeile()}")
+            try:
                 self._index_one(path, job_id, **opts)
-            except Exception:
-                traceback.print_exc()
+                zustand = self._jobs.get(job_id, {}).get("state", "?")
+                protokolliere(f"ENDE Einlesen „{job_id}“ · {zustand}")
+            except Exception as e:
+                # Sicherheitsnetz: käme hier je eine Ausnahme durch, gäbe es
+                # sonst gar keine Fehlerzeile – der Job bliebe ewig „wartet".
+                self._jobs[job_id] = {
+                    "file": job_id, "state": "fehler", "error_key": "generisch",
+                    "error": "Die Datei konnte nicht eingelesen werden.",
+                    "error_detail": fehler_melden(f"Warteschlange „{job_id}“", e)}
             finally:
                 self._queue.task_done()
 
@@ -391,6 +538,42 @@ class Core:
                 "repo": self.update_repo(),
                 "configured": "/" in self.update_repo()
                 and not self.update_repo().startswith("DEIN-")}
+
+    def protokoll(self, body=None):
+        """Liefert das Ende der Protokolldatei – zum Anzeigen und Kopieren.
+
+        Das ist der Weg, wie ein Fehler vom Rechner des Nutzers hierher kommt:
+        ohne Konsole im gepackten Programm gäbe es sonst gar keine Quelle."""
+        body = body or {}
+        zeilen = max(20, min(2000, int(body.get("lines") or 400)))
+        p = protokoll_pfad()
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+            inhalt = "\n".join(text.splitlines()[-zeilen:])
+        except FileNotFoundError:
+            inhalt = ""
+        except Exception as e:
+            inhalt = f"(Protokoll nicht lesbar: {e})"
+        return {"path": str(p), "env": umgebung_zeile(), "text": inhalt}
+
+    def open_protokoll(self, _body=None):
+        """Zeigt die Protokolldatei im Explorer/Finder."""
+        p = protokoll_pfad()
+        try:
+            if not p.exists():
+                p.write_text("", encoding="utf-8")
+            # Kein aufblitzendes Konsolenfenster unter Windows (siehe extract.py).
+            ohne_fenster = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if os.name == "nt":
+                subprocess.Popen(["explorer", "/select,", str(p)],
+                                 creationflags=ohne_fenster)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", str(p)])
+            else:
+                subprocess.Popen(["xdg-open", str(p.parent)])
+            return {"ok": True, "path": str(p)}
+        except Exception as e:
+            return {"error": fehler_melden("Protokoll öffnen", e)}
 
     def focus(self, _body=None):
         """Holt das vorhandene Fenster nach vorne. Wird von einer zweiten,
@@ -1102,7 +1285,7 @@ class Core:
                 "file": self.DL_JOB, "state": "fertig",
                 "result": f"„{titel}“ übernommen – {geholt} Seiten"}
         except Exception as e:
-            traceback.print_exc()
+            grund = fehler_melden("Buchübernahme", e)
             if con is not None:
                 if doc_id is not None:
                     try:
@@ -1111,7 +1294,7 @@ class Core:
                         traceback.print_exc()
                 con.close()
             self._jobs[self.DL_JOB] = {"file": self.DL_JOB, "state": "fehler",
-                                       "error": str(e)}
+                                       "error": str(e), "error_detail": grund}
 
     def _raeume_halbe_uebernahmen(self):
         """Beim Start: angefangene Übernahmen entfernen.
@@ -1182,7 +1365,13 @@ class Core:
         while dest.exists():
             n += 1
             dest = updir / f"{stem}-{n}{suffix}"
-        dest.write_bytes(data)
+        try:
+            dest.write_bytes(data)
+        except Exception as e:
+            # Schon das Ablegen kann scheitern (voller Datenträger, Virenscanner,
+            # Sonderzeichen im Namen). Das war bisher ein stiller 500er.
+            return {"started": 0,
+                    "error": fehler_melden(f"Datei ablegen „{safe}“", e)}
         self._enqueue(str(dest), dest.name)
         return {"started": 1}
 
@@ -1194,8 +1383,8 @@ class Core:
                 dialog_type, allow_multiple=True,
                 file_types=("Dokumente (*.pdf;*.docx;*.txt)",))
         except Exception as e:
-            traceback.print_exc()
-            return {"started": 0, "error": f"Dateidialog: {e}"}
+            return {"started": 0,
+                    "error": f"Dateidialog: {fehler_melden('Dateidialog', e)}"}
         if not paths:
             return {"started": 0}
         paths = self._filter_duplicates(list(paths))
@@ -1235,9 +1424,9 @@ class Core:
                     "file": "Export", "state": "fertig",
                     "result": f"{res['documents']} Bücher exportiert"}
             except Exception as e:
-                traceback.print_exc()
-                self._jobs["__export__"] = {"file": "Export",
-                                            "state": "fehler", "error": str(e)}
+                self._jobs["__export__"] = {
+                    "file": "Export", "state": "fehler", "error": str(e),
+                    "error_detail": fehler_melden("Bibliothek exportieren", e)}
         threading.Thread(target=work, daemon=True).start()
         return {"ok": True, "path": path}
 
@@ -1277,14 +1466,42 @@ class Core:
                     embed_passages(con, self._embedder)
                     con.close()
             except Exception as e:
-                traceback.print_exc()
                 schluessel, klartext = freundlicher_fehler(e)
                 self._jobs["__import__"] = {
                     "file": "Import", "state": "fehler",
                     "error_key": schluessel, "error": klartext,
-                    "error_detail": f"{type(e).__name__}: {e}"[:600]}
+                    "error_detail": fehler_melden("Bibliothek importieren", e)}
         threading.Thread(target=work, daemon=True).start()
         return {"ok": True}
+
+    @staticmethod
+    def _leer_grund(con, doc_id: int, path: str) -> str:
+        """Beschreibt in einer Zeile, WARUM ein Dokument ohne Text blieb.
+
+        Gelesen wird das, was die Extraktion tatsächlich abgelegt hat: wie viele
+        Seiten ankamen, wie viele Zeichen insgesamt darin standen und mit welcher
+        Engine gearbeitet wurde. Damit ist von außen unterscheidbar, ob die Datei
+        gar nicht geöffnet werden konnte (0 Seiten) oder ob es ein Scan ohne
+        greifende Texterkennung ist (Seiten vorhanden, 0 Zeichen)."""
+        try:
+            row = con.execute(
+                "SELECT page_count, engine, needs_ocr FROM documents WHERE id=?",
+                (doc_id,)).fetchone()
+            seiten = (row[0] if row else 0) or 0
+            engine = (row[1] if row else "") or "?"
+            ocr_offen = bool(row[2]) if row else False
+            zeichen = con.execute(
+                "SELECT COALESCE(SUM(LENGTH(text)), 0) FROM pages "
+                "WHERE document_id=?", (doc_id,)).fetchone()[0] or 0
+        except Exception:
+            seiten, engine, ocr_offen, zeichen = 0, "?", False, 0
+        try:
+            groesse = os.path.getsize(path)
+        except OSError:
+            groesse = -1
+        return (f"0 Abschnitte · Seiten={seiten} · Zeichen={zeichen} · "
+                f"Engine={engine} · Texterkennung offen={'ja' if ocr_offen else 'nein'} "
+                f"· Datei={groesse} Bytes")
 
     def _index_one(self, path: str, job_id: str, force_ocr: bool = False,
                    replace_id: int | None = None, title: str | None = None,
@@ -1332,13 +1549,21 @@ class Core:
                 "SELECT COUNT(*) FROM passages WHERE document_id=?",
                 (doc_id,)).fetchone()[0]
             if anzahl == 0:
+                # Auch dieser Ausgang braucht einen technischen Grund: „kein
+                # Text" kann heißen, dass gar keine Seite ankam, oder dass alle
+                # Seiten leer blieben (Scan ohne funktionierende Texterkennung).
+                # Ohne diese Zahlen ist von außen nicht zu unterscheiden, welcher
+                # der beiden Fälle vorliegt.
+                grund = self._leer_grund(con, doc_id, path)
                 con.execute("DELETE FROM documents WHERE id=?", (doc_id,))
                 con.commit()
                 con.close()
+                protokolliere(f"LEER {job_id} | {umgebung_zeile()} | {grund}")
                 self._jobs[job_id] = {
                     "file": job_id, "state": "fehler", "error_key": "leer",
                     "error": "Kein Text gefunden – die Datei enthält keine "
-                             "lesbaren Textabschnitte."}
+                             "lesbaren Textabschnitte.",
+                    "error_detail": grund}
                 return
             # Beim Neu-Einlesen das ursprüngliche Anlege-Datum erhalten, damit
             # das Dokument nach dem Reindex an seiner sortierten Stelle bleibt
@@ -1362,14 +1587,15 @@ class Core:
             self._jobs[job_id]["state"] = "fertig"
             self._jobs[job_id]["pct"] = 100
         except Exception as e:
-            traceback.print_exc()
             schluessel, klartext = freundlicher_fehler(e)
             # Zusätzlich den ECHTEN technischen Grund mitgeben (z. B. „DLL load
             # failed …"), damit man an jedem Gerät genau sieht, woran es liegt,
-            # statt raten zu müssen. Die freundliche Meldung bleibt die Überschrift.
-            self._jobs[job_id] = {"file": job_id, "state": "fehler",
-                                  "error_key": schluessel, "error": klartext,
-                                  "error_detail": f"{type(e).__name__}: {e}"[:600]}
+            # statt raten zu müssen. Die freundliche Meldung bleibt die
+            # Überschrift; der vollständige Traceback steht im Protokoll.
+            self._jobs[job_id] = {
+                "file": job_id, "state": "fehler",
+                "error_key": schluessel, "error": klartext,
+                "error_detail": fehler_melden(f"Einlesen „{job_id}“", e)}
 
     def reindex(self, body):
         """Liest ein Dokument aus seiner Originaldatei neu ein
@@ -1839,6 +2065,8 @@ ROUTES = {
     ("GET", "/api/status"): CORE.status,
     ("POST", "/api/clear_jobs"): CORE.clear_jobs,
     ("GET", "/api/version"): CORE.version,
+    ("POST", "/api/protokoll"): CORE.protokoll,
+    ("POST", "/api/open_protokoll"): CORE.open_protokoll,
     ("GET", "/api/focus"): CORE.focus,
     ("POST", "/api/check_update"): CORE.check_update,
     ("POST", "/api/whats_new"): CORE.whats_new,
@@ -2049,6 +2277,7 @@ def _focus_running_instance(port_path: Path) -> None:
 def main():
     global _INSTANCE_LOCK
     d = data_dir()
+    protokolliere(f"START {umgebung_zeile()}")
     _INSTANCE_LOCK = _acquire_single_instance(d / "single_instance.lock")
     if _INSTANCE_LOCK is None:
         # Es läuft bereits eine Instanz -> deren Fenster nach vorne holen
