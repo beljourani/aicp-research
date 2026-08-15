@@ -132,10 +132,19 @@ def ensure_text_layout_version(con: sqlite3.Connection) -> int:
 
 def index_document(con: sqlite3.Connection, path: str | Path,
                    title: str | None = None, author: str | None = None,
-                   force_ocr: bool = False, progress=None) -> int:
-    """Verarbeitet eine Datei vollständig. Liefert die Dokument-ID."""
+                   force_ocr: bool = False, progress=None,
+                   warnungen: list | None = None) -> int:
+    """Verarbeitet eine Datei vollständig. Liefert die Dokument-ID.
+
+    `warnungen` (optional) wird mit den Hinweisen der Extraktion gefüllt –
+    etwa „kaputte Textschicht erkannt" oder „Seitenzahlen können abweichen".
+    Diese Hinweise wurden bisher erzeugt und danach weggeworfen; der Nutzer
+    bekam ein Buch mit verdrehtem Text oder ungenauen Seitenzahlen kommentarlos
+    als „fertig" gemeldet."""
     p = Path(path)
     res = extract(p, force_ocr=force_ocr, progress=progress)
+    if warnungen is not None:
+        warnungen.extend(getattr(res, "warnings", []) or [])
     cur = con.execute(
         "INSERT INTO documents (title, author, file_path, file_type, "
         "page_count, needs_ocr, status, reliability, engine) "

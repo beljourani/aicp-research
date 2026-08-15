@@ -50,17 +50,66 @@ class ExtractResult:
     warnings: list[str] = field(default_factory=list)
 
 
+# Alle Endungen, die die App annimmt. .docm/.doc/.rtf/.odt gehen über den
+# Word-/LibreOffice-Weg; ist keiner davon vorhanden, sagt die App das im
+# Klartext, statt die Datei kommentarlos abzulehnen.
+UNTERSTUETZTE_ENDUNGEN = (".pdf", ".docx", ".docm", ".doc", ".rtf", ".odt",
+                          ".txt", ".md")
+
+
 def extract(path: str | Path, force_ocr: bool = False,
             progress=None) -> ExtractResult:
     p = Path(path)
     suffix = p.suffix.lower()
     if suffix == ".pdf":
         return extract_pdf(p, force_ocr=force_ocr, progress=progress)
-    if suffix == ".docx":
+    if suffix in (".docx", ".docm"):
         return extract_docx(p, progress=progress)
-    if suffix == ".txt":
+    if suffix in (".doc", ".rtf", ".odt"):
+        # Ältere bzw. fremde Textformate: python-docx kann sie nicht lesen,
+        # Word und LibreOffice schon. Deshalb hier ohne den python-docx-Notweg.
+        return extract_ueber_konverter(p, progress=progress)
+    if suffix in (".txt", ".md"):
         return extract_txt(p)
     raise ValueError(f"Nicht unterstützter Dateityp: {suffix}")
+
+
+def extract_ueber_konverter(path: Path, progress=None) -> ExtractResult:
+    """Wandelt ein Format, das nur Word/LibreOffice lesen können, nach PDF und
+    liest es von dort. Ohne Konverter gibt es eine verständliche Meldung –
+    vorher wurden solche Dateien gar nicht erst angenommen (Meldung „– ?")."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpd = Path(tmp)
+        if _word_installed():
+            try:
+                if progress:
+                    progress("wird mit Word umgewandelt …")
+                pdf = convert_with_word(path, tmpd)
+                if pdf is not None:
+                    res = extract_pdf(pdf)
+                    res.reliability = "exakt"
+                    res.engine = "Word"
+                    return res
+            except Exception:
+                import traceback
+                traceback.print_exc()
+        try:
+            pdf = convert_docx_to_pdf(path, tmpd, progress)
+            if pdf is not None:
+                res = extract_pdf(pdf)
+                res.reliability = "ungefähr"
+                res.engine = "LibreOffice"
+                res.warnings.append(
+                    "Mit LibreOffice gewandelt – Seitenzahlen können bei "
+                    "langen Dokumenten leicht abweichen.")
+                return res
+        except Exception:
+            import traceback
+            traceback.print_exc()
+    raise RuntimeError(
+        f"Für {path.suffix.upper()}-Dateien wird Microsoft Word oder "
+        f"LibreOffice benötigt. Bitte die Datei in Word als .docx speichern "
+        f"oder LibreOffice installieren.")
 
 
 def _text_layer_broken(pages: list[tuple[int, str]]) -> bool:

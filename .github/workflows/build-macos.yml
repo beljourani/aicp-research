@@ -2,6 +2,15 @@ name: macOS-DMG (Release)
 
 on:
   workflow_dispatch:
+    inputs:
+      mac_arch:
+        description: >-
+          Architektur: leer = wie der Build-Rechner (Apple Silicon),
+          universal2 = Apple Silicon + Intel. universal2 gelingt nur, wenn
+          ALLE eingebundenen Bibliotheken universal2 sind - onnxruntime
+          liefert seit 1.24 nur noch arm64, der Build bricht dann ab.
+        required: false
+        default: ""
   push:
     tags: ["v*"]
 
@@ -11,6 +20,9 @@ permissions:
 jobs:
   build:
     runs-on: macos-latest
+    env:
+      # Wird von build/echoarchive.spec ausgewertet. Leer = wie bisher.
+      AICP_MAC_ARCH: ${{ github.event.inputs.mac_arch }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,6 +47,59 @@ jobs:
 
       - name: App bauen
         run: python -m PyInstaller --noconfirm --distpath dist --workpath build/pyi build/echoarchive.spec
+
+      - name: Bündel prüfen (bricht ab, wenn etwas fehlt)
+        run: |
+          # Warum dieser Schritt: Fehlt im Bündel ein Baustein, baut PyInstaller
+          # trotzdem klaglos durch. Der Fehler fällt erst auf dem Rechner des
+          # Nutzers auf - und dort meist stumm (die semantische Suche findet
+          # einfach nichts, ein PDF lässt sich nicht öffnen). Deshalb hier hart
+          # abbrechen, solange noch niemand das DMG bekommen hat.
+          APP="dist/AICP Research.app"
+          fehler=0
+          meld() { echo "::error::$1"; fehler=1; }
+
+          [ -d "$APP" ] || meld "fehlt: $APP"
+          [ -x "$APP/Contents/MacOS/AICPResearch" ] || meld "fehlt: Programmdatei im Bündel"
+          [ -f "$APP/Contents/Info.plist" ] || meld "fehlt: Info.plist"
+
+          # Mitgelieferte Daten liegen je nach PyInstaller-Version unter
+          # Resources oder Frameworks (mit Symlinks dazwischen) - deshalb
+          # suchen statt raten.
+          for ordner in models ui; do
+            if [ -z "$(find "$APP/Contents" -maxdepth 4 -type d -name "$ordner" -print -quit 2>/dev/null)" ]; then
+              meld "fehlt im Bündel: $ordner"
+            fi
+          done
+
+          # Python-Module: reine Python-Pakete landen nicht als Ordner im
+          # Bündel, sondern im Archiv - deshalb in den Inhaltsverzeichnissen
+          # von PyInstaller (*.toc) nachsehen. huggingface_hub lädt fastembed
+          # beim Import, pypdf ist der PDF-Rückfall, Vision ist die
+          # OCR-Erkennung von Apple.
+          TOC="$(cat build/pyi/*/*.toc 2>/dev/null || true)"
+          for modul in huggingface_hub pypdf fastembed onnxruntime docx fitz Vision objc; do
+            printf '%s' "$TOC" | grep -q "$modul" || meld "Modul nicht im Bündel: $modul"
+          done
+
+          # Architektur sichtbar machen. Ohne universal2 läuft die App nur auf
+          # Apple Silicon - das ist der heutige Stand und kein Fehler, soll aber
+          # im Protokoll stehen. Wurde universal2 angefordert, muss auch beides
+          # drin sein.
+          ARCHS="$(lipo -archs "$APP/Contents/MacOS/AICPResearch" 2>/dev/null || echo unbekannt)"
+          echo "Architektur des Programms: $ARCHS"
+          if [ "${AICP_MAC_ARCH:-}" = "universal2" ]; then
+            case "$ARCHS" in
+              *arm64*) case "$ARCHS" in *x86_64*) ;; *) meld "universal2 angefordert, aber nur: $ARCHS" ;; esac ;;
+              *) meld "universal2 angefordert, aber nur: $ARCHS" ;;
+            esac
+          fi
+
+          if [ "$fehler" -ne 0 ]; then
+            echo "Bündel unvollständig - Build abgebrochen."
+            exit 1
+          fi
+          echo "Bündel vollständig geprüft ($(du -sh "$APP" | cut -f1))."
 
       - name: App-ZIP (Auto-Update) erzeugen
         run: |

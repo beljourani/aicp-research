@@ -1,11 +1,49 @@
-pymupdf>=1.24
-python-docx>=1.1
-nltk>=3.8
-numpy>=1.24
-fastembed>=0.3
-pywebview>=5.0
-pyobjc-framework-Vision>=10.0; sys_platform == "darwin"
-certifi>=2024.2.2
+# Alle Versionen sind festgenagelt ("==" statt ">=").
+#
+# Warum: Mit ">=" hat jeder CI-Lauf stillschweigend die jeweils neuesten
+# Bibliotheken eingesammelt. Der ausgelieferte Installer enthielt damit andere
+# Versionen als der lokal geprüfte Build, und ein Fehler konnte allein dadurch
+# entstehen, dass zwischen zwei Releases irgendwo eine neue Version erschien.
+#
+# Beim Anheben einer Zeile: App bauen, ein arabisches Buch mit bekannten
+# Seitenzahlen einlesen, Seitenzahlen und semantische Suche gegenprüfen.
+#
+# Python 3.12 oder neuer wird vorausgesetzt (numpy 2.5 verlangt das); die CI
+# und die Build-Skripte benutzen 3.12.
+
+pymupdf==1.28.0
+python-docx==1.2.0
+# Reiner Python-Rückfall zum Lesen von PDFs, wenn PyMuPDF die Datei nicht
+# öffnen kann (defekte oder ungewöhnlich aufgebaute Dateien). Keine
+# Zusatzbibliotheken, kein Netz.
+pypdf==6.14.2
+nltk==3.10.0
+numpy==2.5.1
+
+# ACHTUNG: fastembed NICHT ohne Not anheben.
+# Ab Version 0.6.0 berechnet fastembed das Modell
+# paraphrase-multilingual-MiniLM-L12-v2 mit Mean-Pooling statt wie vorher mit
+# CLS-Pooling (fastembed warnt beim Laden ausdrücklich davor). Dieselbe
+# Passage ergibt seitdem einen anderen Vektor.
+# Die in den Nutzer-Datenbanken gespeicherten Vektoren (Tabelle
+# passage_vectors) stammen von genau dieser Version. Wechselt man auf eine
+# Version mit anderem Pooling, werden Suchanfrage und gespeicherte Vektoren
+# gegeneinander gerechnet: die semantische Suche liefert dann Unsinn, ohne
+# dass irgendwo ein Fehler erscheint - der schlimmste Fall, weil er unsichtbar
+# ist. Ein Wechsel ist nur zusammen mit einem vollständigen Neu-Vektorisieren
+# der ganzen Bibliothek möglich.
+fastembed==0.8.0
+
+# Kommen mit fastembed, werden aber vom Build ausdrücklich ins Bündel kopiert
+# (collect_all in build/echoarchive.spec) - deshalb hier mit festgenagelt,
+# sonst landet im Installer etwas anderes als lokal getestet.
+onnxruntime==1.28.0
+tokenizers==0.23.1
+huggingface-hub==1.24.0
+
+pywebview==6.2.1
+certifi==2026.6.17
+pyobjc-framework-Vision==12.2.2; sys_platform == "darwin"
 # Windows: Word-COM-Automation (exakte Seitenzahlen) + pywebview-Backend (EdgeChromium)
-pywin32>=306; sys_platform == "win32"
-pythonnet>=3.0; sys_platform == "win32"
+pywin32==312; sys_platform == "win32"
+pythonnet==3.1.0; sys_platform == "win32"

@@ -434,6 +434,9 @@
   .ujob.done .st { color: var(--accent-ink); font-weight: 600; }
   .ujob.err .st { color: var(--err); font-weight: 600; }
   .ujob.skip { opacity: .6; }
+  /* Hinweise der Extraktion (z. B. geschätzte Seitenzahlen) – ruhig, aber sichtbar. */
+  .ujobHint { font-size: 12px; color: var(--muted); margin-top: 2px;
+    line-height: 1.45; }
   /* Technischer Klartext bei Fehlern – auswählbar zum Kopieren/Melden. */
   /* Immer LTR/linksbündig: der technische Grund ist lateinischer Text. In der
      arabischen (RTL-)Oberfläche wurde er sonst umgedreht und unlesbar. */
@@ -671,6 +674,7 @@
       <button class="navItem subtle" id="importBtn"><span class="ci" data-ic="import"></span><span id="importLabel"></span></button>
       <button class="navItem subtle" id="langBtn"><span class="ci" data-ic="globe"></span><span id="langLabel"></span></button>
       <button class="navItem subtle" id="logBtn"><span class="ci" data-ic="page"></span><span id="logLabel"></span></button>
+      <button class="navItem subtle" id="diagBtn"><span class="ci" data-ic="page"></span><span id="diagLabel"></span></button>
       <div id="versionLabel" class="verLabel"></div>
     </div>
   </nav>
@@ -1102,7 +1106,11 @@ const T = {
               kein_pdf: "Die Datei ist keine gültige PDF-Datei.",
               zip_kaputt: "Die Datei ist keine gültige .echolib-Datei.",
               datei_fehlt: "Die Datei wurde nicht gefunden.",
+              bibliothek_fehlt: "Ein Programmteil zum Lesen dieses Dateityps konnte auf diesem Gerät nicht geladen werden.",
               generisch: "Die Datei konnte nicht eingelesen werden." },
+    unsupportedFile: "{n} – dieses Format wird nicht unterstützt. Möglich sind PDF, Word (.docx, .doc, .rtf, .odt) und Text (.txt).",
+    diagTitle: "Systemprüfung", diagBtn: "Systemprüfung",
+    diagCopy: "Bericht kopieren", diagRetrySem: "Bedeutungssuche erneut versuchen",
     copyReport: "Fehlerbericht kopieren", copiedReport: "Fehlerbericht kopiert",
     copyFailed: "Kopieren nicht möglich – Text bitte von Hand markieren.",
     showLog: "Protokoll anzeigen", logTitle: "Protokoll",
@@ -1238,7 +1246,11 @@ const T = {
               kein_pdf: "الملف ليس ملف PDF صالحًا.",
               zip_kaputt: "الملف ليس ملف ‎.echolib‎ صالحًا.",
               datei_fehlt: "لم يتم العثور على الملف.",
+              bibliothek_fehlt: "تعذّر تحميل مكوّن البرنامج اللازم لقراءة هذا النوع من الملفات على هذا الجهاز.",
               generisch: "تعذّرت قراءة الملف." },
+    unsupportedFile: "{n} – هذا التنسيق غير مدعوم. المدعوم: PDF ووورد (‎.docx، .doc، .rtf، .odt‎) ونص (‎.txt‎).",
+    diagTitle: "فحص النظام", diagBtn: "فحص النظام",
+    diagCopy: "نسخ التقرير", diagRetrySem: "إعادة محاولة البحث الدلالي",
     copyReport: "نسخ تقرير الخطأ", copiedReport: "تم نسخ تقرير الخطأ",
     copyFailed: "تعذّر النسخ – يرجى تحديد النص يدويًا.",
     showLog: "عرض السجل", logTitle: "السجل",
@@ -1284,6 +1296,7 @@ function applyLang(l) {
   set("clearJobsBtn", d.clearDone); set("updateLabel", d.updateAvail);
   set("exportLabel", d.exportLabel); set("importLabel", d.importLabel);
   set("langLabel", d.langLabel); set("logLabel", d.showLog);
+  set("diagLabel", d.diagBtn);
   set("selAllLabel", d.selAllLabel);
   set("collTitle", d.collectionsTitle); set("collAuthorsLabel", d.collByAuthors);
   set("collCatsLabel", d.collByCategories);
@@ -1335,6 +1348,8 @@ const API = {
   clear_jobs:()=>_post("/api/clear_jobs",{}),
   protokoll:lines=>_post("/api/protokoll",{lines}),
   open_protokoll:()=>_post("/api/open_protokoll",{}),
+  diagnose:()=>_get("/api/diagnose"),
+  semantik_neu:()=>_post("/api/semantik_neu",{}),
   pages:(document_id,from,to,terms)=>_post("/api/pages",{document_id,from,to,terms}),
   meta_get:key=>_post("/api/meta_get",{key}),
   meta_set:(key,value)=>_post("/api/meta_set",{key,value}),
@@ -2091,6 +2106,46 @@ async function openLog(){
   const text=(r.text||"").trim()||t("logEmpty");
   showLogBox(t("logTitle"),text,r.path||"");
 }
+// Systemprüfung: zeigt für JEDE Komponente, ob sie auf DIESEM Gerät vorhanden
+// ist. Damit lässt sich ein Problem auf einem fremden Rechner benennen, statt
+// es zu erraten.
+async function openDiagnose(){
+  let b=null;
+  try{ b=await api().diagnose(); }catch(e){}
+  if(!b)return showError(t("logUnavailable"));
+  const ja="ja", nein="nein";
+  const zeilen=[
+    ["Version", b.version],
+    ["System", `${b.system} · Python ${b.python} · gepackt=${b.gepackt?ja:nein}`],
+    ["PDF-Bibliothek", b.pdf],
+    ["PDF-Ersatzweg", b.pdf_ersatz?ja:nein],
+    ["Texterkennung", b.ocr],
+    ["Microsoft Word", b.word?ja:nein],
+    ["LibreOffice", b.libreoffice?ja:nein],
+    ["Bedeutungssuche", b.semantik + (b.semantik_grund?` – ${b.semantik_grund}`:"")],
+    ["Datenordner", `${b.datenordner} (beschreibbar=${b.datenordner_ok?ja:nein}, frei=${b.frei_gb} GB)`],
+    ["Datenbank", `${b.db_mb} MB`],
+  ];
+  if(b.webview2!==undefined) zeilen.push(["WebView2", b.webview2]);
+  if(b.datenordner_hinweis) zeilen.push(["Hinweis", b.datenordner_hinweis]);
+  const text=zeilen.map(([k,v])=>`${k}: ${v}`).join("\n");
+  showLogBox(t("diagTitle"),text,b.protokoll||"");
+  // Ist die Bedeutungssuche abgeschaltet, direkt einen Knopf zum erneuten
+  // Versuchen anbieten.
+  const ov=$("#logModal");
+  if(ov && (b.semantik==="aus"||b.semantik==="fehler")){
+    let btn=ov.querySelector(".semRetry");
+    if(!btn){
+      btn=document.createElement("button");btn.className="btn ghost semRetry";
+      ov.querySelector(".cmBtns").prepend(btn);
+    }
+    btn.textContent=t("diagRetrySem");
+    btn.style.display="";
+    btn.onclick=async()=>{ try{ await api().semantik_neu(); showToast(t("diagRetrySem")); }catch(e){} closeLogBox(); };
+  }else if(ov){
+    const btn=ov.querySelector(".semRetry"); if(btn)btn.style.display="none";
+  }
+}
 function showLogBox(titel,text,pfad){
   let ov=$("#logModal");
   if(!ov){
@@ -2181,12 +2236,16 @@ async function refreshStatus(){
       el.className="ujob"+(j.state==="fehler"?" err":j.state==="fertig"?" done":j.state==="übersprungen"?" skip":"");
       const label=j.state==="übersprungen"?`${t("jobs")&&T[lang].jobs["übersprungen"]} – ${esc(j.error||"")}`:esc(jobLabel(j));
       const detail=(j.state==="fehler"&&j.error_detail)?`<div class="ujobErr">${esc(j.error_detail)}</div>`:"";
+      // Hinweise der Extraktion (kaputte Textschicht, geschätzte Seitenzahlen,
+      // Ersatzweg) sichtbar machen – bisher wurden sie stillschweigend verworfen.
+      const hinweise=(j.hinweise&&j.hinweise.length)
+        ? `<div class="ujobHint">${j.hinweise.map(h=>esc(h)).join("<br>")}</div>` : "";
       // Fehlerzeilen bekommen zwei Knöpfe: den Bericht in die Zwischenablage
       // (zum Weitergeben) und das vollständige Protokoll (mit Traceback).
       const acts=j.state==="fehler"
         ? `<div class="ujobActs"><button class="btn sm ghost jCopy">${esc(t("copyReport"))}</button>
            <button class="btn sm ghost jLog">${esc(t("showLog"))}</button></div>` : "";
-      el.innerHTML=`<div class="ujobTop">${svg("page")}<span>${esc(j.file)}</span><span class="st">${label}</span></div>${jobBarHTML(j)}${detail}${acts}`;
+      el.innerHTML=`<div class="ujobTop">${svg("page")}<span>${esc(j.file)}</span><span class="st">${label}</span></div>${jobBarHTML(j)}${detail}${hinweise}${acts}`;
       if(j.state==="fehler"){
         const c=el.querySelector(".jCopy");if(c)c.onclick=()=>copyReport(j);
         const l=el.querySelector(".jLog");if(l)l.onclick=()=>openLog();
@@ -2214,7 +2273,10 @@ const dz=$("#dropzone");
 dz.addEventListener("drop",async e=>{
   const files=[...(e.dataTransfer?e.dataTransfer.files:[])];
   for(const f of files){
-    if(!/\.(pdf|docx|txt)$/i.test(f.name)){showError(f.name+" – ?");continue;}
+    // Nicht unterstützte Formate mit KLARER Begründung ablehnen. Vorher stand
+    // dort nur „Dateiname – ?", was niemand deuten konnte.
+    if(!/\.(pdf|docx|docm|doc|rtf|odt|txt|md)$/i.test(f.name)){
+      showError(t("unsupportedFile").replace("{n}", f.name));continue;}
     const el=document.createElement("div");el.className="ujob";
     el.innerHTML=`<div class="ujobTop">${svg("page")}<span>${esc(f.name)}</span><span class="st">${esc(t("uploading"))}</span></div><div class="pbar"><div class="pfill indet"></div></div>`;
     $("#uploadJobs").prepend(el);
@@ -2225,6 +2287,7 @@ dz.addEventListener("drop",async e=>{
 $("#pickBtn").onclick=async()=>{try{const r=await api().pick_and_index();if(r&&r.error)showError(r.error);}catch(e){showError(String(e));}refreshStatus();};
 $("#clearJobsBtn").onclick=async()=>{try{await api().clear_jobs();}catch(e){}refreshStatus();};
 $("#logBtn").onclick=()=>openLog();
+$("#diagBtn").onclick=()=>openDiagnose();
 
 /* ---------- Such-Panel (überall gleich: Felder statt Syntax) ---------- */
 // cfg: { groupsBox, excludeArea, excludeGroup, excludeInput, state, onSearch }

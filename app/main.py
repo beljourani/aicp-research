@@ -328,7 +328,9 @@ def systempruefung() -> dict:
     # PDF-Bibliothek – der häufigste stille Ausfall.
     try:
         import fitz
-        b["pdf"] = f"PyMuPDF {getattr(fitz, '__doc__', '').strip()[:20] or 'ok'}"
+        fassung = (getattr(fitz, "__version__", "")
+                   or getattr(fitz, "VersionBind", "") or "")
+        b["pdf"] = f"PyMuPDF {fassung}".strip()
         b["pdf_ok"] = True
     except Exception as e:
         b["pdf"] = f"NICHT LADBAR: {type(e).__name__}: {e}"[:200]
@@ -1631,6 +1633,13 @@ class Core:
     def upload(self, filename: str, data: bytes):
         """Per Drag&Drop übertragene Datei speichern und indexieren."""
         safe = os.path.basename(filename) or "datei"
+        # Auch serverseitig prüfen: bisher filterte nur die Oberfläche, der
+        # Server nahm JEDE Datei entgegen und stellte sie in die Warteschlange.
+        from echo_engine.extract import UNTERSTUETZTE_ENDUNGEN
+        if os.path.splitext(safe)[1].lower() not in UNTERSTUETZTE_ENDUNGEN:
+            return {"started": 0,
+                    "error": f"„{safe}“ hat ein nicht unterstütztes Format. "
+                             f"Unterstützt werden PDF, Word, Text."}
         updir = data_dir() / "uploads"
         updir.mkdir(parents=True, exist_ok=True)
         dest = updir / safe
@@ -1656,7 +1665,8 @@ class Core:
             dialog_type = fd.OPEN if fd else webview.OPEN_DIALOG
             paths = self.window.create_file_dialog(
                 dialog_type, allow_multiple=True,
-                file_types=("Dokumente (*.pdf;*.docx;*.txt)",))
+                file_types=("Dokumente (*.pdf;*.docx;*.docm;*.doc;*.rtf;"
+                            "*.odt;*.txt;*.md)", "Alle Dateien (*.*)"))
         except Exception as e:
             return {"started": 0,
                     "error": f"Dateidialog: {fehler_melden('Dateidialog', e)}"}
@@ -1820,8 +1830,10 @@ class Core:
             # Und: entfernt wird über engine_delete_documents, nie mit einem
             # nackten DELETE – sonst bleiben Zeilen im Volltextindex stehen und
             # erzeugen Geistertreffer (siehe indexer.delete_documents).
+            warnungen: list = []
             doc_id = index_document(con, path, title=title, author=author,
-                                    force_ocr=force_ocr, progress=progress)
+                                    force_ocr=force_ocr, progress=progress,
+                                    warnungen=warnungen)
             # S-2: Ein Dokument OHNE einen einzigen Textabschnitt (nur leere
             # Seiten, kaputte Datei) ist wertlos und darf nicht still in der
             # Bibliothek landen – sonst verstopfen leere Blätter jede Suche.
@@ -1877,6 +1889,14 @@ class Core:
             con.close()
             self._jobs[job_id]["state"] = "fertig"
             self._jobs[job_id]["pct"] = 100
+            # Hinweise der Extraktion sichtbar machen (statt sie zu verwerfen):
+            # „kaputte Textschicht", „Seitenzahlen können abweichen",
+            # „per Ersatzweg gelesen" sind für ein Zitierwerkzeug wichtig.
+            wichtige = [w for w in warnungen
+                        if "exakt wie in Word" not in w]
+            if wichtige:
+                self._jobs[job_id]["hinweise"] = wichtige
+                protokolliere(f"HINWEIS {job_id} | " + " | ".join(wichtige))
         except Exception as e:
             # Auch nach einem Fehler keine Dateileiche hinterlassen.
             if replace_id is None:

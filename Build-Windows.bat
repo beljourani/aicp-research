@@ -13,8 +13,13 @@ echo ==========================================================
 echo.
 
 REM --- 1. Python suchen ---------------------------------------
+REM Bevorzugt Python 3.12 - genau die Version, mit der die veroeffentlichten
+REM Installer gebaut werden (.github/workflows/build-windows.yml). Mit einer
+REM anderen Python-Version zieht pip andere Rad-Dateien; der lokal gebaute
+REM Installer waere dann nicht derselbe wie der ausgelieferte.
 set "PYCMD="
-where py  >nul 2>&1 && set "PYCMD=py -3"
+py -3.12 --version >nul 2>&1 && set "PYCMD=py -3.12"
+if not defined PYCMD ( where py >nul 2>&1 && set "PYCMD=py -3" )
 if not defined PYCMD ( where python >nul 2>&1 && set "PYCMD=python" )
 if not defined PYCMD (
   echo [FEHLER] Python wurde nicht gefunden.
@@ -24,50 +29,89 @@ if not defined PYCMD (
   pause
   exit /b 1
 )
-echo [1/7] Python gefunden.
+echo [1/8] Python gefunden:
+%PYCMD% --version
 
 REM --- 2. Virtuelle Umgebung ---------------------------------
+REM Hinweis: Die Umgebung wird nur einmal angelegt. Wenn hier spaeter eine
+REM andere Python-Version stehen soll, den Ordner .venv loeschen.
 if not exist ".venv\Scripts\python.exe" (
-  echo [2/7] Erstelle virtuelle Umgebung ...
+  echo [2/8] Erstelle virtuelle Umgebung ...
   %PYCMD% -m venv .venv || ( echo [FEHLER] venv konnte nicht erstellt werden. & pause & exit /b 1 )
 ) else (
-  echo [2/7] Virtuelle Umgebung vorhanden.
+  echo [2/8] Virtuelle Umgebung vorhanden.
 )
 set "VPY=.venv\Scripts\python.exe"
+"%VPY%" --version
 
 REM --- 3. Abhaengigkeiten ------------------------------------
-echo [3/7] Installiere Abhaengigkeiten ^(kann einige Minuten dauern^) ...
+echo [3/8] Installiere Abhaengigkeiten ^(kann einige Minuten dauern^) ...
 "%VPY%" -m pip install --upgrade pip >nul
 "%VPY%" -m pip install -r requirements.txt pyinstaller || ( echo [FEHLER] pip-Installation fehlgeschlagen. & pause & exit /b 1 )
 
 REM --- 4. Embedding-Modell buendeln --------------------------
 if not exist "build\models" (
-  echo [4/7] Lade Embedding-Modell ^(einmalig, ca. 150 MB^) ...
+  echo [4/8] Lade Embedding-Modell ^(einmalig, ca. 150 MB^) ...
   "%VPY%" -c "import sys; sys.path.insert(0,'engine'); from echo_engine.semantic import MODEL_NAME; from fastembed import TextEmbedding; TextEmbedding(MODEL_NAME, cache_dir='build/models')" || ( echo [FEHLER] Modell-Download fehlgeschlagen. & pause & exit /b 1 )
 ) else (
-  echo [4/7] Embedding-Modell bereits vorhanden.
+  echo [4/8] Embedding-Modell bereits vorhanden.
 )
 
 REM --- 5. Tesseract-OCR (optional, fuer Scans) ---------------
+REM Sprachdateien aus tessdata_BEST - dieselbe Quelle wie in der CI
+REM (.github/workflows/build-windows.yml). Frueher stand hier tessdata_fast:
+REM die Modelle sind kleiner, erkennen arabische Scans aber deutlich
+REM schlechter. Ein lokal gebauter Installer las damit anderen Text als der
+REM ausgelieferte - genau das soll nicht sein.
+REM osd.traineddata erkennt das Schriftsystem der ersten Seite. Fehlt es,
+REM nimmt extract.py stumm seinen Rueckfall "ara" an und liest deutsche Scans
+REM mit dem arabischen Modell.
 if not exist "build\tesseract\tesseract.exe" (
-  echo [5/7] Lade Tesseract-OCR ^(fuer eingescannte Dokumente^) ...
+  echo [5/8] Lade Tesseract-OCR ^(fuer eingescannte Dokumente^) ...
   set "TSETUP=%TEMP%\echo-tess-setup.exe"
   powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest 'https://digi.bib.uni-mannheim.de/tesseract/tesseract-ocr-w64-setup-5.3.3.20231005.exe' -OutFile '!TSETUP!' -UseBasicParsing } catch { exit 1 }"
   if exist "!TSETUP!" (
     "!TSETUP!" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="%CD%\build\tesseract"
-    if exist "build\tesseract\tessdata" (
-      powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest 'https://github.com/tesseract-ocr/tessdata_fast/raw/main/ara.traineddata' -OutFile 'build\tesseract\tessdata\ara.traineddata' -UseBasicParsing" 2>nul
-      powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest 'https://github.com/tesseract-ocr/tessdata_fast/raw/main/deu.traineddata' -OutFile 'build\tesseract\tessdata\deu.traineddata' -UseBasicParsing" 2>nul
-    )
   ) else (
     echo    [Hinweis] Tesseract konnte nicht geladen werden - OCR fuer Scans laesst sich spaeter nachruesten.
   )
 ) else (
-  echo [5/7] Tesseract-OCR bereits vorhanden.
+  echo [5/8] Tesseract-OCR bereits vorhanden.
+)
+REM Die Merkdatei liegt bewusst ausserhalb von build\tesseract, denn dieser
+REM Ordner wandert vollstaendig in die App - dort soll kein Beiwerk landen.
+if exist "build\tesseract\tessdata" (
+  if not exist "build\tessdata-best.ok" (
+    for %%L in (ara deu eng osd) do (
+      echo    Lade Sprachdatei %%L ^(tessdata_best^) ...
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest 'https://github.com/tesseract-ocr/tessdata_best/raw/main/%%L.traineddata' -OutFile 'build\tesseract\tessdata\%%L.traineddata' -UseBasicParsing } catch { Write-Host '   [Hinweis] %%L konnte nicht geladen werden.' }"
+    )
+    if exist "build\tesseract\tessdata\ara.traineddata" (
+      powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Content -Path 'build\tessdata-best.ok' -Value 'Sprachdateien stammen aus tessdata_best' -Encoding ascii"
+    )
+  )
 )
 
-REM --- 6. App bauen ------------------------------------------
-echo [6/7] Baue die App mit PyInstaller ...
+REM --- 6. WebView2-Bootstrapper besorgen ---------------------
+REM Das App-Fenster ist ein Browser-Fenster (pywebview). Fehlt die
+REM WebView2-Laufzeit, faellt pywebview auf die Internet-Explorer-Engine
+REM zurueck und der Nutzer sieht ein WEISSES FENSTER ohne Meldung. Der
+REM Bootstrapper wird in den Installer gepackt und dort nur gestartet, wenn
+REM die Laufzeit wirklich fehlt (build\installer.iss).
+if not exist "build\MicrosoftEdgeWebview2Setup.exe" (
+  echo [6/8] Lade den WebView2-Bootstrapper ^(ca. 2 MB^) ...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile 'build\MicrosoftEdgeWebview2Setup.exe' -UseBasicParsing; if ((Get-Item 'build\MicrosoftEdgeWebview2Setup.exe').Length -lt 500000) { Remove-Item 'build\MicrosoftEdgeWebview2Setup.exe' -Force; exit 1 } } catch { exit 1 }"
+  if not exist "build\MicrosoftEdgeWebview2Setup.exe" (
+    echo    [Hinweis] Bootstrapper konnte nicht geladen werden - der Installer
+    echo    wird ohne ihn gebaut ^(auf Rechnern ohne WebView2 bleibt das
+    echo    Fenster dann weiss^).
+  )
+) else (
+  echo [6/8] WebView2-Bootstrapper bereits vorhanden.
+)
+
+REM --- 7. App bauen ------------------------------------------
+echo [7/8] Baue die App mit PyInstaller ...
 REM Laufende Instanz beenden und alten Build entfernen
 REM (sonst "Zugriff verweigert", weil die EXE ihre Dateien sperrt).
 taskkill /F /IM AICPResearch.exe >nul 2>&1
@@ -81,8 +125,8 @@ if exist "dist\AICPResearch" (
 )
 "%VPY%" -m PyInstaller --noconfirm --distpath dist --workpath build\pyi build\echoarchive.spec || ( echo [FEHLER] PyInstaller-Build fehlgeschlagen. & pause & exit /b 1 )
 
-REM --- 7. Installer bauen ------------------------------------
-echo [7/7] Erzeuge den Installer ...
+REM --- 8. Installer bauen ------------------------------------
+echo [8/8] Erzeuge den Installer ...
 
 call :FIND_ISCC
 

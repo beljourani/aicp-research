@@ -14,3 +14,7 @@ tools/diagnose_ergebnis.txt
 tools/probe.txt
 tools/ocr_benchmark.html
 tools/ocr_vergleich.html
+
+# Baureste (siehe Build-Skripte)
+build/MicrosoftEdgeWebview2Setup.exe
+build/tessdata-best.ok

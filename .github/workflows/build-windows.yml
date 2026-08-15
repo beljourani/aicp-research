@@ -47,9 +47,104 @@ jobs:
           Invoke-WebRequest https://github.com/tesseract-ocr/tessdata_best/raw/main/deu.traineddata -OutFile build\tesseract\tessdata\deu.traineddata
           # Englisch (fuer gemischte Dokumente) ebenfalls als bestes Modell.
           Invoke-WebRequest https://github.com/tesseract-ocr/tessdata_best/raw/main/eng.traineddata -OutFile build\tesseract\tessdata\eng.traineddata
+          # OSD ("orientation and script detection") erkennt das Schriftsystem
+          # der ersten Seite. Ohne diese Datei scheitert die Erkennung stumm und
+          # extract.py nimmt seinen Rueckfall "ara" an - ein deutscher Scan
+          # wuerde dann mit dem arabischen Modell gelesen. Bisher kam die Datei
+          # nur zufaellig ueber das Chocolatey-Paket mit; hier wird sie
+          # ausdruecklich geholt, damit sie sicher im Buendel liegt.
+          Invoke-WebRequest https://github.com/tesseract-ocr/tessdata_best/raw/main/osd.traineddata -OutFile build\tesseract\tessdata\osd.traineddata
+
+      - name: WebView2-Bootstrapper besorgen
+        shell: pwsh
+        run: |
+          # Das App-Fenster ist ein Browser-Fenster (pywebview). Fehlt die
+          # WebView2-Laufzeit, faellt pywebview auf die Internet-Explorer-Engine
+          # zurueck: der Nutzer sieht ein WEISSES FENSTER ohne jede Meldung.
+          # Der Bootstrapper (ca. 2 MB) wird in den Installer gepackt und dort
+          # NUR gestartet, wenn die Laufzeit tatsaechlich fehlt (build/installer.iss).
+          Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' `
+            -OutFile build\MicrosoftEdgeWebview2Setup.exe -UseBasicParsing
+          $groesse = (Get-Item build\MicrosoftEdgeWebview2Setup.exe).Length
+          Write-Host "WebView2-Bootstrapper: $groesse Bytes"
+          # Sicherheitsnetz: bei einem Umleitungs- oder Fehlerfall laedt man
+          # sonst eine HTML-Seite herunter und packt sie als "Setup" ein.
+          if ($groesse -lt 500000) {
+            Write-Host "::error::WebView2-Bootstrapper wurde nicht vollstaendig geladen."
+            exit 1
+          }
 
       - name: App bauen
         run: python -m PyInstaller --noconfirm --distpath dist --workpath build/pyi build/echoarchive.spec
+
+      - name: Bündel prüfen (bricht ab, wenn etwas fehlt)
+        shell: pwsh
+        run: |
+          # Warum dieser Schritt: Fehlt im Buendel ein Baustein, baut PyInstaller
+          # trotzdem klaglos durch. Der Fehler faellt erst auf dem Rechner des
+          # Nutzers auf - und dort meist stumm (semantische Suche findet nichts,
+          # OCR raet die Sprache, PDF laesst sich nicht oeffnen). Deshalb hier
+          # hart abbrechen, solange noch niemand den Installer bekommen hat.
+          $dist   = "dist\AICPResearch"
+          $intern = "$dist\_internal"
+          $fehler = @()
+
+          # 1) Einzelne Dateien, die es geben MUSS
+          $pflicht = @(
+            "$dist\AICPResearch.exe",
+            # Visual-C++-Laufzeit: onnxruntime und numpy brauchen sie. Fehlt
+            # sie, meldet Windows nur "DLL load failed".
+            "$intern\msvcp140.dll",
+            "$intern\vcruntime140_1.dll",
+            # OCR fuer eingescannte Buecher
+            "$intern\tesseract\tesseract.exe",
+            "$intern\tesseract\tessdata\ara.traineddata",
+            "$intern\tesseract\tessdata\deu.traineddata",
+            "$intern\tesseract\tessdata\eng.traineddata",
+            "$intern\tesseract\tessdata\osd.traineddata"
+          )
+          foreach ($datei in $pflicht) {
+            if (-not (Test-Path -LiteralPath $datei)) { $fehler += "fehlt: $datei" }
+          }
+
+          # 2) Ordner, die vorhanden UND nicht leer sein muessen
+          foreach ($ordner in @("$intern\models", "$intern\ui")) {
+            if (-not (Test-Path -LiteralPath $ordner)) {
+              $fehler += "fehlt: $ordner"
+            } elseif (-not (Get-ChildItem -LiteralPath $ordner -Recurse -File | Select-Object -First 1)) {
+              $fehler += "leer: $ordner"
+            }
+          }
+
+          # 3) Python-Module. Reine Python-Pakete landen NICHT als Ordner in
+          #    _internal, sondern im Archiv innerhalb der EXE - ein Ordner-Test
+          #    wuerde sie faelschlich als fehlend melden. Deshalb in den
+          #    Inhaltsverzeichnissen von PyInstaller (*.toc) und ersatzweise in
+          #    der EXE selbst nachsehen; die Modulnamen stehen dort im Klartext.
+          $toc = ""
+          $tocDateien = Get-ChildItem build\pyi -Recurse -Filter '*.toc' -ErrorAction SilentlyContinue
+          if ($tocDateien) { $toc = ($tocDateien | Get-Content -Raw) -join "`n" }
+          $exe = ""
+          if (Test-Path -LiteralPath "$dist\AICPResearch.exe") {
+            $exe = [System.Text.Encoding]::ASCII.GetString(
+              [System.IO.File]::ReadAllBytes("$dist\AICPResearch.exe"))
+          }
+          # huggingface_hub laedt fastembed beim Import; pypdf ist der
+          # PDF-Rueckfall; docx liest Word-Dateien.
+          foreach ($modul in @('huggingface_hub', 'pypdf', 'fastembed', 'onnxruntime', 'docx', 'fitz')) {
+            if (-not $toc.Contains($modul) -and -not $exe.Contains($modul)) {
+              $fehler += "Modul nicht im Buendel: $modul"
+            }
+          }
+
+          if ($fehler.Count -gt 0) {
+            Write-Host "::error::Das Buendel ist unvollstaendig - Build abgebrochen."
+            $fehler | ForEach-Object { Write-Host "  - $_" }
+            exit 1
+          }
+          $mb = [math]::Round((Get-ChildItem $dist -Recurse -File |
+                Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+          Write-Host "Buendel vollstaendig geprueft ($mb MB)."
 
       - name: Installer bauen (Inno Setup)
         shell: pwsh
