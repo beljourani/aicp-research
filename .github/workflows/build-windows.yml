@@ -55,6 +55,27 @@ jobs:
           # ausdruecklich geholt, damit sie sicher im Buendel liegt.
           Invoke-WebRequest https://github.com/tesseract-ocr/tessdata_best/raw/main/osd.traineddata -OutFile build\tesseract\tessdata\osd.traineddata
 
+      - name: Tests (Sperre – ohne grüne Tests kein Release)
+        shell: pwsh
+        run: |
+          # Diese Stufe ist bewusst VOR dem Bauen: schlaegt ein Fall fehl,
+          # entsteht erst gar kein Installer. Die Szenario-Matrix deckt
+          # Dateitypen, Kodierungen, Sprachen, kaputte Dateien und simulierte
+          # Geraete ohne PyMuPDF/Word/Konverter ab.
+          $env:PYTHONUTF8 = "1"
+          $tests = @("test_engine","test_boolean_search","test_highlight",
+                     "test_categories","test_authors","test_textlayout",
+                     "test_bookmarks","test_hybrid","test_library_io",
+                     "test_szenarien")
+          foreach ($t in $tests) {
+            Write-Host "--- $t ---"
+            python "engine/tests/$t.py"
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::$t ist fehlgeschlagen - kein Release."
+              exit 1
+            }
+          }
+
       - name: Dokument-Schriften bündeln
         shell: pwsh
         run: |

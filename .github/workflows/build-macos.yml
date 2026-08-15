@@ -45,6 +45,20 @@ jobs:
       - name: Embedding-Modell bündeln
         run: python -c "import sys; sys.path.insert(0,'engine'); from echo_engine.semantic import MODEL_NAME; from fastembed import TextEmbedding; TextEmbedding(MODEL_NAME, cache_dir='build/models')"
 
+      - name: Tests (Sperre – ohne grüne Tests kein Release)
+        run: |
+          # Bewusst VOR dem Bauen: schlaegt ein Fall fehl, entsteht erst gar
+          # kein Programm. Laeuft auf macOS, weil sich hier die Wege
+          # unterscheiden (Apple Vision statt Tesseract, Word ueber AppleScript).
+          set -e
+          export PYTHONUTF8=1
+          for t in test_engine test_boolean_search test_highlight \
+                   test_categories test_authors test_textlayout \
+                   test_bookmarks test_hybrid test_library_io test_szenarien; do
+            echo "--- $t ---"
+            python "engine/tests/$t.py" || { echo "::error::$t fehlgeschlagen - kein Release."; exit 1; }
+          done
+
       - name: Dokument-Schriften bündeln
         run: |
           # Bestimmen die Seitenumbrueche der Word-Umwandlung; aus dem Netz
