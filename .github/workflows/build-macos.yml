@@ -45,6 +45,26 @@ jobs:
       - name: Embedding-Modell bündeln
         run: python -c "import sys; sys.path.insert(0,'engine'); from echo_engine.semantic import MODEL_NAME; from fastembed import TextEmbedding; TextEmbedding(MODEL_NAME, cache_dir='build/models')"
 
+      - name: Dokument-Schriften bündeln
+        run: |
+          # Bestimmen die Seitenumbrueche der Word-Umwandlung; aus dem Netz
+          # geladen ergaeben sie ohne Internet ANDERE Seitenzahlen.
+          set -e
+          mkdir -p build/docfonts
+          BASIS="https://cdn.jsdelivr.net/gh/google/fonts@main"
+          for f in "ofl/amiri/Amiri-Regular.ttf" "ofl/amiri/Amiri-Bold.ttf" \
+                   "ofl/amiri/Amiri-Italic.ttf" "ofl/amiri/Amiri-BoldItalic.ttf" \
+                   "ofl/tinos/Tinos-Regular.ttf" "ofl/tinos/Tinos-Bold.ttf" \
+                   "ofl/tinos/Tinos-Italic.ttf" "ofl/tinos/Tinos-BoldItalic.ttf"; do
+            name=$(basename "$f")
+            curl -fsSL "$BASIS/$f" -o "build/docfonts/$name"
+            groesse=$(stat -f%z "build/docfonts/$name")
+            if [ "$groesse" -lt 50000 ]; then
+              echo "Schrift $name unbrauchbar (zu klein)"; exit 1
+            fi
+          done
+          echo "Dokument-Schriften: $(ls build/docfonts | wc -l) Dateien"
+
       - name: App bauen
         run: python -m PyInstaller --noconfirm --distpath dist --workpath build/pyi build/echoarchive.spec
 

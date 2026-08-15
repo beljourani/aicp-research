@@ -174,5 +174,20 @@ def connect(path: str | Path = ":memory:") -> sqlite3.Connection:
     con = sqlite3.connect(str(path), timeout=60)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    # WAL braucht gemeinsam nutzbaren Speicher und funktioniert auf
+    # Netzfreigaben nicht zuverlässig. Liegt der Datenordner per
+    # Ordnerumleitung auf einem Laufwerk im Netz (in Firmen üblich), führt das
+    # zu „database is locked" bis hin zu beschädigten Dateien. Deshalb prüfen,
+    # ob der Modus wirklich gesetzt wurde, und sonst auf das klassische
+    # Journal zurückfallen – langsamer, aber überall verlässlich.
+    try:
+        modus = con.execute("PRAGMA journal_mode").fetchone()[0]
+        if str(modus).lower() != "wal":
+            con.execute("PRAGMA journal_mode=DELETE")
+    except sqlite3.DatabaseError:
+        try:
+            con.execute("PRAGMA journal_mode=DELETE")
+        except sqlite3.DatabaseError:
+            pass
     _migrate(con)
     return con

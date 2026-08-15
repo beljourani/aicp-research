@@ -767,7 +767,10 @@ class Core:
                 "jobs": jobs,
                 "update": {"available": bool(up.get("update_available")),
                            "latest": up.get("latest"),
-                           "current": up.get("current")}}
+                           "current": up.get("current"),
+                           # Alte, maschinenweite Installation: sonst wird das
+                           # Update endlos neu angeboten, ohne je zu wirken.
+                           "alt_installiert": up.get("alt_installiert") or ""}}
 
     def clear_jobs(self, _body=None):
         """Entfernt abgeschlossene Einträge (fertig/fehler/übersprungen) aus
@@ -930,13 +933,22 @@ class Core:
                         state=f"lädt … {p}%"))
                 self._jobs["__update__"] = {"file": "Update",
                                             "state": "startet Installer …"}
-                updater.launch_installer(path)
-                # kurz warten, dann App beenden (Installer übernimmt)
-                threading.Timer(1.5, lambda: os._exit(0)).start()
+                # Die App darf sich NUR beenden, wenn der Installer wirklich
+                # läuft. Andernfalls schließt sie sich und kommt nie wieder.
+                if updater.launch_installer(path):
+                    threading.Timer(1.5, lambda: os._exit(0)).start()
+                else:
+                    self._jobs["__update__"] = {
+                        "file": "Update", "state": "fehler",
+                        "error": "Das Update konnte nicht gestartet werden. "
+                                 "Die App läuft unverändert weiter.",
+                        "error_detail": f"Installer: {path}"}
             except Exception as e:
-                traceback.print_exc()
-                self._jobs["__update__"] = {"file": "Update",
-                                            "state": "fehler", "error": str(e)}
+                self._jobs["__update__"] = {
+                    "file": "Update", "state": "fehler",
+                    "error": "Das Update konnte nicht geladen werden. "
+                             "Die App läuft unverändert weiter.",
+                    "error_detail": fehler_melden("Update", e)}
         threading.Thread(target=work, daemon=True).start()
         return {"ok": True}
 
@@ -1629,6 +1641,66 @@ class Core:
                                                      timeout=30)}
         except Exception as e:
             return {"error": str(e)}
+
+    def upload_stream(self, filename: str, strom, laenge: int):
+        """Wie `upload`, liest die Daten aber blockweise aus dem Netzstrom.
+
+        Damit bleibt der Speicherbedarf unabhängig von der Dateigröße. Vor dem
+        Schreiben wird geprüft, ob überhaupt genug Platz frei ist – sonst
+        entstünde eine halbe Datei und ein Fehler mitten im Einlesen."""
+        safe = os.path.basename(filename) or "datei"
+        from echo_engine.extract import UNTERSTUETZTE_ENDUNGEN
+        if os.path.splitext(safe)[1].lower() not in UNTERSTUETZTE_ENDUNGEN:
+            return {"started": 0,
+                    "error": f"„{safe}“ hat ein nicht unterstütztes Format. "
+                             f"Unterstützt werden PDF, Word, Text."}
+        updir = data_dir() / "uploads"
+        try:
+            updir.mkdir(parents=True, exist_ok=True)
+            frei = shutil.disk_usage(str(updir)).free
+            if laenge and frei < laenge + 200_000_000:
+                return {"started": 0,
+                        "error": f"Zu wenig freier Speicherplatz: die Datei "
+                                 f"braucht {laenge // 1_000_000} MB, frei sind "
+                                 f"{frei // 1_000_000} MB."}
+        except Exception as e:
+            return {"started": 0,
+                    "error": fehler_melden(f"Ordner vorbereiten „{safe}“", e)}
+
+        dest = updir / safe
+        stem, suffix = os.path.splitext(safe)
+        n = 1
+        while dest.exists():
+            n += 1
+            dest = updir / f"{stem}-{n}{suffix}"
+        gelesen = 0
+        try:
+            with open(dest, "wb") as f:
+                rest = laenge
+                while rest > 0:
+                    block = strom.read(min(1_048_576, rest))
+                    if not block:
+                        break
+                    f.write(block)
+                    rest -= len(block)
+                    gelesen += len(block)
+        except Exception as e:
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            return {"started": 0,
+                    "error": fehler_melden(f"Datei ablegen „{safe}“", e)}
+        if laenge and gelesen != laenge:
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            return {"started": 0,
+                    "error": "Die Übertragung war unvollständig – bitte die "
+                             "Datei erneut hinzufügen."}
+        self._enqueue(str(dest), dest.name)
+        return {"started": 1}
 
     def upload(self, filename: str, data: bytes):
         """Per Drag&Drop übertragene Datei speichern und indexieren."""
@@ -2570,11 +2642,13 @@ class Handler(BaseHTTPRequestHandler):
                 name = urllib.parse.unquote(
                     self.headers.get("X-Filename") or "datei")
                 length = int(self.headers.get("Content-Length") or 0)
-                data = self.rfile.read(length)
-                self._json(CORE.upload(name, data))
+                # Blockweise direkt auf die Platte schreiben. Vorher lag die
+                # KOMPLETTE Datei im Arbeitsspeicher (und gleich danach noch
+                # einmal beim Schreiben): ein 800-MB-Scan brachte schwache
+                # Geräte an die Grenze oder scheiterte ganz.
+                self._json(CORE.upload_stream(name, self.rfile, length))
             except Exception as e:
-                traceback.print_exc()
-                self._json({"error": str(e)}, 500)
+                self._json({"error": fehler_melden("Upload", e)}, 500)
             return
         fn = ROUTES.get(("POST", self.path))
         if not fn:

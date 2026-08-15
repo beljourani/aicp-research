@@ -7,6 +7,7 @@ Bedarf selbst herunter – der Nutzer muss nie etwas installieren.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -95,11 +96,40 @@ def fonts_dir() -> Path:
     return d
 
 
+def _gebuendelte_docfonts() -> "Path | None":
+    """Ordner mit den mitgelieferten Dokument-Schriften (aus dem Installer).
+
+    Diese Schriften bestimmen die Seitenumbrüche bei der Word-Umwandlung. Wurden
+    sie aus dem Netz geladen, hatte dasselbe Dokument auf einem Rechner OHNE
+    Internet andere Seitenzahlen als auf einem mit – genau das, was die App
+    niemals tun darf. Deshalb kommen sie jetzt aus dem Paket."""
+    import sys
+    if getattr(sys, "frozen", False):
+        p = Path(getattr(sys, "_MEIPASS", "")) / "docfonts"
+        if p.exists():
+            return p
+    # Entwicklung: Ordner im Repo (wird vom Build mitgenommen)
+    p = Path(__file__).resolve().parents[2] / "build" / "docfonts"
+    return p if p.exists() else None
+
+
 def ensure_fonts(progress=None) -> Path:
-    """Lädt die mitgelieferten Notvorrat-Schriften – nur einmal pro Sitzung,
-    aus mehreren Quellen, und immer geräuschlos (nie fatal)."""
+    """Stellt die Dokument-Schriften bereit.
+
+    Zuerst aus dem mitgelieferten Ordner (offline, immer identisch); erst wenn
+    dort etwas fehlt, wird als Notnagel aus dem Netz geladen."""
     global _fonts_tried
     d = fonts_dir()
+    quelle = _gebuendelte_docfonts()
+    if quelle:
+        for name in _FONTS:
+            ziel = d / name
+            herkunft = quelle / name
+            if not ziel.exists() and herkunft.exists():
+                try:
+                    shutil.copy(herkunft, ziel)
+                except Exception:
+                    pass
     missing = [(n, urls) for n, urls in _FONTS.items() if not (d / n).exists()]
     if not missing or _fonts_tried:
         return d

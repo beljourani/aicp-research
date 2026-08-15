@@ -55,6 +55,34 @@ jobs:
           # ausdruecklich geholt, damit sie sicher im Buendel liegt.
           Invoke-WebRequest https://github.com/tesseract-ocr/tessdata_best/raw/main/osd.traineddata -OutFile build\tesseract\tessdata\osd.traineddata
 
+      - name: Dokument-Schriften bündeln
+        shell: pwsh
+        run: |
+          # Diese Schriften bestimmen die Seitenumbrueche der Word-Umwandlung.
+          # Wurden sie zur Laufzeit aus dem Netz geladen, hatte dasselbe
+          # Dokument auf einem Rechner ohne Internet ANDERE Seitenzahlen -
+          # genau das darf die App nie. Darum liegen sie im Paket.
+          New-Item -ItemType Directory -Force build\docfonts | Out-Null
+          $basis = "https://cdn.jsdelivr.net/gh/google/fonts@main"
+          $dateien = @{
+            "Amiri-Regular.ttf"    = "$basis/ofl/amiri/Amiri-Regular.ttf"
+            "Amiri-Bold.ttf"       = "$basis/ofl/amiri/Amiri-Bold.ttf"
+            "Amiri-Italic.ttf"     = "$basis/ofl/amiri/Amiri-Italic.ttf"
+            "Amiri-BoldItalic.ttf" = "$basis/ofl/amiri/Amiri-BoldItalic.ttf"
+            "Tinos-Regular.ttf"    = "$basis/ofl/tinos/Tinos-Regular.ttf"
+            "Tinos-Bold.ttf"       = "$basis/ofl/tinos/Tinos-Bold.ttf"
+            "Tinos-Italic.ttf"     = "$basis/ofl/tinos/Tinos-Italic.ttf"
+            "Tinos-BoldItalic.ttf" = "$basis/ofl/tinos/Tinos-BoldItalic.ttf"
+          }
+          foreach ($n in $dateien.Keys) {
+            $ziel = "build\docfonts\$n"
+            Invoke-WebRequest $dateien[$n] -OutFile $ziel
+            if ((Get-Item $ziel).Length -lt 50000) {
+              Write-Error "Schrift $n unbrauchbar (zu klein)"; exit 1
+            }
+          }
+          Write-Host "Dokument-Schriften: $((Get-ChildItem build\docfonts).Count) Dateien"
+
       - name: WebView2-Bootstrapper besorgen
         shell: pwsh
         run: |

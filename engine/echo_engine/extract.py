@@ -541,13 +541,22 @@ def convert_with_word(path: Path, out_dir: Path) -> Path | None:
             return None
         tmp_pdf = container / (path.stem + ".pdf")
         tmp_pdf.unlink(missing_ok=True)
+        # WICHTIG: Das Ergebnis von `open` verwenden, NICHT `active document`.
+        # Läuft Word bereits mit einem geöffneten Dokument oder erscheint beim
+        # Öffnen ein Dialog, ist `active document` ein ANDERES Dokument – dann
+        # wurde das falsche Buch gewandelt und unter dem Namen dieser Datei in
+        # die Bibliothek gelegt. Ein stiller Inhaltsfehler, der beim Zitieren
+        # nicht auffällt.
+        # Anführungszeichen und Rückstriche im Pfad müssen für AppleScript
+        # maskiert werden, sonst zerfällt das Skript.
+        def _as(p) -> str:
+            return str(p).replace("\\", "\\\\").replace('"', '\\"')
+
         script = (
             'with timeout of 1200 seconds\n'
             'tell application "Microsoft Word"\n'
-            '  set wasRunning to running\n'
-            f'  open POSIX file "{path}"\n'
-            '  set theDoc to active document\n'
-            f'  save as theDoc file name "{tmp_pdf}" '
+            f'  set theDoc to open POSIX file "{_as(path)}"\n'
+            f'  save as theDoc file name "{_as(tmp_pdf)}" '
             'file format format PDF\n'
             '  close theDoc saving no\n'
             'end tell\n'
@@ -968,33 +977,58 @@ def _ocr_sprache(pages, pdf_path) -> str:
     return _osd_sprache(pdf_path)
 
 
+# Wenn das Schriftsystem NICHT bestimmt werden kann, werden alle mitgelieferten
+# Sprachen zusammen benutzt. Vorher wurde in diesem Fall blind „ara" gewählt:
+# ein deutscher Scan ohne OSD-Daten wurde damit mit dem arabischen Modell
+# gelesen – das Ergebnis war Müll, der als Erfolg gespeichert wurde.
+def _alle_sprachen(cmd) -> str:
+    try:
+        tessdata = Path(cmd).parent / "tessdata"
+        da = {p.stem for p in tessdata.glob("*.traineddata")}
+        gewuenscht = [s for s in ("ara", "deu", "eng") if s in da]
+        if gewuenscht:
+            return "+".join(gewuenscht)
+    except Exception:
+        pass
+    return "ara+deu+eng"
+
+
 def _osd_sprache(pdf_path) -> str:
-    """Schriftsystem der ersten Seite via Tesseract-OSD; Rückfall 'ara'."""
+    """Schriftsystem der ersten Seite via Tesseract-OSD.
+
+    Rückfall ist bewusst NICHT „ara", sondern alle verfügbaren Sprachen
+    gemeinsam (siehe oben)."""
     cmd = _tesseract_cmd()
     if not cmd:
         return "ara"
+    rueckfall = _alle_sprachen(cmd)
     tessdata = Path(cmd).parent / "tessdata"
     tdata = ["--tessdata-dir", str(tessdata)] if tessdata.exists() else []
     tmp = Path(tempfile.mkdtemp(prefix="aicp-osd-"))
     try:
         with _fitz().open(pdf_path) as doc:
             if len(doc) == 0:
-                return "ara"
+                return rueckfall
             png = tmp / "osd.png"
             doc[0].get_pixmap(dpi=300).save(str(png))
         out = subprocess.run([cmd, *tdata, "--psm", "0", str(png), "stdout"],
                              capture_output=True, text=True,
                              encoding="utf-8", errors="replace", timeout=60,
                              creationflags=_NO_WINDOW)
+        if out.returncode != 0:
+            fehler = (out.stderr or "").strip().splitlines()
+            print("OSD nicht möglich: "
+                  f"{fehler[0] if fehler else out.returncode}", flush=True)
+            return rueckfall
         m = re.search(r"Script:\s*(\w+)", out.stdout or "")
         skript = (m.group(1) if m else "").lower()
         if skript == "arabic":
             return "ara"
         if skript == "latin":
             return "deu+eng"
-        return "ara"
+        return rueckfall
     except Exception:
-        return "ara"
+        return rueckfall
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

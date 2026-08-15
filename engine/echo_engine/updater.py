@@ -99,6 +99,34 @@ def _pick_asset(assets: list) -> tuple:
     return None, None
 
 
+def zweitinstallation() -> str:
+    """Läuft die App aus einer ALTEN, maschinenweiten Installation?
+
+    Der heutige Installer richtet immer pro Benutzer ein
+    (%LOCALAPPDATA%\\Programs\\AICP Research). Eine ältere Fassung liegt
+    dagegen unter „Programme". Läuft der Nutzer weiterhin die alte Kopie, wird
+    das Update daneben installiert, die Verknüpfung zeigt weiter auf die alte
+    Fassung – und die bietet alle 30 Minuten dasselbe Update erneut an, ohne
+    dass sich je etwas ändert. Diese Endlosschleife wird hier erkannt, damit
+    die App es sagen kann, statt sie stumm zu wiederholen."""
+    if os.name != "nt" or not getattr(sys, "frozen", False):
+        return ""
+    try:
+        eigener = Path(sys.executable).resolve()
+        lokal = os.environ.get("LOCALAPPDATA", "")
+        if lokal and str(eigener).lower().startswith(
+                str(Path(lokal).resolve()).lower()):
+            return ""       # richtige, benutzerbezogene Installation
+        for umgebung in ("PROGRAMFILES", "PROGRAMFILES(X86)"):
+            ordner = os.environ.get(umgebung)
+            if ordner and str(eigener).lower().startswith(
+                    str(Path(ordner).resolve()).lower()):
+                return str(eigener.parent)
+    except Exception:
+        pass
+    return ""
+
+
 def check(repo: str, timeout: int = 8) -> dict:
     """Prüft das neueste Release. Liefert immer ein dict mit 'ok'.
 
@@ -126,6 +154,7 @@ def check(repo: str, timeout: int = 8) -> dict:
     url, name = _pick_asset(data.get("assets", []))
     avail = bool(latest) and is_newer(latest, cur) and bool(url)
     return {"ok": True, "current": cur, "latest": latest,
+            "alt_installiert": zweitinstallation(),
             "update_available": avail, "url": url, "name": name,
             "notes": (data.get("body") or "")[:2000],
             "has_asset": bool(url)}
@@ -153,16 +182,29 @@ def release_notes(repo: str, version: str, timeout: int = 8) -> str:
 
 
 def download_installer(url: str, name: str | None = None, progress=None) -> Path:
-    """Lädt den Installer in einen temporären Ordner und liefert den Pfad."""
+    """Lädt den Installer in einen temporären Ordner und liefert den Pfad.
+
+    Sicherheitsnetz gegen den schlimmsten denkbaren Ablauf: Bricht die
+    Verbindung mitten im Herunterladen ab, OHNE einen Fehler auszulösen (das
+    passiert bei vorzeitigem Verbindungsende), entstand bisher eine
+    abgeschnittene Installationsdatei. Die wurde gestartet, scheiterte
+    unsichtbar (die Meldungen sind unterdrückt) – und die App beendete sich
+    1,5 Sekunden später selbst. Für den Nutzer: die App schließt sich und
+    kommt nie wieder.
+
+    Darum wird jetzt (a) in eine Teildatei geschrieben, (b) die gemeldete
+    Größe geprüft und (c) erst danach auf den endgültigen Namen umbenannt.
+    """
     dest_dir = Path(tempfile.gettempdir()) / "aicp-research-update"
     dest_dir.mkdir(parents=True, exist_ok=True)
     fname = name or os.path.basename(url) or ("installer" + _asset_suffix())
     dest = dest_dir / fname
+    teil = dest.with_name(dest.name + ".part")
     req = urllib.request.Request(url, headers={"User-Agent": "AICP-Research-Updater"})
     with urllib.request.urlopen(req, timeout=60, context=_SSL) as r:
         total = int(r.headers.get("Content-Length") or 0)
         done = 0
-        with open(dest, "wb") as f:
+        with open(teil, "wb") as f:
             while True:
                 chunk = r.read(262144)
                 if not chunk:
@@ -171,6 +213,29 @@ def download_installer(url: str, name: str | None = None, progress=None) -> Path
                 done += len(chunk)
                 if progress and total:
                     progress(int(done * 100 / total))
+    if total and done != total:
+        try:
+            teil.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(
+            f"Download unvollständig ({done} von {total} Bytes) – "
+            f"Update abgebrochen, die App bleibt unverändert.")
+    if done < 1_000_000:
+        # Eine Installationsdatei ist nie so klein; das ist mit Sicherheit eine
+        # Fehlerseite statt des Programms.
+        try:
+            teil.unlink()
+        except OSError:
+            pass
+        raise RuntimeError("Heruntergeladene Datei ist unbrauchbar "
+                           "(zu klein) – Update abgebrochen.")
+    try:
+        if dest.exists():
+            dest.unlink()
+    except OSError:
+        pass
+    teil.rename(dest)
     return dest
 
 
@@ -232,13 +297,31 @@ def launch_installer(path: Path) -> bool:
         subprocess.Popen(["open", str(path)])   # DMG-Rückfall (manuell)
         return False
     elif os.name == "nt":
+        # Der Aufrufer beendet die App, sobald hier True zurückkommt. Deshalb
+        # wird kurz geprüft, ob der Installer WIRKLICH läuft: startet er gar
+        # nicht oder bricht er sofort ab (beschädigte Datei, blockiert), darf
+        # die App auf keinen Fall zumachen – sonst ist sie für den Nutzer weg.
         try:
-            subprocess.Popen(
+            p = subprocess.Popen(
                 [str(path), "/VERYSILENT", "/SUPPRESSMSGBOXES",
                  "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/NORESTART"],
                 close_fds=True)
         except Exception:
-            os.startfile(str(path))  # type: ignore[attr-defined]
+            try:
+                os.startfile(str(path))  # type: ignore[attr-defined]
+                return True
+            except Exception:
+                return False
+        import time as _t
+        for _ in range(20):                 # bis zu 2 Sekunden beobachten
+            code = p.poll()
+            if code is None:
+                return True                 # läuft – jetzt darf die App gehen
+            if code != 0:
+                print(f"Installer sofort beendet (Code {code}) – "
+                      f"Update nicht ausgeführt", flush=True)
+                return False
+            break
         return True
     else:
         subprocess.Popen(["xdg-open", str(path)])

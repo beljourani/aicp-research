@@ -1111,6 +1111,7 @@ const T = {
     unsupportedFile: "{n} – dieses Format wird nicht unterstützt. Möglich sind PDF, Word (.docx, .doc, .rtf, .odt) und Text (.txt).",
     diagTitle: "Systemprüfung", diagBtn: "Systemprüfung",
     diagCopy: "Bericht kopieren", diagRetrySem: "Bedeutungssuche erneut versuchen",
+    oldInstall: "Diese Fassung wurde in einen älteren Ordner installiert. Updates landen daneben und wirken nicht. Bitte die App einmal über die Systemsteuerung deinstallieren und neu installieren.",
     copyReport: "Fehlerbericht kopieren", copiedReport: "Fehlerbericht kopiert",
     copyFailed: "Kopieren nicht möglich – Text bitte von Hand markieren.",
     showLog: "Protokoll anzeigen", logTitle: "Protokoll",
@@ -1251,6 +1252,7 @@ const T = {
     unsupportedFile: "{n} – هذا التنسيق غير مدعوم. المدعوم: PDF ووورد (‎.docx، .doc، .rtf، .odt‎) ونص (‎.txt‎).",
     diagTitle: "فحص النظام", diagBtn: "فحص النظام",
     diagCopy: "نسخ التقرير", diagRetrySem: "إعادة محاولة البحث الدلالي",
+    oldInstall: "تم تثبيت هذه النسخة في مجلد قديم، لذا تُثبَّت التحديثات بجانبها ولا تعمل. يرجى إزالة التطبيق من لوحة التحكم وتثبيته من جديد.",
     copyReport: "نسخ تقرير الخطأ", copiedReport: "تم نسخ تقرير الخطأ",
     copyFailed: "تعذّر النسخ – يرجى تحديد النص يدويًا.",
     showLog: "عرض السجل", logTitle: "السجل",
@@ -2198,6 +2200,12 @@ function applyUpdateBadge(update){
   const up=update||{};
   ub.style.display=up.available?"flex":"none";
   if(up.available&&up.latest)ub.title=`${T[lang].updateAvail}: ${up.latest}`;
+  // Alte, maschinenweite Installation: einmal darauf hinweisen, sonst würde
+  // dasselbe Update endlos angeboten, ohne je zu wirken.
+  if(up.alt_installiert && !window._altHinweisGezeigt){
+    window._altHinweisGezeigt=true;
+    showError(t("oldInstall"));
+  }
 }
 // Langsamer Heartbeat: hält die Update-Erkennung am Leben, auch wenn der
 // Job-Poll (refreshStatus) im Leerlauf stoppt. So erscheint „Update verfügbar"

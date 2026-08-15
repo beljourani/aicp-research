@@ -43,6 +43,13 @@ tess = root / "build" / "tesseract"
 if tess.exists():
     datas.append((str(tess), "tesseract"))
 
+# Dokument-Schriften für die Word-Umwandlung. Sie bestimmen die Seitenumbrüche;
+# wurden sie zur Laufzeit aus dem Netz geladen, hatte dasselbe Dokument ohne
+# Internet andere Seitenzahlen. Darum gehören sie ins Paket.
+docfonts = root / "build" / "docfonts"
+if docfonts.exists():
+    datas.append((str(docfonts), "docfonts"))
+
 # huggingface_hub muss ausdrücklich mit eingesammelt werden: das Paket lädt
 # seine Untermodule verzögert (lazy) über eine Namenstabelle, nicht über
 # normale import-Zeilen. PyInstaller kann solchen Importen nicht folgen und
