@@ -1537,9 +1537,14 @@ class Core:
 
         try:
             con = self._con()
-            if replace_id is not None:
-                con.execute("DELETE FROM documents WHERE id=?", (replace_id,))
-                con.commit()
+            # WICHTIG (Datenverlust): Beim Neu-Einlesen wird das alte Dokument
+            # ERST NACH erfolgreichem Einlesen entfernt. Vorher wurde es sofort
+            # gelöscht und committet – schlug die Extraktion danach fehl (kaputte
+            # Datei, fehlende Bibliothek, Absturz), war das Buch unwiederbringlich
+            # weg, obwohl der Nutzer nur „neu einlesen" wollte.
+            # Und: entfernt wird über engine_delete_documents, nie mit einem
+            # nackten DELETE – sonst bleiben Zeilen im Volltextindex stehen und
+            # erzeugen Geistertreffer (siehe indexer.delete_documents).
             doc_id = index_document(con, path, title=title, author=author,
                                     force_ocr=force_ocr, progress=progress)
             # S-2: Ein Dokument OHNE einen einzigen Textabschnitt (nur leere
@@ -1555,8 +1560,10 @@ class Core:
                 # Ohne diese Zahlen ist von außen nicht zu unterscheiden, welcher
                 # der beiden Fälle vorliegt.
                 grund = self._leer_grund(con, doc_id, path)
-                con.execute("DELETE FROM documents WHERE id=?", (doc_id,))
-                con.commit()
+                # Nur den soeben angelegten (leeren) Eintrag entfernen. Ein
+                # eventuell zu ersetzendes altes Dokument bleibt unangetastet
+                # stehen – lieber die alte Fassung behalten als nichts.
+                engine_delete_documents(con, [doc_id])
                 con.close()
                 protokolliere(f"LEER {job_id} | {umgebung_zeile()} | {grund}")
                 self._jobs[job_id] = {
@@ -1571,6 +1578,11 @@ class Core:
             if keep_created_at:
                 con.execute("UPDATE documents SET created_at=? WHERE id=?",
                             (keep_created_at, doc_id))
+            # Jetzt – und erst jetzt – die alte Fassung entfernen: das neue
+            # Dokument steht vollständig in der Datenbank. Über die Engine-
+            # Funktion, damit keine verwaisten Indexzeilen zurückbleiben.
+            if replace_id is not None and replace_id != doc_id:
+                engine_delete_documents(con, [replace_id])
             # Autoren-Verknüpfungen aus dem (evtl. bei Reindex erhaltenen)
             # Autor-String ableiten – deckt Erst-Upload und Neu-Einlesen ab.
             self._sync_document_authors(con, doc_id)

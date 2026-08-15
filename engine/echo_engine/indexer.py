@@ -13,7 +13,8 @@ from .textlayout import join_wrapped_lines, letter_count
 # Bei Änderungen an Normalisierung/Stemming hochzählen -> der Volltext-
 # index wird beim nächsten App-Start automatisch neu aufgebaut (schnell,
 # ohne die Dokumente neu einzulesen).
-STEM_VERSION = 2
+STEM_VERSION = 3        # 3: Tokenizer erkennt jede Schrift (Umlaute, Persisch,
+#                            Kyrillisch, CJK) statt einer festen Zeichenliste
 
 # Bei Änderungen an der Absatz-Aufbereitung hochzählen -> der gespeicherte
 # Seitentext bereits eingelesener Bücher wird beim nächsten App-Start

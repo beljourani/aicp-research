@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -140,7 +141,11 @@ def _pdf_page_lines(page) -> list[tuple]:
 
 
 def _pdf_page_text(page) -> str:
-    """Seitentext als Absätze. Fällt bei Problemen auf den Rohtext zurück."""
+    """Seitentext als Absätze. Fällt bei Problemen auf den Rohtext zurück.
+
+    Auch der Rückfall ist abgesichert: eine einzelne Seite mit defektem
+    Inhaltsstrom oder kaputter Schrift darf höchstens DIESE Seite kosten,
+    niemals das ganze Buch (vorher riss sie die komplette Extraktion mit)."""
     try:
         text = paragraphs_from_boxes(_pdf_page_lines(page))
         if text:
@@ -148,7 +153,33 @@ def _pdf_page_text(page) -> str:
     except Exception:
         import traceback
         traceback.print_exc()
-    return clean_text(page.get_text("text", sort=True))
+    try:
+        return clean_text(page.get_text("text", sort=True))
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return ""
+
+
+def _extract_pdf_ersatzweg(path: Path, urspruenglich: Exception,
+                           progress=None) -> ExtractResult:
+    """PDF ohne die native Bibliothek lesen (siehe pdf_fallback)."""
+    from . import pdf_fallback
+    if not pdf_fallback.verfuegbar():
+        # Auch der Ersatzweg fehlt: dann den ECHTEN Grund weiterreichen,
+        # damit im Fehlerbericht steht, was auf dem Gerät nicht lädt.
+        raise urspruenglich
+    res = ExtractResult()
+    res.reliability = "sicher"      # Seitengrenzen kommen aus dem PDF selbst
+    res.engine = "PDF (Ersatzweg)"
+    res.pages = pdf_fallback.seiten_lesen(path, progress=progress)
+    res.warnings.append(
+        "Die eingebaute PDF-Bibliothek konnte auf diesem Gerät nicht geladen "
+        "werden; die Datei wurde über den Ersatzweg gelesen. Seitenzahlen "
+        "stimmen, die Absatzaufteilung kann gröber sein.")
+    print(f"PDF-Ersatzweg benutzt ({type(urspruenglich).__name__}: "
+          f"{urspruenglich})", flush=True)
+    return res
 
 
 def extract_pdf(path: Path, force_ocr: bool = False,
@@ -156,7 +187,24 @@ def extract_pdf(path: Path, force_ocr: bool = False,
     res = ExtractResult()
     res.reliability = "sicher"      # PDF = feste, gedruckte Seiten
     res.engine = "PDF"
-    with _fitz().open(path) as doc:
+    try:
+        fitz = _fitz()
+    except Exception as e:
+        # Die native PDF-Bibliothek lässt sich auf diesem Gerät nicht laden.
+        # Statt jede PDF-Datei aufzugeben, den reinen Python-Weg nehmen: die
+        # Seitenzahlen bleiben exakt, nur die Absatzerkennung ist gröber.
+        import traceback
+        traceback.print_exc()
+        return _extract_pdf_ersatzweg(path, e, progress=progress)
+    with fitz.open(path) as doc:
+        # Nur rechte-beschränkte PDFs (kein echtes Benutzerpasswort) lassen sich
+        # mit leerem Passwort freischalten – ein häufiger Fall, der bisher als
+        # „passwortgeschützt" abgewiesen wurde.
+        if getattr(doc, "is_encrypted", False):
+            try:
+                doc.authenticate("")
+            except Exception:
+                pass
         gesamt = len(doc)
         empty_pages = 0
         for i, page in enumerate(doc, start=1):
@@ -176,8 +224,17 @@ def extract_pdf(path: Path, force_ocr: bool = False,
         res.needs_ocr = True
         # Sprache automatisch aus dem Schriftsystem bestimmen (Textebene bzw.
         # OSD) – kein Festnageln auf eine Sprache.
-        ocr_pages = _try_ocr(path, _ocr_sprache(res.pages, path),
-                             progress=progress)
+        # Die GESAMTE OCR-Kette ist abgesichert: schlägt sie fehl (Zeitablauf
+        # auf einer riesigen Seite, fehlende Sprachdaten, abgestürztes
+        # Tesseract), behalten wir die vorhandene Textschicht. Vorher riss ein
+        # einziger Zeitablauf das ganze Buch mit – obwohl brauchbarer Text da war.
+        try:
+            ocr_pages = _try_ocr(path, _ocr_sprache(res.pages, path),
+                                 progress=progress)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            ocr_pages = None
         # Die Textschicht NUR ersetzen, wenn OCR wirklich Text geliefert hat.
         # Sonst (OCR nicht verfügbar oder ohne Ergebnis) die vorhandene – ggf.
         # verstümmelte – Textschicht behalten. NIE leere Seiten speichern, wenn
@@ -199,6 +256,70 @@ def _find_soffice(progress=None) -> str | None:
     """Eingebaute/selbstgeladene Komponente bevorzugen (siehe components.py)."""
     from .components import find_soffice
     return find_soffice(auto_install=True, progress=progress)
+
+
+# Harte Zeitgrenze für alles, was über die Word-Automation läuft. Ohne sie
+# genügt EIN passwortgeschütztes Dokument, um einen Arbeiter dauerhaft zu
+# blockieren: Word zeigt dann einen unsichtbaren (Visible=False!) Dialog, auf
+# den niemand klicken kann. Bei zwei solchen Dateien steht das Einlesen komplett.
+WORD_TIMEOUT = 300          # 5 Minuten je Dokument
+
+
+def _winword_pids() -> set:
+    """Laufende WINWORD.EXE-Prozesse. Damit lassen sich nach einem Abbruch
+    genau die Instanzen beenden, die WIR gestartet haben – die geöffnete
+    Word-Sitzung des Nutzers bleibt unangetastet."""
+    if os.name != "nt":
+        return set()
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq WINWORD.EXE", "/NH", "/FO", "CSV"],
+            capture_output=True, text=True, timeout=20,
+            encoding="utf-8", errors="replace", creationflags=_NO_WINDOW)
+        pids = set()
+        for zeile in (out.stdout or "").splitlines():
+            teile = [t.strip().strip('"') for t in zeile.split('","')]
+            if len(teile) > 1 and teile[1].isdigit():
+                pids.add(int(teile[1]))
+        return pids
+    except Exception:
+        return set()
+
+
+def _beende_pids(pids) -> None:
+    """Beendet übrig gebliebene Word-Instanzen (nur unsere, siehe oben)."""
+    for pid in pids:
+        try:
+            subprocess.run(["taskkill", "/PID", str(pid), "/F", "/T"],
+                           capture_output=True, timeout=20,
+                           creationflags=_NO_WINDOW)
+        except Exception:
+            pass
+
+
+def _mit_zeitgrenze(arbeit, timeout: float):
+    """Führt `arbeit()` mit harter Zeitgrenze aus. Liefert (fertig, wert).
+
+    Ein hängender COM-Aufruf lässt sich nicht abbrechen – der Hintergrund-Thread
+    bleibt notfalls stehen (Daemon, stirbt mit dem Programm). Entscheidend ist,
+    dass der ARBEITER weiterläuft und die Warteschlange nicht blockiert.
+    """
+    ergebnis: dict = {}
+
+    def lauf():
+        try:
+            ergebnis["wert"] = arbeit()
+        except BaseException as e:          # auch COM-Fehler sauber übernehmen
+            ergebnis["fehler"] = e
+
+    t = threading.Thread(target=lauf, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        return False, None
+    if "fehler" in ergebnis:
+        raise ergebnis["fehler"]
+    return True, ergebnis.get("wert")
 
 
 def _word_installed() -> bool:
@@ -243,32 +364,63 @@ def _word_text_by_page(path: Path) -> "list[tuple[int, str]] | None":
     WD_STAT_PAGES = 2       # wdStatisticPages
     WD_GOTO_PAGE = 1        # wdGoToPage
     WD_GOTO_ABSOLUTE = 1    # wdGoToAbsolute
-    word = None
-    try:
-        word = win32.DispatchEx("Word.Application")
-        word.Visible = False
-        word.DisplayAlerts = 0
-        doc = word.Documents.Open(str(path), ReadOnly=True)
+    vorher = _winword_pids()
+
+    def arbeit():
+        # COM muss in JEDEM Thread eigens initialisiert werden – die Arbeit
+        # läuft wegen der Zeitgrenze in einem Hintergrund-Thread.
+        import pythoncom
+        pythoncom.CoInitialize()
+        word = None
         try:
-            total = int(doc.ComputeStatistics(WD_STAT_PAGES)) or 1
-            starts = [word.Selection.GoTo(WD_GOTO_PAGE, WD_GOTO_ABSOLUTE, p).Start
-                      for p in range(1, total + 1)]
-            grenzen = starts + [doc.Content.End]
-            pages = [(i + 1, _word_range_to_text(doc.Range(grenzen[i], grenzen[i + 1]).Text))
-                     for i in range(total)]
+            word = win32.DispatchEx("Word.Application")
+            word.Visible = False
+            word.DisplayAlerts = 0
+            # Leere Passwörter mitgeben: Word bricht dann mit einem Fehler ab,
+            # statt einen unsichtbaren Dialog zu öffnen und ewig zu warten.
+            doc = word.Documents.Open(str(path), ReadOnly=True,
+                                      AddToRecentFiles=False,
+                                      PasswordDocument="",
+                                      WritePasswordDocument="",
+                                      Visible=False)
+            try:
+                total = int(doc.ComputeStatistics(WD_STAT_PAGES)) or 1
+                starts = [word.Selection.GoTo(WD_GOTO_PAGE, WD_GOTO_ABSOLUTE, p).Start
+                          for p in range(1, total + 1)]
+                grenzen = starts + [doc.Content.End]
+                pages = [(i + 1, _word_range_to_text(doc.Range(grenzen[i], grenzen[i + 1]).Text))
+                         for i in range(total)]
+            finally:
+                try:
+                    doc.Close(False)
+                except Exception:
+                    pass
+            return pages if any(t.strip() for _, t in pages) else None
         finally:
-            doc.Close(False)
-        return pages if any(t.strip() for _, t in pages) else None
+            if word is not None:
+                try:
+                    word.Quit()
+                except Exception:
+                    pass
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+
+    try:
+        fertig, pages = _mit_zeitgrenze(arbeit, WORD_TIMEOUT)
     except Exception:
         import traceback
         traceback.print_exc()
+        _beende_pids(_winword_pids() - vorher)
         return None
-    finally:
-        if word is not None:
-            try:
-                word.Quit()
-            except Exception:
-                pass
+    if not fertig:
+        # Word hängt (Dialog, Aktivierung, defektes Dokument): unsere Instanz
+        # beenden und die Kaskade weiterlaufen lassen.
+        print(f"Word antwortet nicht (> {WORD_TIMEOUT}s) – Abbruch", flush=True)
+        _beende_pids(_winword_pids() - vorher)
+        return None
+    return pages
 
 
 def convert_with_word(path: Path, out_dir: Path) -> Path | None:
@@ -282,23 +434,53 @@ def convert_with_word(path: Path, out_dir: Path) -> Path | None:
     out = out_dir / (path.stem + ".pdf")
 
     if os.name == "nt":
-        try:
+        vorher = _winword_pids()
+
+        def arbeit():
+            import pythoncom
             import win32com.client as win32
-            word = win32.DispatchEx("Word.Application")
-            word.Visible = False
-            word.DisplayAlerts = 0
+            pythoncom.CoInitialize()
+            word = None
             try:
-                doc = word.Documents.Open(str(path), ReadOnly=True)
-                # 17 = wdFormatPDF
-                doc.SaveAs(str(out), FileFormat=17)
-                doc.Close(False)
+                word = win32.DispatchEx("Word.Application")
+                word.Visible = False
+                word.DisplayAlerts = 0
+                doc = word.Documents.Open(str(path), ReadOnly=True,
+                                          AddToRecentFiles=False,
+                                          PasswordDocument="",
+                                          WritePasswordDocument="",
+                                          Visible=False)
+                try:
+                    doc.SaveAs(str(out), FileFormat=17)   # 17 = wdFormatPDF
+                finally:
+                    try:
+                        doc.Close(False)
+                    except Exception:
+                        pass
+                return out if out.exists() else None
             finally:
-                word.Quit()
-            return out if out.exists() else None
+                if word is not None:
+                    try:
+                        word.Quit()
+                    except Exception:
+                        pass
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+
+        try:
+            fertig, ergebnis = _mit_zeitgrenze(arbeit, WORD_TIMEOUT)
         except Exception:
             import traceback
             traceback.print_exc()
+            _beende_pids(_winword_pids() - vorher)
             return None
+        if not fertig:
+            print(f"Word antwortet nicht (> {WORD_TIMEOUT}s) – Abbruch", flush=True)
+            _beende_pids(_winword_pids() - vorher)
+            return None
+        return ergebnis
 
     if sys.platform == "darwin":
         # Word darf nur in seinen Container schreiben.
@@ -363,19 +545,32 @@ def convert_docx_to_pdf(path: Path, out_dir: Path, progress=None) -> Path | None
     # (NICHT soffice.bin) und nur die Standard-Headless-Flags – alles andere
     # bringt LibreOffice auf dem Mac zum Absturz.
     from .components import components_dir
-    prof = components_dir() / "lo-profile"
+    # EIGENES Profil je Vorgang: LibreOffice duldet kein gleichzeitig benutztes
+    # Profil. Da zwei Dokumente parallel verarbeitet werden (MAX_WORKERS=2),
+    # hängte sich der zweite Lauf an den ersten oder brach ab – ein Fehler, der
+    # nur bei Mehrfach-Upload auftrat und darum schwer zu fassen war.
+    prof = components_dir() / f"lo-profile-{os.getpid()}-{threading.get_ident()}"
     prof.mkdir(parents=True, exist_ok=True)
-    r = subprocess.run(
-        [soffice, f"-env:UserInstallation={prof.as_uri()}",
-         "--headless", "--convert-to", "pdf",
-         "--outdir", str(out_dir), str(path)],
-        capture_output=True, timeout=1200, creationflags=_NO_WINDOW)
-    pdf = out_dir / (path.stem + ".pdf")
-    if pdf.exists():
-        return pdf
-    print("Konvertierung fehlgeschlagen:",
-          r.stderr.decode("utf-8", "replace")[:200], flush=True)
-    return None
+    try:
+        r = subprocess.run(
+            [soffice, f"-env:UserInstallation={prof.as_uri()}",
+             "--headless", "--convert-to", "pdf",
+             "--outdir", str(out_dir), str(path)],
+            capture_output=True, timeout=1200, creationflags=_NO_WINDOW)
+        # LibreOffice bildet den Ausgabenamen selbst; bei Sonderzeichen kann er
+        # abweichen. Darum zuerst der erwartete Name, sonst das einzige frisch
+        # entstandene PDF im Ausgabeordner.
+        pdf = out_dir / (path.stem + ".pdf")
+        if pdf.exists():
+            return pdf
+        kandidaten = sorted(out_dir.glob("*.pdf"))
+        if len(kandidaten) == 1:
+            return kandidaten[0]
+        print("Konvertierung fehlgeschlagen:",
+              (r.stderr or b"").decode("utf-8", "replace")[:200], flush=True)
+        return None
+    finally:
+        shutil.rmtree(prof, ignore_errors=True)
 
 
 def extract_docx(path: Path, progress=None) -> ExtractResult:
@@ -394,7 +589,12 @@ def extract_docx(path: Path, progress=None) -> ExtractResult:
         d = docx.Document(str(path))
         # Word kennt die Absätze exakt – deshalb Leerzeile statt Umbruch und
         # kein Zusammenfassen von Zeilen (das würde nur raten).
-        full = "\n\n".join(par.text for par in d.paragraphs)
+        # WICHTIG: `document.paragraphs` enthält KEINE Tabellenzellen und keine
+        # Kopf-/Fußzeilen. Ein Dokument, dessen Inhalt überwiegend in Tabellen
+        # steht (Listen, Verzeichnisse, Konkordanzen), landete dadurch praktisch
+        # leer in der Bibliothek – ohne jede Warnung. Darum wird der Körper hier
+        # in Dokumentreihenfolge abgelaufen und Tabellen werden mitgenommen.
+        full = "\n\n".join(_docx_bloecke(d))
         r = _paginate_plain(full, join=False)
         r.real_page_numbers = False
         r.reliability = "ungefähr"
@@ -503,14 +703,163 @@ def extract_docx(path: Path, progress=None) -> ExtractResult:
     return res
 
 
+def _docx_bloecke(d) -> "list[str]":
+    """Alle Textblöcke einer Word-Datei in Dokumentreihenfolge – Absätze UND
+    Tabellen, dazu Kopf-/Fußzeilen. python-docx' `paragraphs` allein lässt
+    Tabellen und Kopfzeilen weg (siehe Aufrufer)."""
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    def aus_koerper(eltern) -> "list[str]":
+        raus: list[str] = []
+        try:
+            kinder = list(eltern.element.body.iterchildren())
+        except AttributeError:                 # Kopf-/Fußzeilen haben keinen body
+            kinder = list(eltern._element.iterchildren())
+        for kind in kinder:
+            marke = kind.tag.rsplit("}", 1)[-1]
+            if marke == "p":
+                text = Paragraph(kind, eltern).text.strip()
+                if text:
+                    raus.append(text)
+            elif marke == "tbl":
+                for zeile in Table(kind, eltern).rows:
+                    # Eine Tabellenzeile als ein Absatz; Zellen durch " | "
+                    # getrennt, damit die Zuordnung erhalten bleibt.
+                    zellen = [z.text.strip().replace("\n", " ")
+                              for z in zeile.cells]
+                    # Verbundene Zellen liefert python-docx mehrfach.
+                    entdoppelt: list[str] = []
+                    for z in zellen:
+                        if z and (not entdoppelt or entdoppelt[-1] != z):
+                            entdoppelt.append(z)
+                    if entdoppelt:
+                        raus.append(" | ".join(entdoppelt))
+        return raus
+
+    bloecke = aus_koerper(d)
+    for abschnitt in getattr(d, "sections", []):
+        for bereich in ("header", "footer"):
+            try:
+                teil = getattr(abschnitt, bereich)
+                for absatz in teil.paragraphs:
+                    text = absatz.text.strip()
+                    if text and text not in bloecke:
+                        bloecke.append(text)
+            except Exception:
+                continue
+    return bloecke
+
+
+def text_aus_bytes(roh: bytes) -> tuple[str, str]:
+    """Erkennt die Zeichenkodierung einer Textdatei. Liefert (Text, Kodierung).
+
+    Vorher wurde stur UTF-8 mit `errors="replace"` gelesen. Folgen, alle real:
+    eine mit Windows-Editor als „Unicode" (UTF-16) gespeicherte Datei wurde zu
+    Zeichensalat, den die App klaglos indexierte; eine deutsche Datei in
+    cp1252 verlor jeden Umlaut („Müller" -> „M?ller", damit unauffindbar);
+    eine arabische Datei in Windows-1256 verlor JEDES Zeichen und galt als
+    „kein Text gefunden".
+
+    Vorgehen: erst die Bytemarke (BOM) – die ist eindeutig. Sonst der Reihe
+    nach die üblichen Kodierungen streng probieren und die erste nehmen, die
+    ohne Fehler durchläuft. Als letzte Rettung UTF-8 mit Ersatzzeichen.
+    """
+    for bom, kodierung in ((b"\xef\xbb\xbf", "utf-8-sig"),
+                           (b"\xff\xfe\x00\x00", "utf-32-le"),
+                           (b"\x00\x00\xfe\xff", "utf-32-be"),
+                           (b"\xff\xfe", "utf-16-le"),
+                           (b"\xfe\xff", "utf-16-be")):
+        if roh.startswith(bom):
+            try:
+                return roh.decode(kodierung), kodierung
+            except UnicodeDecodeError:
+                break
+    # UTF-16 ohne Bytemarke erkennt man zuverlässig an den vielen Nullbytes,
+    # die in echtem UTF-8/Latin-Text nie vorkommen.
+    probe = roh[:4096]
+    if probe and probe.count(0) > len(probe) // 4:
+        gerade = sum(1 for i, b in enumerate(probe) if b == 0 and i % 2 == 1)
+        ungerade = probe.count(0) - gerade
+        for kodierung in (("utf-16-le", "utf-16-be") if gerade >= ungerade
+                          else ("utf-16-be", "utf-16-le")):
+            try:
+                return roh.decode(kodierung), kodierung
+            except UnicodeDecodeError:
+                continue
+    # UTF-8 prüft sich selbst: läuft es fehlerfrei durch, ist es praktisch immer
+    # richtig.
+    try:
+        return roh.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        pass
+    # Die Windows-Kodierungen scheitern NIE (jedes Byte ergibt ein Zeichen).
+    # Reines Durchprobieren würde daher immer die erste nehmen und z. B.
+    # deutschen Text arabisch lesen („Straße" -> „Straكe"). Deshalb werden alle
+    # Kandidaten bewertet und der plausibelste gewinnt.
+    beste, bester_wert = None, None
+    for kodierung in ("cp1252", "cp1256", "cp1251", "latin-1"):
+        try:
+            versuch = roh.decode(kodierung)
+        except UnicodeDecodeError:
+            continue
+        wert = _kodierung_bewerten(versuch)
+        if bester_wert is None or wert > bester_wert:
+            beste, bester_wert = (versuch, kodierung), wert
+    if beste:
+        return beste
+    return roh.decode("utf-8", errors="replace"), "utf-8 (mit Ersatzzeichen)"
+
+
+def _schriftart(zeichen: str) -> str:
+    """Grobe Schriftsystem-Zuordnung eines Buchstabens (für die Bewertung)."""
+    o = ord(zeichen)
+    if o < 0x250:
+        return "lateinisch"
+    if 0x400 <= o <= 0x52F:
+        return "kyrillisch"
+    if 0x590 <= o <= 0x6FF or 0x750 <= o <= 0x77F or 0xFB50 <= o <= 0xFEFF:
+        return "arabisch"
+    if o >= 0x4E00:
+        return "cjk"
+    return "sonstige"
+
+
+# In echtem deutschem/französischem Text übliche Sonderbuchstaben. Alles andere
+# aus dem oberen Latin-1-Bereich ist ein starkes Zeichen dafür, dass hier in
+# Wahrheit eine andere Kodierung vorliegt (z. B. arabischer Text als cp1252).
+_UEBLICHE_SONDER = set("äöüÄÖÜßéèêëáàâíìîóòôúùûñçÉÈÊÁÀÂÍÓÚÑÇ«»°–—…")
+
+
+def _kodierung_bewerten(text: str) -> float:
+    """Wie plausibel ist dieser entschlüsselte Text? Höher ist besser."""
+    if not text:
+        return -1e9
+    buchstaben = [c for c in text if c.isalpha()]
+    if not buchstaben:
+        return -1e9
+    punkte = 0.01 * len(buchstaben)
+    # Wörter, die Schriftsysteme mischen, entstehen fast nur durch eine falsche
+    # Kodierung („Straكe") – das wiegt schwer.
+    for wort in re.findall(r"[^\W\d_]+", text):
+        if len({_schriftart(c) for c in wort}) > 1:
+            punkte -= 5
+    punkte -= 3 * sum(1 for c in text
+                      if 0xC0 <= ord(c) <= 0xFF and c not in _UEBLICHE_SONDER)
+    punkte -= 10 * sum(1 for c in text
+                       if ord(c) < 32 and c not in "\r\n\t")
+    return punkte
+
+
 def extract_txt(path: Path) -> ExtractResult:
-    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    text, kodierung = text_aus_bytes(Path(path).read_bytes())
     res = _paginate_plain(text)
     res.real_page_numbers = False
     # Textdateien haben KEINE gedruckten Seiten – die „Seiten" sind künstliche
     # 2000-Zeichen-Blöcke. Darum ausdrücklich „ungefähr", damit die Oberfläche
     # sie nicht als zitierfähige Druckseiten ausweist (sonst „exakt").
     res.reliability = "ungefähr"
+    res.engine = f"Text ({kodierung})"
     res.warnings.append(
         "Textdatei ohne Druckseiten – Seitenangaben sind nur Näherungen.")
     return res
@@ -660,7 +1009,13 @@ def _ocr_pdf_vision(pdf_path: Path, progress=None) -> list[tuple[int, str]]:
                 lines.append((str(cands[0].string()),
                               bx * pix.width, (1.0 - by - bh) * pix.height,
                               (bx + bw) * pix.width, (1.0 - by) * pix.height))
-            pages.append((i, paragraphs_from_boxes(lines)))
+            try:
+                pages.append((i, paragraphs_from_boxes(lines)))
+            except Exception as e:
+                # Eine misslungene Seite kostet nur diese Seite (siehe Tesseract).
+                pages.append((i, ""))
+                print(f"OCR Seite {i} übersprungen: "
+                      f"{type(e).__name__}: {e}", flush=True)
             print(f"OCR Seite {i}/{gesamt}", flush=True)
             if progress:
                 progress("ocr", i, gesamt, "ocr")
@@ -701,6 +1056,30 @@ def _tesseract_tsv_to_text(tsv: str) -> str:
     return paragraphs_from_groups(absaetze)
 
 
+# Obergrenze für das Seitenbild der Texterkennung. 400 dpi sind für normale
+# Buchseiten ideal, sprengen aber bei sehr großen Seiten (Karten, A0-Tafeln)
+# den Speicher: eine A0-Seite ergäbe bei 400 dpi rund 700 MB als Bild. Darum
+# wird die Auflösung für solche Seiten so weit gesenkt, dass das Bild unter
+# dieser Grenze bleibt – lieber etwas gröber erkennen als abstürzen.
+OCR_MAX_PIXEL = 40_000_000      # ca. 40 Megapixel
+OCR_DPI = 400
+
+
+def _ocr_dpi(page) -> int:
+    """Passende Auflösung für diese Seite (siehe OCR_MAX_PIXEL)."""
+    try:
+        r = page.rect
+        breite_zoll = max(r.width, 1) / 72.0
+        hoehe_zoll = max(r.height, 1) / 72.0
+        pixel = breite_zoll * hoehe_zoll * OCR_DPI * OCR_DPI
+        if pixel <= OCR_MAX_PIXEL:
+            return OCR_DPI
+        faktor = (OCR_MAX_PIXEL / pixel) ** 0.5
+        return max(120, int(OCR_DPI * faktor))
+    except Exception:
+        return OCR_DPI
+
+
 def _ocr_pdf_tesseract(pdf_path: Path, lang: str = "ara",
                        progress=None) -> "list[tuple[int, str]] | None":
     import os as _os
@@ -731,22 +1110,40 @@ def _ocr_pdf_tesseract(pdf_path: Path, lang: str = "ara",
     tmpdir = Path(tempfile.mkdtemp(prefix="aicp-ocr-"))
     try:
         with _fitz().open(pdf_path) as doc:
+            gesamt = len(doc)
             for i, page in enumerate(doc, start=1):
-                pix = page.get_pixmap(dpi=400)   # höhere Auflösung = bessere OCR
                 png = tmpdir / f"seite-{i}.png"
-                pix.save(str(png))          # frischer Pfad, kein offenes Handle
-                # --psm 6 (ein Textblock) erkennt gemessen deutlich mehr als die
-                # Automatik (psm 3). Die TSV-Ausgabe verträgt sich NICHT mit
-                # --psm 6 (Tesseract liefert dann Plain-Text statt Spalten), daher
-                # direkt reiner Text + zeilenbasierte Absätze (join_wrapped_lines).
-                out = subprocess.run(
-                    [cmd, *tdata_args, str(png), "stdout", *sprache, "--psm", "6"],
-                    capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=180, env=env,
-                    creationflags=_NO_WINDOW)
-                # Scheitert Tesseract (z. B. Sprachdaten nicht gefunden), ist die
-                # Ausgabe leer – dann keinen leeren Text erzwingen.
-                text = join_wrapped_lines(out.stdout) if out.returncode == 0 else ""
+                # JEDE Seite einzeln absichern: eine überlange, riesige oder
+                # defekte Seite kostet nur diese Seite. Vorher riss ein
+                # Zeitablauf die gesamte OCR (und damit das Buch) mit.
+                try:
+                    pix = page.get_pixmap(dpi=_ocr_dpi(page))
+                    pix.save(str(png))      # frischer Pfad, kein offenes Handle
+                    # --psm 6 (ein Textblock) erkennt gemessen deutlich mehr als
+                    # die Automatik (psm 3). Die TSV-Ausgabe verträgt sich NICHT
+                    # mit --psm 6 (Tesseract liefert dann Plain-Text statt
+                    # Spalten), daher reiner Text + zeilenbasierte Absätze.
+                    out = subprocess.run(
+                        [cmd, *tdata_args, str(png), "stdout", *sprache,
+                         "--psm", "6"],
+                        capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", timeout=180, env=env,
+                        creationflags=_NO_WINDOW)
+                    if out.returncode == 0:
+                        text = join_wrapped_lines(out.stdout)
+                    else:
+                        # Tesseracts eigene Meldung protokollieren – sie nennt
+                        # den Grund (fehlende Sprachdaten, Pfadproblem) und war
+                        # bisher komplett verworfen, also von außen unsichtbar.
+                        text = ""
+                        fehler = (out.stderr or "").strip().splitlines()
+                        print(f"OCR Seite {i}: Tesseract-Fehler "
+                              f"(Code {out.returncode}) "
+                              f"{fehler[0] if fehler else ''}", flush=True)
+                except Exception as e:
+                    text = ""
+                    print(f"OCR Seite {i} übersprungen: "
+                          f"{type(e).__name__}: {e}", flush=True)
                 pages.append((i, text))
                 if text.strip():
                     hat_text = True
@@ -754,9 +1151,9 @@ def _ocr_pdf_tesseract(pdf_path: Path, lang: str = "ara",
                     png.unlink()            # sofort aufräumen …
                 except OSError:
                     pass                    # … aber nie den Upload abbrechen
-                print(f"OCR Seite {i}/{len(doc)}", flush=True)
+                print(f"OCR Seite {i}/{gesamt}", flush=True)
                 if progress:
-                    progress("ocr", i, len(doc), "ocr")
+                    progress("ocr", i, gesamt, "ocr")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
     # Hat OCR NICHTS Brauchbares geliefert (z. B. Tesseract-Fehler), als

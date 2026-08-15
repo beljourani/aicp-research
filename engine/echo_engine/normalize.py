@@ -43,8 +43,15 @@ _HAMZA_YA = re.compile(r"ئ")                    # ئ -> ي
 _DIGIT_MAP = {ord(a): str(i) for i, a in enumerate("٠١٢٣٤٥٦٧٨٩")}
 _DIGIT_MAP.update({ord(a): str(i) for i, a in enumerate("۰۱۲۳۴۵۶۷۸۹")})
 
-# Wort-Tokenizer: arabische Buchstaben, lateinische Buchstaben, Ziffern
-_TOKEN = re.compile(r"[ء-يٮ-ۓA-Za-z0-9]+")
+# Wort-Tokenizer: JEDES Unicode-Wortzeichen (Buchstabe oder Ziffer).
+# Vorher stand hier eine feste Zeichenliste [ء-يٮ-ۓA-Za-z0-9]. Sie kannte
+# weder deutsche Umlaute noch ß, sodass „Müller" im Index zu „M ller" und
+# „Öl" zu „l" zerfiel – ein Wort wurde also mitten entzweigeschnitten.
+# Ebenso fehlten Persisch (پ چ ژ گ), Kyrillisch, Hebräisch und CJK; solche
+# Bücher hatten am Ende gar keine Token und galten als „kein Text".
+# `\w` mit re.UNICODE deckt alle Schriften ab; der Unterstrich wird
+# ausgeklammert, damit er wie bisher als Trennzeichen wirkt.
+_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 
 _PREFIXES = ("وال", "فال", "بال", "كال", "لل", "ال", "و", "ف", "ب", "ك", "ل", "س")
 _SUFFIXES = ("كما", "هما", "تما", "تان", "ات", "ان", "ون", "ين", "ها", "هم", "هن",

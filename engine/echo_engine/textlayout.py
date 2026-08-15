@@ -55,7 +55,10 @@ _SPACE_BEFORE_MARK = re.compile(r"\s+(?=[" + _MARKS + r"])")
 _INVISIBLE = re.compile("[​⁠﻿]")
 
 # Buchstaben (arabisch + lateinisch) – zum Messen von echtem Inhalt
-_LETTERS = re.compile(r"[ء-يٮ-ۓA-Za-z]")
+# Buchstaben jeder Schrift (siehe chunker): die frühere feste Liste kannte
+# weder Umlaute noch Kyrillisch/CJK – die Schutz-Invariante letter_count war
+# für solche Texte wirkungslos (0 == 0) und hätte Textverlust nicht bemerkt.
+_LETTERS = re.compile(r"[^\W\d_]", re.UNICODE)
 
 # Satzende – zusammen mit einer nicht voll ausgeschriebenen Zeile ein
 # Hinweis auf das Ende eines Absatzes
@@ -67,7 +70,7 @@ _LIST_START = re.compile(
     r"^\s*(?:[-–—•*▪]|\(?[0-9٠-٩]{1,3}[.)\-]|\[[0-9٠-٩]+\])\s")
 
 # Zeile ohne Buchstaben (Seitenzahl, Trennlinie, Kolumnentitel aus Ziffern)
-_NO_LETTERS = re.compile(r"^[^ء-يٮ-ۓA-Za-z]*$")
+_NO_LETTERS = re.compile(r"^[\W\d_]*$", re.UNICODE)
 
 # Latein-Trennstrich am Zeilenende (arabischer Satz trennt Wörter nicht)
 _HYPHEN_END = re.compile(r"([A-Za-z])[-‐]$")

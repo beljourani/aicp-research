@@ -12,8 +12,12 @@ from dataclasses import dataclass
 # Satzenden: arabische und lateinische Interpunktion
 _SENT_END = re.compile(r"(?<=[.!?؟۔۔])\s+|\n{2,}")
 
-# Buchstaben (arabisch + lateinisch) zum Messen von echtem Inhalt
-_LETTERS = re.compile(r"[ء-يA-Za-z]")
+# Buchstaben zum Messen von echtem Inhalt – JEDE Schrift zählt.
+# Vorher nur [ء-يA-Za-z]: dadurch hatten russische, hebräische oder
+# chinesische Bücher null zählbare Buchstaben, alle Passagen fielen unter
+# MIN_LETTERS und das Buch wurde als „kein Text gefunden" verworfen, obwohl
+# der Text einwandfrei gelesen worden war. Persisch (پ چ ژ گ) verlor Zeichen.
+_LETTERS = re.compile(r"[^\W\d_]", re.UNICODE)
 
 TARGET_CHARS = 700    # Zielgröße einer Passage
 MAX_CHARS = 1100      # harte Obergrenze
@@ -61,11 +65,18 @@ def chunk_pages(pages: list[tuple[int, str]]) -> list[Passage]:
             buf, size = [], 0
 
         for sentence in _sentences(text):
-            # Überlange Einzelsätze hart teilen
-            while len(sentence) > MAX_CHARS:
-                head, sentence = sentence[:MAX_CHARS], sentence[MAX_CHARS:]
-                buf.append(head)
-                flush()
+            # Überlange Einzelsätze hart teilen. Über Indizes statt durch
+            # wiederholtes Abschneiden: Letzteres kopierte bei jedem Schritt den
+            # gesamten Rest (quadratisch). Eine Seite mit Millionen Zeichen ohne
+            # Satzzeichen – bei erzeugten PDFs und Netz-Übernahmen üblich –
+            # ließ die App dadurch scheinbar einfrieren.
+            if len(sentence) > MAX_CHARS:
+                pos = 0
+                while len(sentence) - pos > MAX_CHARS:
+                    buf.append(sentence[pos:pos + MAX_CHARS])
+                    pos += MAX_CHARS
+                    flush()
+                sentence = sentence[pos:]
             if size + len(sentence) > TARGET_CHARS and buf:
                 flush()
             buf.append(sentence)
