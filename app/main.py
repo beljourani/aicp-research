@@ -19,6 +19,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -49,6 +50,17 @@ def freundlicher_fehler(exc) -> tuple[str, str]:
     der deutsche Text ist der Rückfall. So sieht der Nutzer nie mehr einen
     englischen Exception-Text samt internem Dateipfad (S-5)."""
     s = str(exc).lower()
+    # ZUERST die Programmteil-Fehler: „DLL load failed … The specified module
+    # could not be found" enthält „not found" und landete deshalb unten in
+    # „Die Datei wurde nicht gefunden." – eine glatte Fehldiagnose, denn mit der
+    # Datei ist alles in Ordnung. Auf deutschem Windows kam stattdessen die
+    # nichtssagende Standardmeldung.
+    if (isinstance(exc, ImportError) or "dll load failed" in s
+            or "no module named" in s
+            or ("modul" in s and "gefunden" in s)):
+        return ("bibliothek_fehlt",
+                "Ein Programmteil zum Lesen dieses Dateityps konnte auf diesem "
+                "Gerät nicht geladen werden.")
     if "empty file" in s or "cannot open empty" in s:
         return "leer", "Die Datei ist leer."
     if ("encrypted" in s or "password" in s
@@ -126,25 +138,77 @@ def _ssl_kontext():
 SSL_KONTEXT = _ssl_kontext()
 
 
+_DATA_DIR: "Path | None" = None
+DATA_DIR_HINWEIS = ""       # gesetzt, wenn ein Ausweichort benutzt wird
+
+
+def _ordner_taugt(d: Path) -> bool:
+    """Lässt sich hier wirklich schreiben? Ein bloßes `mkdir` genügt nicht:
+    Ordnerschutz, Gruppenrichtlinien oder ein volles Laufwerk zeigen sich erst
+    beim Schreiben."""
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        probe = d / ".schreibtest"
+        probe.write_text("x", encoding="utf-8")
+        probe.unlink()
+        return True
+    except Exception:
+        return False
+
+
 def data_dir() -> Path:
+    """Datenordner der App. Ergebnis wird gemerkt, damit ein einmal gefundener
+    Ausweichort stabil bleibt.
+
+    Wichtig: Diese Funktion darf NIE eine Ausnahme auslösen. Sie wird schon beim
+    Programmstart benutzt (und vom Protokoll selbst). Scheiterte sie, starb die
+    App, bevor je ein Fenster erschien – und die Protokollierung, die den Grund
+    hätte festhalten sollen, brauchte denselben Ordner und scheiterte ebenfalls.
+    Der Fehler löschte damit seine eigene Meldung. Jetzt wird stattdessen der
+    Reihe nach ein benutzbarer Ort gesucht."""
+    global _DATA_DIR, DATA_DIR_HINWEIS
+    if _DATA_DIR is not None:
+        return _DATA_DIR
+
     if sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
+        kandidaten = [Path.home() / "Library" / "Application Support"]
     elif os.name == "nt":
-        base = Path(os.environ.get("APPDATA", Path.home()))
+        # Roaming zuerst (wie bisher), dann Lokal – Roaming kann per
+        # Ordnerumleitung auf einem Netzlaufwerk liegen, wo SQLite unzuverlässig
+        # arbeitet, oder ganz gesperrt sein.
+        kandidaten = [Path(p) for p in
+                      (os.environ.get("APPDATA"), os.environ.get("LOCALAPPDATA"))
+                      if p]
+        kandidaten.append(Path.home())
     else:
-        base = Path.home() / ".local" / "share"
-    d = base / "AICP Research"
-    # Bestehende Bibliothek aus der frueheren Version (EchoArchive) uebernehmen,
-    # damit vorhandene Buecher nach der Umbenennung erhalten bleiben.
-    if not d.exists():
-        old = base / "EchoArchive"
-        if old.exists():
+        kandidaten = [Path.home() / ".local" / "share"]
+    kandidaten.append(Path(tempfile.gettempdir()))
+
+    erster = None
+    for i, base in enumerate(kandidaten):
+        d = base / "AICP Research"
+        if erster is None:
+            erster = d
+            # Bestehende Bibliothek der früheren Version (EchoArchive)
+            # übernehmen, damit vorhandene Bücher die Umbenennung überleben.
             try:
-                old.rename(d)
+                if not d.exists() and (base / "EchoArchive").exists():
+                    (base / "EchoArchive").rename(d)
             except Exception:
-                d.mkdir(parents=True, exist_ok=True)
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+                pass
+        if _ordner_taugt(d):
+            if i > 0:
+                DATA_DIR_HINWEIS = (
+                    f"Der übliche Datenordner ({erster}) ist nicht "
+                    f"beschreibbar. Es wird stattdessen {d} benutzt.")
+            _DATA_DIR = d
+            return d
+    # Nichts taugt: den ersten Kandidaten zurückgeben, damit der Aufrufer eine
+    # sprechende Fehlermeldung bekommt statt eines Absturzes im Import.
+    _DATA_DIR = erster or Path(tempfile.gettempdir()) / "AICP Research"
+    DATA_DIR_HINWEIS = ("Es konnte kein beschreibbarer Datenordner gefunden "
+                        "werden.")
+    return _DATA_DIR
 
 
 # --- Protokolldatei ------------------------------------------------------
@@ -244,6 +308,113 @@ def umgebung_zeile() -> str:
             f"{sys.version.split()[0]} · gepackt={bool(getattr(sys, 'frozen', False))}")
 
 
+def systempruefung() -> dict:
+    """Prüft jede Komponente, von der die App abhängt, und meldet den Befund.
+
+    Das ist die Antwort auf „läuft bei mir, aber nicht bei ihm": statt zu raten,
+    steht hier schwarz auf weiß, was auf DIESEM Gerät vorhanden ist und was
+    nicht. Wird beim Start ins Protokoll geschrieben und ist in der Oberfläche
+    einsehbar."""
+    b: dict = {}
+    try:
+        from echo_engine import updater
+        b["version"] = updater.current_version()
+    except Exception:
+        b["version"] = "?"
+    b["system"] = sys.platform
+    b["python"] = sys.version.split()[0]
+    b["gepackt"] = bool(getattr(sys, "frozen", False))
+
+    # PDF-Bibliothek – der häufigste stille Ausfall.
+    try:
+        import fitz
+        b["pdf"] = f"PyMuPDF {getattr(fitz, '__doc__', '').strip()[:20] or 'ok'}"
+        b["pdf_ok"] = True
+    except Exception as e:
+        b["pdf"] = f"NICHT LADBAR: {type(e).__name__}: {e}"[:200]
+        b["pdf_ok"] = False
+    try:
+        from echo_engine import pdf_fallback
+        b["pdf_ersatz"] = pdf_fallback.verfuegbar()
+    except Exception:
+        b["pdf_ersatz"] = False
+
+    # Texterkennung
+    try:
+        from echo_engine.extract import _tesseract_cmd
+        cmd = _tesseract_cmd()
+        if cmd:
+            sprachen = sorted(p.stem for p in
+                              (Path(cmd).parent / "tessdata").glob("*.traineddata")) \
+                if (Path(cmd).parent / "tessdata").exists() else []
+            b["ocr"] = f"Tesseract ({', '.join(sprachen) or 'keine Sprachdaten'})"
+        elif sys.platform == "darwin":
+            b["ocr"] = "Apple Vision"
+        else:
+            b["ocr"] = "nicht verfügbar"
+    except Exception as e:
+        b["ocr"] = f"Fehler: {e}"[:120]
+
+    # Word / LibreOffice
+    try:
+        from echo_engine.extract import _word_installed
+        b["word"] = bool(_word_installed())
+    except Exception:
+        b["word"] = False
+    try:
+        from echo_engine.components import find_soffice
+        b["libreoffice"] = bool(find_soffice(auto_install=False))
+    except Exception:
+        b["libreoffice"] = False
+
+    # Bedeutungssuche
+    b["semantik"] = CORE._embedder_state if "CORE" in globals() else "?"
+
+    # Datenordner + Platz
+    try:
+        d = data_dir()
+        b["datenordner"] = str(d)
+        b["datenordner_ok"] = _ordner_taugt(d)
+        frei = shutil.disk_usage(str(d)).free
+        b["frei_gb"] = round(frei / 1_000_000_000, 1)
+    except Exception as e:
+        b["datenordner"] = f"Fehler: {e}"[:120]
+        b["datenordner_ok"] = False
+    if DATA_DIR_HINWEIS:
+        b["datenordner_hinweis"] = DATA_DIR_HINWEIS
+
+    # Datenbank
+    try:
+        p = data_dir() / "archive.db"
+        b["db_mb"] = round(p.stat().st_size / 1_000_000, 1) if p.exists() else 0
+    except Exception:
+        b["db_mb"] = "?"
+
+    if os.name == "nt":
+        try:
+            b["webview2"] = webview2_version() or "FEHLT"
+        except Exception:
+            b["webview2"] = "?"
+    return b
+
+
+def systempruefung_zeile() -> str:
+    """Systemprüfung als eine Zeile fürs Protokoll."""
+    try:
+        b = systempruefung()
+    except Exception as e:
+        return f"Systemprüfung fehlgeschlagen: {e}"
+    teile = [f"PDF={b.get('pdf')}", f"PDF-Ersatz={b.get('pdf_ersatz')}",
+             f"OCR={b.get('ocr')}", f"Word={b.get('word')}",
+             f"LibreOffice={b.get('libreoffice')}",
+             f"Semantik={b.get('semantik')}",
+             f"Datenordner={b.get('datenordner')} (ok={b.get('datenordner_ok')},"
+             f" frei={b.get('frei_gb')} GB)", f"DB={b.get('db_mb')} MB"]
+    if "webview2" in b:
+        teile.append(f"WebView2={b['webview2']}")
+    return " · ".join(str(t) for t in teile)
+
+
 def technischer_grund(exc: BaseException) -> str:
     """Kurzfassung für die Oberfläche: Typ, Meldung und die Stelle im Code.
 
@@ -294,6 +465,7 @@ class Core:
         self.window = None
         self._embedder: Embedder | None = None
         self._embedder_state = "lädt"
+        self._semantik_grund = ""      # Klartext, falls sie nicht läuft
         self._update: dict = {"ok": False, "update_available": False}
         self._jobs: dict[str, dict] = {}
         self._order: list[str] = []          # Reihenfolge für die Anzeige
@@ -461,18 +633,119 @@ class Core:
             con.commit()
             print(f"Original-Pfade repariert: {repariert}.", flush=True)
 
+    def _semantik_selbsttest(self) -> tuple[bool, str]:
+        """Prüft die Bedeutungssuche in einem eigenen Prozess.
+
+        Grund: Auf älteren Rechnern (CPU ohne AVX) beendet die Rechenbibliothek
+        den Prozess HART – das ist keine Python-Ausnahme, sie lässt sich also
+        nicht abfangen. Die Folge war, dass die App Sekunden nach dem Start
+        wortlos verschwand oder am Ende jedes Einlesens abstürzte. Der Test
+        läuft deshalb außerhalb: stürzt der Unterprozess ab, merken wir es und
+        schalten die Bedeutungssuche dauerhaft ab, statt die App zu verlieren.
+        Die Wort- und Wurzelsuche bleibt vollständig erhalten."""
+        if getattr(sys, "frozen", False):
+            # Im gepackten Zustand ist sys.executable die App selbst – ein
+            # Unterprozess würde eine zweite Instanz starten. Dort wird der
+            # Selbsttest über einen Merker abgesichert (siehe unten).
+            return True, ""
+        code = ("import sys; sys.path.insert(0, r'%s');"
+                "from echo_engine.semantic import Embedder;"
+                "Embedder().embed(['test'])" % str(_resource_base().parent
+                                                   / "engine"))
+        try:
+            r = subprocess.run([sys.executable, "-c", code],
+                               capture_output=True, timeout=300,
+                               creationflags=getattr(
+                                   subprocess, "CREATE_NO_WINDOW", 0))
+            if r.returncode == 0:
+                return True, ""
+            grund = (r.stderr or b"").decode("utf-8", "replace").strip()
+            letzte = grund.splitlines()[-1] if grund else f"Code {r.returncode}"
+            return False, letzte[:200]
+        except subprocess.TimeoutExpired:
+            return False, "Zeitüberschreitung beim Laden des Modells"
+        except Exception as e:
+            # Lässt sich der Test nicht durchführen, normal weitermachen.
+            protokolliere(f"SEMANTIK Selbsttest nicht möglich: {e}")
+            return True, ""
+
     def _init_embedder(self):
+        # Wurde die Bedeutungssuche auf diesem Gerät schon einmal als
+        # untauglich erkannt, gar nicht erst versuchen.
+        abgeschaltet = self._meta_get("semantik_aus", "")
+        if abgeschaltet:
+            self._embedder_state = "aus"
+            self._semantik_grund = abgeschaltet
+            protokolliere(f"SEMANTIK abgeschaltet: {abgeschaltet}")
+            return
+        # Merker VOR dem ersten Versuch setzen: stürzt der Prozess dabei hart
+        # ab (alte CPU), steht beim nächsten Start fest, dass es daran lag.
+        marker = data_dir() / "semantik-laeuft.marker"
+        if marker.exists():
+            grund = ("Die Bedeutungssuche hat diesen Rechner beim letzten "
+                     "Start zum Absturz gebracht (vermutlich ältere CPU). "
+                     "Sie bleibt abgeschaltet; Wort- und Wurzelsuche laufen "
+                     "vollständig weiter.")
+            self.meta_set({"key": "semantik_aus", "value": grund})
+            self._embedder_state = "aus"
+            self._semantik_grund = grund
+            protokolliere("SEMANTIK nach Absturz dauerhaft abgeschaltet")
+            try:
+                marker.unlink()
+            except OSError:
+                pass
+            return
+        ok, grund = self._semantik_selbsttest()
+        if not ok:
+            text = f"Bedeutungssuche auf diesem Gerät nicht nutzbar: {grund}"
+            self.meta_set({"key": "semantik_aus", "value": text})
+            self._embedder_state = "aus"
+            self._semantik_grund = text
+            protokolliere(f"SEMANTIK {text}")
+            return
+        try:
+            marker.write_text("1", encoding="utf-8")
+        except OSError:
+            marker = None
         try:
             emb = Embedder()
             emb.embed(["تجربة"])
             self._embedder = emb
             self._embedder_state = "bereit"
+            if marker is not None:
+                try:
+                    marker.unlink()      # überstanden – Merker weg
+                except OSError:
+                    pass
             con = self._con()
             embed_passages(con, emb)
             con.close()
-        except Exception:
-            traceback.print_exc()
+        except Exception as e:
             self._embedder_state = "fehler"
+            self._semantik_grund = fehler_melden("Bedeutungssuche", e)
+            if marker is not None:
+                try:
+                    marker.unlink()
+                except OSError:
+                    pass
+
+    def semantik_neu_versuchen(self, _body=None):
+        """Schaltet die Bedeutungssuche wieder frei und probiert es erneut."""
+        con = self._con()
+        con.execute("DELETE FROM meta WHERE key='semantik_aus'")
+        con.commit()
+        con.close()
+        self._semantik_grund = ""
+        self._embedder_state = "lädt"
+        threading.Thread(target=self._init_embedder, daemon=True).start()
+        return {"ok": True}
+
+    def diagnose(self, _body=None):
+        """Systemprüfung für die Oberfläche (siehe systempruefung)."""
+        b = systempruefung()
+        b["semantik_grund"] = getattr(self, "_semantik_grund", "")
+        b["protokoll"] = str(protokoll_pfad())
+        return b
 
     # --- API-Methoden -----------------------------------------------------
     def status(self, _body=None):
@@ -487,7 +760,9 @@ class Core:
             if k not in seen:
                 jobs.append(v)
         up = self._update if isinstance(self._update, dict) else {}
-        return {"semantik": self._embedder_state, "jobs": jobs,
+        return {"semantik": self._embedder_state,
+                "semantik_grund": getattr(self, "_semantik_grund", ""),
+                "jobs": jobs,
                 "update": {"available": bool(up.get("update_available")),
                            "latest": up.get("latest"),
                            "current": up.get("current")}}
@@ -1564,6 +1839,10 @@ class Core:
                 # eventuell zu ersetzendes altes Dokument bleibt unangetastet
                 # stehen – lieber die alte Fassung behalten als nichts.
                 engine_delete_documents(con, [doc_id])
+                # Die hochgeladene Datei mitnehmen, sofern sie zu keinem
+                # anderen Dokument gehört (bei Reindex bleibt sie natürlich).
+                if replace_id is None:
+                    self._raeume_hochgeladene_datei(con, path)
                 con.close()
                 protokolliere(f"LEER {job_id} | {umgebung_zeile()} | {grund}")
                 self._jobs[job_id] = {
@@ -1599,6 +1878,14 @@ class Core:
             self._jobs[job_id]["state"] = "fertig"
             self._jobs[job_id]["pct"] = 100
         except Exception as e:
+            # Auch nach einem Fehler keine Dateileiche hinterlassen.
+            if replace_id is None:
+                try:
+                    con2 = self._con()
+                    self._raeume_hochgeladene_datei(con2, path)
+                    con2.close()
+                except Exception:
+                    pass
             schluessel, klartext = freundlicher_fehler(e)
             # Zusätzlich den ECHTEN technischen Grund mitgeben (z. B. „DLL load
             # failed …"), damit man an jedem Gerät genau sieht, woran es liegt,
@@ -1967,11 +2254,53 @@ class Core:
         con.close()
         return d
 
+    def _raeume_hochgeladene_datei(self, con, path) -> None:
+        """Löscht eine hochgeladene Datei, wenn kein Dokument mehr auf sie
+        zeigt (nach gescheitertem Einlesen). Nur im eigenen uploads-Ordner."""
+        try:
+            p = Path(path).resolve()
+            if p.parent != (data_dir() / "uploads").resolve() or not p.exists():
+                return
+            noch_belegt = con.execute(
+                "SELECT 1 FROM documents WHERE file_path=? LIMIT 1",
+                (str(path),)).fetchone()
+            if not noch_belegt:
+                p.unlink()
+        except Exception:
+            pass
+
+    def _raeume_uploads(self, con, ids) -> None:
+        """Entfernt die hochgeladenen Originaldateien der genannten Dokumente.
+
+        Ohne das blieb JEDE hochgeladene Datei für immer im Datenordner liegen –
+        auch nach dem Löschen des Buches und nach jedem gescheiterten Einlesen.
+        Bei gescannten Büchern summiert sich das schnell auf mehrere Gigabyte im
+        Benutzerprofil. Es werden ausschließlich Dateien im eigenen
+        uploads-Ordner angefasst, nie Originale des Nutzers anderswo."""
+        updir = (data_dir() / "uploads").resolve()
+        marks = ",".join("?" * len(ids))
+        try:
+            zeilen = con.execute(
+                f"SELECT file_path FROM documents WHERE id IN ({marks})",
+                list(ids)).fetchall()
+        except Exception:
+            return
+        for (pfad,) in [(z[0],) for z in zeilen]:
+            if not pfad:
+                continue
+            try:
+                p = Path(pfad).resolve()
+                if p.parent == updir and p.exists():
+                    p.unlink()
+            except Exception:
+                continue
+
     def delete(self, body):
         con = self._con()
         # Über die Engine löschen, damit auch der Volltextindex mitaufgeräumt
         # wird – sonst erbt das nächste eingelesene Buch die Wörter des
         # gelöschten (siehe indexer.delete_documents).
+        self._raeume_uploads(con, [body["id"]])
         engine_delete_documents(con, [body["id"]])
         con.close()
         return {"ok": True}
@@ -1982,6 +2311,7 @@ class Core:
         if not ids:
             return {"ok": True, "deleted": 0}
         con = self._con()
+        self._raeume_uploads(con, ids)
         deleted = engine_delete_documents(con, ids)
         con.close()
         return {"ok": True, "deleted": deleted}
@@ -2077,6 +2407,8 @@ ROUTES = {
     ("GET", "/api/status"): CORE.status,
     ("POST", "/api/clear_jobs"): CORE.clear_jobs,
     ("GET", "/api/version"): CORE.version,
+    ("GET", "/api/diagnose"): CORE.diagnose,
+    ("POST", "/api/semantik_neu"): CORE.semantik_neu_versuchen,
     ("POST", "/api/protokoll"): CORE.protokoll,
     ("POST", "/api/open_protokoll"): CORE.open_protokoll,
     ("GET", "/api/focus"): CORE.focus,
@@ -2286,10 +2618,59 @@ def _focus_running_instance(port_path: Path) -> None:
         pass
 
 
+def webview2_version() -> str:
+    """Version der Microsoft-Edge-WebView2-Laufzeit (Windows), sonst "".
+
+    Ohne diese Komponente greift pywebview auf die uralte Internet-Explorer-
+    Engine zurück. Die Oberfläche der App (moderne JavaScript-Sprache) läuft
+    dort nicht: der Nutzer sieht ein WEISSES FENSTER, ohne jede Meldung – der
+    wahrscheinlichste Totalausfall auf einem fremden Rechner. Darum wird das
+    vor dem Öffnen geprüft und im Notfall klar gesagt."""
+    if os.name != "nt":
+        return ""
+    import winreg
+    schluessel = (r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients"
+                  r"\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}")
+    for wurzel in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for pfad in (schluessel, schluessel.replace(r"\WOW6432Node", "")):
+            try:
+                with winreg.OpenKey(wurzel, pfad) as k:
+                    wert = winreg.QueryValueEx(k, "pv")[0]
+                    if wert and wert != "0.0.0.0":
+                        return str(wert)
+            except OSError:
+                continue
+    return ""
+
+
+def _webview2_fehlt_melden() -> None:
+    """Erklärt dem Nutzer im Klartext, was fehlt – notfalls per Windows-Dialog,
+    weil ohne WebView2 gar keine Oberfläche dargestellt werden kann."""
+    text = ("Es fehlt eine Windows-Komponente: Microsoft Edge WebView2.\n\n"
+            "Ohne sie kann das Fenster von AICP Research nicht angezeigt "
+            "werden (es bliebe weiß).\n\n"
+            "Bitte die Komponente kostenlos bei Microsoft installieren "
+            "(Suchbegriff: WebView2 Evergreen Standalone Installer) und die "
+            "App danach erneut starten.")
+    protokolliere("START ABGEBROCHEN: WebView2-Laufzeit fehlt")
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            None, text, "AICP Research – fehlende Komponente", 0x10)
+    except Exception:
+        print(text, flush=True)
+
+
 def main():
     global _INSTANCE_LOCK
     d = data_dir()
     protokolliere(f"START {umgebung_zeile()}")
+    if DATA_DIR_HINWEIS:
+        protokolliere(f"DATENORDNER {DATA_DIR_HINWEIS}")
+    protokolliere(f"SYSTEM {systempruefung_zeile()}")
+    if os.name == "nt" and not webview2_version():
+        _webview2_fehlt_melden()
+        return
     _INSTANCE_LOCK = _acquire_single_instance(d / "single_instance.lock")
     if _INSTANCE_LOCK is None:
         # Es läuft bereits eine Instanz -> deren Fenster nach vorne holen

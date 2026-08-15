@@ -47,9 +47,22 @@ def model_cache_dir() -> "Path":
 
     bundled = Path(getattr(sys, "_MEIPASS", "")) / "models" \
         if getattr(sys, "frozen", False) else None
-    if bundled and bundled.exists() and not target.exists():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        _shutil.copytree(bundled, target)
+    # Selbstheilend: Die Kopie wird erst nach vollständigem Durchlauf mit einer
+    # Fertig-Marke bestätigt. Vorher genügte die blosse Existenz des Ordners –
+    # brach das Kopieren ab (volle Platte, Virenscanner, Abmeldung), blieb ein
+    # halber Ordner liegen, der NIE wieder ergänzt wurde: die Bedeutungssuche
+    # war damit dauerhaft kaputt, ohne Weg zurück.
+    marke = target / ".vollstaendig"
+    if bundled and bundled.exists() and not marke.exists():
+        try:
+            if target.exists():
+                _shutil.rmtree(target, ignore_errors=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _shutil.copytree(bundled, target)
+            marke.write_text("1", encoding="utf-8")
+        except Exception:
+            import traceback
+            traceback.print_exc()
     target.mkdir(parents=True, exist_ok=True)
     return target
 
